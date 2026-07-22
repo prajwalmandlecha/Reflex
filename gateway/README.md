@@ -226,10 +226,9 @@ gateway/
 │   ├── test-custom/main.go     <-- Agent Profile & Schema Filter test client
 │   └── inspect-bank/main.go    <-- Downstream Bank tool inspector
 │
-├── db/queries/                 <-- SQL query definitions for sqlc
-│   ├── audit.sql
-│   ├── policies.sql
-│   └── profiles.sql
+├── db/                         <-- Standard Database Root Directory
+│   ├── migrations/             <-- Goose versioned SQL migrations (001_init.sql)
+│   └── queries/                <-- SQL query definitions for sqlc (audit.sql, etc.)
 │
 ├── internal/                   <-- Core application packages
 │   ├── agent/store.go          <-- Agent Profile/Instance Store (Redis <-> Postgres)
@@ -242,9 +241,6 @@ gateway/
 │   ├── metrics/metrics.go      <-- Prometheus metrics collector
 │   ├── proxy/mcp_proxy.go      <-- Multi-target MCP security proxy & schema filter
 │   └── spend/limiter.go        <-- Atomic Redis Lua spend limiter
-│
-├── migrations/                 <-- Goose versioned SQL migrations
-│   └── 001_init.sql
 │
 ├── policies/                   <-- OPA Rego policy rules
 │   └── default.rego

@@ -18,7 +18,7 @@ RUN apk add --no-cache ca-certificates
 
 COPY --from=builder /gateway /gateway
 COPY --from=builder /go/bin/goose /usr/local/bin/goose
-COPY --from=builder /app/migrations /migrations
+COPY --from=builder /app/db/migrations /migrations
 
 EXPOSE 8080 9090
 
