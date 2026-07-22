@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/agp/gateway/internal/agent"
 	"github.com/agp/gateway/internal/audit"
 	"github.com/agp/gateway/internal/authn"
 	"github.com/agp/gateway/internal/authz"
@@ -85,8 +86,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// --- Pattern 3: Transparent MCP Reverse Proxy & Security Interceptor (Multi-Server Support) ---
-	mcpInterceptor := proxy.NewMCPProxy(cfg.MCPTargets, ks, policyEngine, spendLimiter, auditor, jwtMgr, logger)
+	agentStore := agent.NewStore(pool, rdb, logger)
+
+	// --- Pattern 3: Transparent MCP Reverse Proxy & Security Interceptor (Multi-Server & Profile Support) ---
+	mcpInterceptor := proxy.NewMCPProxy(cfg.MCPTargets, ks, policyEngine, spendLimiter, auditor, jwtMgr, agentStore, logger)
 	logger.Info("MCP Security Interceptor Proxy initialized", "targets", cfg.MCPTargets)
 
 	// --- Chi router ---
@@ -106,6 +109,41 @@ func main() {
 
 	// Control-plane routes — grouped under /v1
 	r.Route("/v1", func(r chi.Router) {
+		// Profile Management
+		r.Get("/profiles", func(w http.ResponseWriter, r *http.Request) {
+			profiles, err := agentStore.ListProfiles(r.Context())
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, http.StatusOK, profiles)
+		})
+
+		r.Post("/profiles", func(w http.ResponseWriter, r *http.Request) {
+			var p agent.Profile
+			if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if err := agentStore.UpsertProfile(r.Context(), &p); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"status": "profile updated", "profile_id": p.ProfileID})
+		})
+
+		r.Post("/instances", func(w http.ResponseWriter, r *http.Request) {
+			var inst agent.Instance
+			if err := json.NewDecoder(r.Body).Decode(&inst); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if err := agentStore.UpsertInstance(r.Context(), &inst); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"status": "instance registered", "agent_id": inst.AgentID})
+		})
 		// Token mint — demo convenience, no operator auth needed
 		r.Post("/token", func(w http.ResponseWriter, r *http.Request) {
 			agentID := r.URL.Query().Get("agent_id")

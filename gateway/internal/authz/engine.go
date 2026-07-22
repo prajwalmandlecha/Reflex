@@ -27,13 +27,14 @@ type Decision struct {
 
 // Input is the data supplied to OPA for each authorization request.
 type Input struct {
-	AgentID       string  `json:"agent_id"`
-	AgentKind     string  `json:"agent_kind"`
-	Action        string  `json:"action"`
-	Resource      string  `json:"resource"`
-	PolicyVersion int     `json:"policy_version"`
-	Amount        float64 `json:"amount,omitempty"`
-	Currency      string  `json:"currency,omitempty"`
+	AgentID       string   `json:"agent_id"`
+	AgentKind     string   `json:"agent_kind"`
+	Action        string   `json:"action"`
+	Resource      string   `json:"resource"`
+	PolicyVersion int      `json:"policy_version"`
+	Amount        float64  `json:"amount,omitempty"`
+	Currency      string   `json:"currency,omitempty"`
+	AllowedTools  []string `json:"allowed_tools,omitempty"`
 }
 
 // Engine is the embedded OPA policy engine.
