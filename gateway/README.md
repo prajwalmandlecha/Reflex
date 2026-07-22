@@ -145,7 +145,7 @@ Execute the automated test suite verifying all 8 platform features:
 
 ```bash
 cd gateway
-./test-all.sh
+go run ./cmd/test-all
 ```
 
 **Expected Result:** `VERIFICATION SUMMARY: 12 PASSED, 0 FAILED`
@@ -247,6 +247,5 @@ gateway/
 │
 ├── docker-compose.yml          <-- Multi-container Docker orchestration
 ├── Dockerfile                  <-- Multi-stage Docker build file
-├── sqlc.yaml                   <-- sqlc generator configuration
-└── test-all.sh                 <-- Automated verification test script
+└── sqlc.yaml                   <-- sqlc generator configuration
 ```
