@@ -1,0 +1,77 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: agp
+      POSTGRES_PASSWORD: agp
+      POSTGRES_DB: agp
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agp"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7.2-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  bankapi:
+    build:
+      context: ./bankapi
+      dockerfile: Dockerfile
+    ports:
+      - "9000:9000"
+    networks:
+      - backend       # Gateway can reach it, but AGENTS CANNOT (network isolation)
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"   # MCP server (agent-facing)
+      - "9090:9090"   # Prometheus metrics
+    environment:
+      GATEWAY_MCP_PORT: "8080"
+      GATEWAY_METRICS_PORT: "9090"
+      REDIS_ADDR: "redis:6379"
+      POSTGRES_DSN: "postgres://agp:agp@postgres:5432/agp?sslmode=disable"
+      BANK_API_URL: "http://bankapi:9000"
+      GATEWAY_JWT_SECRET: "hackathon-demo-secret-2026"
+      GATEWAY_JWT_ISSUER: "agp-gateway"
+    networks:
+      - frontend      # Agents connect here
+      - backend       # Gateway connects to Redis, Postgres, and BankAPI
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      bankapi:
+        condition: service_started
+    restart: unless-stopped
+
+networks:
+  frontend:           # Agent-facing network
+  backend:            # Secure internal network (Agents cannot access)
+
+volumes:
+  pgdata:
