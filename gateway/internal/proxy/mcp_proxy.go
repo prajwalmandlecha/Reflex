@@ -224,15 +224,21 @@ func (p *MCPProxy) handleFilteredToolsList(w http.ResponseWriter, r *http.Reques
 	filteredBytes, _ := json.Marshal(jsonResp)
 
 	for k, vv := range resp.Header {
+		if k == "Content-Length" {
+			continue
+		}
 		for _, v := range vv {
 			w.Header().Add(k, v)
 		}
 	}
-	w.WriteHeader(resp.StatusCode)
 
-	if strings.Contains(r.Header.Get("Accept"), "text/event-stream") && !strings.Contains(r.Header.Get("Accept"), "application/json") {
+	if isSSE || strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(resp.StatusCode)
 		fmt.Fprintf(w, "event: message\ndata: %s\n\n", string(filteredBytes))
 	} else {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
 		w.Write(filteredBytes)
 	}
 }
