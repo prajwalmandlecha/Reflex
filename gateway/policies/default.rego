@@ -20,38 +20,44 @@ reason := sprintf("action '%s' is not permitted by agent profile whitelist", [in
 	not (input.action in input.allowed_tools)
 }
 
-# Rule 2: Conversational Agent (Identity + Read-Only Insights)
+# Rule 2: Conversational Agent (Identity, User Onboarding & Read-Only Insights)
 allow if {
 	count(input.allowed_tools) == 0
-	input.agent_kind == "conversational"
+	input.agent_kind in {"conversational", "onboarding"}
 	input.action in {
 		"login",
-		"get_user_profile",
-		"search_contacts",
-		"get_contacts",
+		"create_user",
+		"list_contacts",
+		"resolve_contact",
+		"get_balance",
 		"get_transaction_history",
 		"get_transaction_count",
-		"get_balance",
 		"get_spending_summary",
+		"get_budget_overview",
+		"get_savings_tips",
 		"get_budgets"
 	}
 }
 
-# Rule 3: Payments Agent (Identity + Read + Transfers & Budgets)
+# Rule 3: Payments Agent (Identity, Transfers, Contacts & Budget Management)
 allow if {
 	count(input.allowed_tools) == 0
 	input.agent_kind == "payments"
 	input.action in {
 		"login",
-		"get_user_profile",
-		"search_contacts",
+		"create_user",
+		"list_contacts",
+		"resolve_contact",
 		"add_contact",
-		"get_contacts",
-		"transfer_money",
-		"deposit_funds",
+		"update_contact",
+		"delete_contact",
+		"get_balance",
 		"get_transaction_history",
 		"get_transaction_count",
-		"get_balance",
+		"transfer_money",
+		"deposit_funds",
+		"get_spending_summary",
+		"get_budget_overview",
 		"create_budget",
 		"get_budgets",
 		"update_budget",
@@ -59,26 +65,27 @@ allow if {
 	}
 }
 
-# Rule 4: Securities / Trading Agent (Transfers & Trading)
+# Rule 4: Securities / Trading Agent (Transfers & Account Ledger)
 allow if {
 	count(input.allowed_tools) == 0
 	input.agent_kind == "trading"
 	input.action in {
 		"login",
-		"get_user_profile",
-		"transfer_money",
+		"create_user",
 		"get_balance",
 		"get_transaction_history",
-		"get_transaction_count"
+		"get_transaction_count",
+		"transfer_money"
 	}
 }
 
-# Rule 5: Risk & Security Ops Agent (Fraud & Anomaly Review)
+# Rule 5: Risk & Security Ops / Admin Agent (Fraud, Anomaly Review & User Management)
 allow if {
 	count(input.allowed_tools) == 0
-	input.agent_kind == "ops"
+	input.agent_kind in {"ops", "admin"}
 	input.action in {
 		"login",
+		"create_user",
 		"evaluate_transaction_risk",
 		"get_flagged_anomalies",
 		"confirm_pending_transaction",
