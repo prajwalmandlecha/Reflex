@@ -1,5 +1,5 @@
 // Default Rego policy for the Agent Governance Platform.
-// Implements default-deny with per-agent-kind allow rules.
+// Implements default-deny with per-agent-kind allow rules for Bank of Anthos MCP tools.
 
 package agp.authz
 
@@ -8,41 +8,95 @@ import rego.v1
 # Default deny — every action must be explicitly allowed.
 default allow := false
 
-# Build the decision object returned to the gateway.
-# If allow is true, reason will be the matching rule's justification.
-# If allow is false, reason will explain why.
-
-# --- Conversational Agent: read-only ---
+# --- Conversational Agent: read-only & identity ---
 allow if {
 	input.agent_kind == "conversational"
-	input.action in {"account.balance", "account.transactions", "account.details"}
+	input.action in {
+		"login",
+		"get_user_profile",
+		"search_contacts",
+		"get_contacts",
+		"get_transaction_history",
+		"get_account_details",
+		"get_spending_insights",
+		"get_budgets"
+	}
 }
 
-reason := "conversational agent: read-only action allowed" if {
+reason := "conversational agent: read-only and identity actions allowed" if {
 	input.agent_kind == "conversational"
-	input.action in {"account.balance", "account.transactions", "account.details"}
+	input.action in {
+		"login",
+		"get_user_profile",
+		"search_contacts",
+		"get_contacts",
+		"get_transaction_history",
+		"get_account_details",
+		"get_spending_insights",
+		"get_budgets"
+	}
 }
 
-# --- Payments Agent: can read + initiate payments ---
+# --- Payments Agent: identity + read + payment operations ---
 allow if {
 	input.agent_kind == "payments"
-	input.action in {"account.balance", "account.transactions", "payment.initiate", "payment.status"}
+	input.action in {
+		"login",
+		"get_user_profile",
+		"search_contacts",
+		"add_contact",
+		"get_contacts",
+		"transfer_money",
+		"deposit_check",
+		"get_transaction_history",
+		"get_account_details",
+		"create_budget",
+		"get_budgets",
+		"update_budget",
+		"delete_budget"
+	}
 }
 
-reason := "payments agent: action allowed" if {
+reason := "payments agent: payment and account actions allowed" if {
 	input.agent_kind == "payments"
-	input.action in {"account.balance", "account.transactions", "payment.initiate", "payment.status"}
+	input.action in {
+		"login",
+		"get_user_profile",
+		"search_contacts",
+		"add_contact",
+		"get_contacts",
+		"transfer_money",
+		"deposit_check",
+		"get_transaction_history",
+		"get_account_details",
+		"create_budget",
+		"get_budgets",
+		"update_budget",
+		"delete_budget"
+	}
 }
 
-# --- Trading Agent: can read + quote + execute trades ---
+# --- Risk / Security Agent: risk evaluation & anomaly management ---
 allow if {
-	input.agent_kind == "trading"
-	input.action in {"account.balance", "trading.quote", "trading.execute", "trading.positions"}
+	input.agent_kind == "ops"
+	input.action in {
+		"login",
+		"evaluate_transaction_risk",
+		"get_flagged_anomalies",
+		"confirm_pending_transaction",
+		"cancel_pending_transaction"
+	}
 }
 
-reason := "trading agent: action allowed" if {
-	input.agent_kind == "trading"
-	input.action in {"account.balance", "trading.quote", "trading.execute", "trading.positions"}
+reason := "risk/ops agent: security evaluation actions allowed" if {
+	input.agent_kind == "ops"
+	input.action in {
+		"login",
+		"evaluate_transaction_risk",
+		"get_flagged_anomalies",
+		"confirm_pending_transaction",
+		"cancel_pending_transaction"
+	}
 }
 
 # --- Catch-all deny reason ---

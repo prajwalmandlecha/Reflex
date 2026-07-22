@@ -2,6 +2,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"strconv"
 	"time"
@@ -33,12 +34,27 @@ type Config struct {
 	// Policy
 	PolicyPollInterval time.Duration
 
-	// Bank API (downstream proxy target)
+	// Downstream MCP Target Servers (multi-server support)
+	// Default target URL (e.g. "http://bankapi:9000")
 	BankAPIURL string
+
+	// Map of service names to target MCP URLs
+	// e.g. {"payments": "http://localhost:9001", "trading": "http://localhost:9002", "friend_ops": "http://localhost:9003"}
+	MCPTargets map[string]string
 }
 
 // Load reads configuration from environment variables with defaults.
 func Load() *Config {
+	targets := make(map[string]string)
+	if targetsJSON := os.Getenv("MCP_TARGETS"); targetsJSON != "" {
+		_ = json.Unmarshal([]byte(targetsJSON), &targets)
+	}
+
+	defaultBankURL := envOr("BANK_API_URL", "http://localhost:9000")
+	if _, ok := targets["default"]; !ok {
+		targets["default"] = defaultBankURL
+	}
+
 	return &Config{
 		MCPPort:     envOr("GATEWAY_MCP_PORT", "8080"),
 		MetricsPort: envOr("GATEWAY_METRICS_PORT", "9090"),
@@ -58,7 +74,8 @@ func Load() *Config {
 
 		PolicyPollInterval: envDurationOr("POLICY_POLL_INTERVAL", 30*time.Second),
 
-		BankAPIURL: envOr("BANK_API_URL", "http://localhost:9000"),
+		BankAPIURL: defaultBankURL,
+		MCPTargets: targets,
 	}
 }
 

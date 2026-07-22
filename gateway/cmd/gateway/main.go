@@ -1,3 +1,6 @@
+// Package main is the entrypoint for the AGP gateway.
+//
+// It wires all components together and starts the MCP server and metrics endpoint.
 package main
 
 import (
@@ -14,9 +17,8 @@ import (
 	"github.com/agp/gateway/internal/authn"
 	"github.com/agp/gateway/internal/authz"
 	"github.com/agp/gateway/internal/config"
-	gw "github.com/agp/gateway/internal/gateway"
 	"github.com/agp/gateway/internal/killswitch"
-	"github.com/agp/gateway/internal/session"
+	"github.com/agp/gateway/internal/proxy"
 	"github.com/agp/gateway/internal/spend"
 
 	"github.com/go-chi/chi/v5"
@@ -83,10 +85,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	sessStore := session.NewStore(rdb)
-
-	handler := gw.NewHandler(ks, policyEngine, spendLimiter, auditor, pool, logger)
-	mcpServer := gw.NewMCPServer(handler, jwtMgr, sessStore, logger)
+	// --- Pattern 3: Transparent MCP Reverse Proxy & Security Interceptor (Multi-Server Support) ---
+	mcpInterceptor := proxy.NewMCPProxy(cfg.MCPTargets, ks, policyEngine, spendLimiter, auditor, jwtMgr, logger)
+	logger.Info("MCP Security Interceptor Proxy initialized", "targets", cfg.MCPTargets)
 
 	// --- Chi router ---
 	r := chi.NewRouter()
@@ -100,11 +101,12 @@ func main() {
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	// MCP Streamable HTTP — agent JWT auth handled inside mcpServer
-	r.Mount("/mcp", mcpServer.HTTPHandler())
+	// MCP Transparent Reverse Proxy (governs all MCP tools/call traffic)
+	r.Mount("/mcp", mcpInterceptor)
 
 	// Control-plane routes — grouped under /v1
 	r.Route("/v1", func(r chi.Router) {
+		// Token mint — demo convenience, no operator auth needed
 		r.Post("/token", func(w http.ResponseWriter, r *http.Request) {
 			agentID := r.URL.Query().Get("agent_id")
 			agentKind := r.URL.Query().Get("agent_kind")
@@ -119,7 +121,7 @@ func main() {
 			}
 			writeJSON(w, http.StatusOK, map[string]string{"token": token})
 		})
-
+		// Agent revocation
 		r.Post("/agents/{agentID}/revoke", func(w http.ResponseWriter, r *http.Request) {
 			id := chi.URLParam(r, "agentID")
 			if err := ks.KillAgent(r.Context(), id); err != nil {
@@ -140,6 +142,7 @@ func main() {
 			writeJSON(w, http.StatusOK, map[string]string{"revived": id})
 		})
 
+		// Fleet emergency stop
 		r.Post("/fleet/halt", func(w http.ResponseWriter, r *http.Request) {
 			if err := ks.HaltFleet(r.Context()); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -158,6 +161,7 @@ func main() {
 			writeJSON(w, http.StatusOK, map[string]string{"fleet": "resumed"})
 		})
 
+		// Audit integrity check
 		r.Get("/audit/verify", func(w http.ResponseWriter, r *http.Request) {
 			result, err := audit.Verify(r.Context(), pool)
 			if err != nil {
@@ -168,6 +172,7 @@ func main() {
 		})
 	})
 
+	// --- HTTP servers ---
 	mcpHTTP := &http.Server{
 		Addr:    ":" + cfg.MCPPort,
 		Handler: r,
@@ -180,6 +185,7 @@ func main() {
 		Handler: metricsMux,
 	}
 
+	// --- Start ---
 	errCh := make(chan error, 2)
 
 	go func() {
@@ -192,6 +198,7 @@ func main() {
 		errCh <- metricsHTTP.ListenAndServe()
 	}()
 
+	// --- Graceful shutdown ---
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
@@ -215,6 +222,7 @@ func main() {
 	logger.Info("gateway shut down cleanly")
 }
 
+// writeJSON is a small helper to keep handlers clean.
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
