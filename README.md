@@ -61,7 +61,7 @@ cd Reflex/gateway
 docker compose up -d --build
 
 # 3. Run the automated 8-feature verification suite
-./test-all.sh
+go run ./cmd/test-all
 ```
 
 For complete API documentation, control plane endpoints, and testing guides, visit the **[Gateway README](./gateway/README.md)**.
