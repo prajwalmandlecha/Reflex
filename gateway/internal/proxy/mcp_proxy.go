@@ -1,5 +1,5 @@
 // Package proxy implements an in-flight MCP Security Interceptor & Proxy with multi-server routing,
-// Agent Profile/ABAC tool whitelisting, and dynamic tools/list discovery filtering.
+// Agent Profile/ABAC tool whitelisting, dynamic tools/list discovery filtering, and OpenAPI-to-MCP virtualization.
 package proxy
 
 import (
@@ -11,26 +11,36 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/agp/gateway/internal/adapter"
 	"github.com/agp/gateway/internal/agent"
 	"github.com/agp/gateway/internal/audit"
 	"github.com/agp/gateway/internal/authn"
 	"github.com/agp/gateway/internal/authz"
 	"github.com/agp/gateway/internal/killswitch"
 	"github.com/agp/gateway/internal/spend"
+	"github.com/getkin/kin-openapi/openapi3"
 )
 
+type OpenAPISpecTarget struct {
+	BaseURL string
+	Doc     *openapi3.T
+}
+
 type MCPProxy struct {
-	targets      map[string]string
-	ks           *killswitch.Switch
-	policyEngine *authz.Engine
-	spendLimiter *spend.Limiter
-	auditor      *audit.Logger
-	jwtMgr       *authn.JWTManager
-	agentStore   *agent.Store
-	logger       *slog.Logger
-	client       *http.Client
+	targets        map[string]string
+	openAPITargets map[string]*OpenAPISpecTarget
+	openAPIMux     sync.RWMutex
+	ks             *killswitch.Switch
+	policyEngine   *authz.Engine
+	spendLimiter   *spend.Limiter
+	auditor        *audit.Logger
+	jwtMgr         *authn.JWTManager
+	agentStore     *agent.Store
+	logger         *slog.Logger
+	client         *http.Client
 }
 
 func NewMCPProxy(
@@ -44,16 +54,34 @@ func NewMCPProxy(
 	logger *slog.Logger,
 ) *MCPProxy {
 	return &MCPProxy{
-		targets:      targets,
-		ks:           ks,
-		policyEngine: policyEngine,
-		spendLimiter: spendLimiter,
-		auditor:      auditor,
-		jwtMgr:       jwtMgr,
-		agentStore:   agentStore,
-		logger:       logger,
-		client:       &http.Client{Timeout: 15 * time.Second},
+		targets:        targets,
+		openAPITargets: make(map[string]*OpenAPISpecTarget),
+		ks:             ks,
+		policyEngine:   policyEngine,
+		spendLimiter:   spendLimiter,
+		auditor:        auditor,
+		jwtMgr:         jwtMgr,
+		agentStore:     agentStore,
+		logger:         logger,
+		client:         &http.Client{Timeout: 15 * time.Second},
 	}
+}
+
+// RegisterOpenAPISpec registers an OpenAPI spec to be dynamically virtualized as an MCP server at /mcp/<serviceName>.
+func (p *MCPProxy) RegisterOpenAPISpec(serviceName string, baseURL string, specData []byte) error {
+	doc, err := adapter.LoadSpec(specData)
+	if err != nil {
+		return fmt.Errorf("failed to parse openapi spec for service '%s': %w", serviceName, err)
+	}
+
+	p.openAPIMux.Lock()
+	defer p.openAPIMux.Unlock()
+	p.openAPITargets[serviceName] = &OpenAPISpecTarget{
+		BaseURL: baseURL,
+		Doc:     doc,
+	}
+	p.logger.Info("registered openapi target endpoint", "service", serviceName, "base_url", baseURL)
+	return nil
 }
 
 // ServeHTTP acts as the Multi-Target MCP Reverse Proxy + Security Interceptor.
@@ -65,8 +93,12 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 2: Resolve Target MCP Server URL
-	targetURL := p.resolveTargetURL(r.URL.Path)
+	// Step 2: Check if target is a virtualized OpenAPI endpoint
+	serviceName := p.extractServiceName(r.URL.Path)
+
+	p.openAPIMux.RLock()
+	openAPITarget, isOpenAPI := p.openAPITargets[serviceName]
+	p.openAPIMux.RUnlock()
 
 	// Read body payload
 	bodyBytes, err := io.ReadAll(r.Body)
@@ -92,60 +124,51 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 3: Handle tools/list — Filter discovery schema dynamically!
+	if isOpenAPI {
+		p.handleOpenAPIRequest(w, r, openAPITarget, rpcReq, method, agentID, agentKind, allowedTools)
+		return
+	}
+
+	// Step 3: Resolve Target Native MCP Server URL
+	targetURL := p.resolveTargetURL(r.URL.Path)
+
+	// Handle tools/list for native MCP — Filter discovery schema dynamically!
 	if method == "tools/list" && len(allowedTools) > 0 {
 		p.handleFilteredToolsList(w, r, targetURL, bodyBytes, allowedTools)
 		return
 	}
 
-	// Step 4: Handle tools/call — Intercept and Govern!
+	// Step 4: Governance Pipeline Interception for tools/call
 	if method == "tools/call" {
 		params, _ := rpcReq["params"].(map[string]any)
 		toolName, _ := params["name"].(string)
-		arguments, _ := params["arguments"].(map[string]any)
+		args, _ := params["arguments"].(map[string]any)
 
 		var amount float64
-		if amt, ok := arguments["amount"].(float64); ok {
+		if amt, ok := args["amount"].(float64); ok {
 			amount = amt
-		} else if amtCents, ok := arguments["amount_cents"].(float64); ok {
+		} else if amtCents, ok := args["amount_cents"].(float64); ok {
 			amount = amtCents / 100.0
 		}
 
-		reqID := rpcReq["id"]
+		allowed, reason := p.governCall(r.Context(), agentID, agentKind, toolName, amount, allowedTools)
 
-		// Run 4-Step Authorization Gauntlet
-		start := time.Now()
-		allow, reason := p.governCall(r.Context(), agentID, agentKind, toolName, amount, allowedTools)
-
-		// Emit Audit Entry
-		spendDelta := int64(amount * 100)
-		decisionStr := "deny"
-		if allow {
-			decisionStr = "allow"
-		}
 		p.auditor.Log(&audit.Entry{
 			AgentID:    agentID,
 			Action:     toolName,
-			Resource:   "",
-			Decision:   decisionStr,
-			SpendDelta: spendDelta,
-			LatencyMs:  float64(time.Since(start).Microseconds()) / 1000.0,
+			Resource:   targetURL,
+			Decision:   map[bool]string{true: "allow", false: "deny"}[allowed],
+			SpendDelta: int64(amount * 100),
 			Reason:     reason,
 		})
 
-		// IF DENIED: Short-circuit!
-		if !allow {
-			p.logger.Warn("MCP tool call DENIED by Gateway",
-				"agent_id", agentID,
-				"tool", toolName,
-				"reason", reason,
-				"target_url", targetURL,
-			)
-			p.sendErrorResponse(w, r, reqID, reason)
+		if !allowed {
+			p.logger.Warn("mcp tool execution DENIED", "agent_id", agentID, "tool", toolName, "reason", reason)
+			p.sendErrorResponse(w, r, rpcReq["id"], reason)
 			return
 		}
 
-		p.logger.Info("MCP tool call ALLOWED by Gateway — forwarding to target MCP Server",
+		p.logger.Info("mcp tool execution ALLOWED",
 			"agent_id", agentID,
 			"tool", toolName,
 			"target_url", targetURL,
@@ -156,7 +179,148 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.proxyToTarget(w, r, targetURL, bodyBytes)
 }
 
-// handleFilteredToolsList proxies tools/list to target, then filters the tool schema by allowedTools.
+// handleOpenAPIRequest handles MCP requests virtualized over OpenAPI REST endpoints.
+func (p *MCPProxy) handleOpenAPIRequest(
+	w http.ResponseWriter,
+	r *http.Request,
+	target *OpenAPISpecTarget,
+	rpcReq map[string]any,
+	method string,
+	agentID string,
+	agentKind string,
+	allowedTools []string,
+) {
+	reqID := rpcReq["id"]
+
+	switch method {
+	case "initialize":
+		res := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      reqID,
+			"result": map[string]any{
+				"protocolVersion": "2024-11-05",
+				"capabilities":    map[string]any{"tools": map[string]any{}},
+				"serverInfo":      map[string]any{"name": "reflex-virtual-openapi-mcp", "version": "1.0.0"},
+			},
+		}
+		p.sendJSONRPCResponse(w, r, res)
+
+	case "notifications/initialized":
+		w.WriteHeader(http.StatusOK)
+
+	case "tools/list":
+		tools, err := adapter.SpecToMCPTools(target.Doc)
+		if err != nil {
+			p.sendErrorResponse(w, r, reqID, "failed to build openapi tool schema")
+			return
+		}
+
+		// Filter tools by agent profile whitelist if configured
+		filteredTools := []adapter.MCPTool{}
+		if len(allowedTools) > 0 {
+			allowedSet := make(map[string]bool)
+			for _, t := range allowedTools {
+				allowedSet[t] = true
+			}
+			for _, t := range tools {
+				if allowedSet[t.Name] {
+					filteredTools = append(filteredTools, t)
+				}
+			}
+		} else {
+			filteredTools = tools
+		}
+
+		res := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      reqID,
+			"result": map[string]any{
+				"tools": filteredTools,
+			},
+		}
+		p.sendJSONRPCResponse(w, r, res)
+
+	case "tools/call":
+		params, _ := rpcReq["params"].(map[string]any)
+		toolName, _ := params["name"].(string)
+		args, _ := params["arguments"].(map[string]any)
+
+		var amount float64
+		if amt, ok := args["amount"].(float64); ok {
+			amount = amt
+		} else if amtCents, ok := args["amount_cents"].(float64); ok {
+			amount = amtCents / 100.0
+		}
+
+		// Run Governance Pipeline
+		allowed, reason := p.governCall(r.Context(), agentID, agentKind, toolName, amount, allowedTools)
+
+		p.auditor.Log(&audit.Entry{
+			AgentID:    agentID,
+			Action:     toolName,
+			Resource:   target.BaseURL,
+			Decision:   map[bool]string{true: "allow", false: "deny"}[allowed],
+			SpendDelta: int64(amount * 100),
+			Reason:     reason,
+		})
+
+		if !allowed {
+			p.logger.Warn("openapi virtual tool execution DENIED", "agent_id", agentID, "tool", toolName, "reason", reason)
+			p.sendErrorResponse(w, r, reqID, reason)
+			return
+		}
+
+		// Build and execute REST HTTP Request against legacy bank endpoint
+		restReq, err := adapter.BuildRESTRequest(target.BaseURL, target.Doc, toolName, args)
+		if err != nil {
+			p.sendErrorResponse(w, r, reqID, fmt.Sprintf("invalid tool arguments: %v", err))
+			return
+		}
+		restReq = restReq.WithContext(r.Context())
+
+		resp, err := p.client.Do(restReq)
+		if err != nil {
+			p.logger.Error("failed REST request to virtual openapi target", "url", restReq.URL.String(), "error", err)
+			p.sendErrorResponse(w, r, reqID, "downstream bank REST API unreachable")
+			return
+		}
+
+		mcpResult := adapter.RESTResponseToMCPResult(resp)
+		res := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      reqID,
+			"result":  mcpResult,
+		}
+		p.sendJSONRPCResponse(w, r, res)
+
+	default:
+		p.sendErrorResponse(w, r, reqID, fmt.Sprintf("method '%s' not supported", method))
+	}
+}
+
+func (p *MCPProxy) sendJSONRPCResponse(w http.ResponseWriter, r *http.Request, res map[string]any) {
+	b, _ := json.Marshal(res)
+	if strings.Contains(r.Header.Get("Accept"), "text/event-stream") && !strings.Contains(r.Header.Get("Accept"), "application/json") {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, "event: message\ndata: %s\n\n", string(b))
+	} else {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write(b)
+	}
+}
+
+func (p *MCPProxy) extractServiceName(path string) string {
+	cleanPath := strings.TrimPrefix(path, "/mcp")
+	cleanPath = strings.TrimPrefix(cleanPath, "/")
+	parts := strings.Split(cleanPath, "/")
+	if len(parts) > 0 {
+		return parts[0]
+	}
+	return ""
+}
+
 func (p *MCPProxy) handleFilteredToolsList(w http.ResponseWriter, r *http.Request, targetBaseURL string, bodyBytes []byte, allowedTools []string) {
 	targetURL := targetBaseURL
 	if !strings.HasSuffix(targetBaseURL, "/mcp") {

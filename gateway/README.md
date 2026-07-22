@@ -56,7 +56,10 @@ AGP sits transparently between **AI Agents** (LangChain, CrewAI, AutoGen, VS Cod
 3. **Dynamic Discovery Schema Filtering (`tools/list`):**
    When an agent connects and sends `tools/list`, the Gateway filters the returned schema so the agent **only sees authorized tools**. Prevents LLM hallucinations and unauthorized tool invocation attempts.
 
-4. **Sub-Millisecond Emergency Killswitch & Fleet Halt:**
+4. **OpenAPI-to-MCP Virtualization:**
+   Ingests legacy OpenAPI/Swagger specs (`swagger.json`/`openapi.yaml`) and dynamically virtualizes REST APIs as AI-callable MCP tools without requiring separate server wrappers.
+
+5. **Sub-Millisecond Emergency Killswitch & Fleet Halt:**
    Per-agent revocations (`POST /v1/agents/{id}/revoke`) and fleet-wide panic button (`POST /v1/fleet/halt`) backed by Redis pipelines (<1ms latency impact).
 
 5. **Embedded OPA Rego Policy Engine:**
@@ -109,6 +112,7 @@ All MCP agents send JSON-RPC HTTP POST requests to these endpoints:
 | `GET` | `/v1/profiles` | List all agent profiles & tool whitelists | *(No body required)* |
 | `POST` | `/v1/profiles` | Create or update agent profile | `{"profile_id":"custom_v1","profile_name":"Custom Bot","allowed_tools":["get_balance"],"hourly_spend_cap_cents":100000}` |
 | `POST` | `/v1/instances` | Register bot instance attached to profile | `{"agent_id":"bot-01","profile_id":"custom_v1","status":"active"}` |
+| `POST` | `/v1/openapi/register` | Dynamically registers an OpenAPI spec as a virtual MCP server | `{"name":"bank-api","spec_url":"..."}` |
 | `GET` | `/v1/audit/verify` | Verify cryptographic SHA-256 audit ledger | *(No body required)* |
 | `GET` | `/health` | Health Check Endpoint | Returns `{"status":"ok"}` |
 | `GET` | `:9090/metrics` | Prometheus Metrics Endpoint | Returns Prometheus telemetry exposition |

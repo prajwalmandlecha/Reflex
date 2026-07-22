@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -207,6 +208,29 @@ func main() {
 				return
 			}
 			writeJSON(w, http.StatusOK, result)
+		})
+
+		// Dynamic OpenAPI Spec Registration Endpoint
+		r.Post("/openapi/register", func(w http.ResponseWriter, r *http.Request) {
+			var body struct {
+				ServiceName string `json:"service_name"`
+				BaseURL     string `json:"base_url"`
+				Spec        string `json:"spec"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, `{"error":"invalid json body"}`, http.StatusBadRequest)
+				return
+			}
+			if body.ServiceName == "" || body.BaseURL == "" || body.Spec == "" {
+				http.Error(w, `{"error":"service_name, base_url, and spec are required"}`, http.StatusBadRequest)
+				return
+			}
+			if err := mcpInterceptor.RegisterOpenAPISpec(body.ServiceName, body.BaseURL, []byte(body.Spec)); err != nil {
+				http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusBadRequest)
+				return
+			}
+			logger.Info("registered openapi target", "service", body.ServiceName, "base_url", body.BaseURL)
+			writeJSON(w, http.StatusOK, map[string]string{"status": "registered", "service": body.ServiceName})
 		})
 	})
 

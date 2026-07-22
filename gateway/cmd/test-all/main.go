@@ -295,6 +295,58 @@ func (ts *TestSuite) testBankOfAnthosTargetRouting() {
 	} else {
 		ts.pass("Real-time spend cap governance evaluated")
 	}
+
+	// Test OpenAPI-to-MCP Virtualization Engine
+	ts.testOpenAPISpecVirtualization()
+}
+
+func (ts *TestSuite) testOpenAPISpecVirtualization() {
+	fmt.Println("\n[8.5/10] Testing OpenAPI-to-MCP Virtualization Engine...")
+
+	sampleSpec := `{
+		"openapi": "3.0.0",
+		"info": {"title": "Legacy Bank REST API", "version": "1.0.0"},
+		"paths": {
+			"/v1/accounts/{account_id}/balance": {
+				"get": {
+					"operationId": "get_legacy_balance",
+					"summary": "Get account balance from legacy REST API",
+					"parameters": [
+						{"name": "account_id", "in": "path", "required": true, "schema": {"type": "string"}}
+					]
+				}
+			}
+		}
+	}`
+
+	regPayload, _ := json.Marshal(map[string]string{
+		"service_name": "legacy-bank-ops",
+		"base_url":     "http://localhost:8080/health",
+		"spec":         sampleSpec,
+	})
+
+	resp, err := ts.client.Post(gatewayURL+"/v1/openapi/register", "application/json", bytes.NewReader(regPayload))
+	if err != nil || resp.StatusCode != 200 {
+		ts.fail("OpenAPI spec dynamic registration failed")
+		return
+	}
+	resp.Body.Close()
+
+	// Verify tools/list returns converted OpenAPI tool
+	toolsList := ts.requestFilteredToolsList("/mcp/legacy-bank-ops", "open-agent-01", "custom")
+	if strings.Contains(toolsList, "get_legacy_balance") {
+		ts.pass("OpenAPI Spec Dynamic Registration & Schema Conversion -> VERIFIED (get_legacy_balance exposed)")
+	} else {
+		ts.fail("OpenAPI spec tool list missing get_legacy_balance: " + toolsList)
+	}
+
+	// Verify tools/call executes and runs through Governance Pipeline
+	resCall := ts.callTool("/mcp/legacy-bank-ops", "pay-agent-01", "payments", "get_legacy_balance", map[string]any{"account_id": "12345"}, "")
+	if strings.Contains(resCall, "result") || strings.Contains(resCall, "content") {
+		ts.pass("OpenAPI Virtual Tool Execution -> PASSED THROUGH GOVERNANCE GAUNTLET")
+	} else {
+		ts.fail("OpenAPI tool execution failed: " + resCall)
+	}
 }
 
 func (ts *TestSuite) testAuditVerification() {
