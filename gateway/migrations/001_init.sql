@@ -53,56 +53,98 @@ default allow := false
 
 # Rule 1: Explicit Per-Agent Allowed Tools Whitelist (Profile / ABAC)
 allow if {
-    count(input.allowed_tools) > 0
-    input.action in input.allowed_tools
+	count(input.allowed_tools) > 0
+	input.action in input.allowed_tools
 }
 
 reason := sprintf("action ''%s'' allowed by agent profile whitelist", [input.action]) if {
-    count(input.allowed_tools) > 0
-    input.action in input.allowed_tools
+	count(input.allowed_tools) > 0
+	input.action in input.allowed_tools
 }
 
 reason := sprintf("action ''%s'' is not permitted by agent profile whitelist", [input.action]) if {
-    count(input.allowed_tools) > 0
-    not (input.action in input.allowed_tools)
+	count(input.allowed_tools) > 0
+	not (input.action in input.allowed_tools)
 }
 
-# Rule 2: Default Kind-Based RBAC Fallback (when allowed_tools is empty)
+# Rule 2: Conversational Agent (Identity + Read-Only Insights)
 allow if {
-    count(input.allowed_tools) == 0
-    input.agent_kind == "conversational"
-    input.action in {"login", "get_user_profile", "search_contacts", "get_contacts", "get_transaction_history", "get_balance", "get_spending_summary", "get_budgets"}
+	count(input.allowed_tools) == 0
+	input.agent_kind == "conversational"
+	input.action in {
+		"login",
+		"get_user_profile",
+		"search_contacts",
+		"get_contacts",
+		"get_transaction_history",
+		"get_transaction_count",
+		"get_balance",
+		"get_spending_summary",
+		"get_budgets"
+	}
 }
 
+# Rule 3: Payments Agent (Identity + Read + Transfers & Budgets)
 allow if {
-    count(input.allowed_tools) == 0
-    input.agent_kind == "payments"
-    input.action in {"login", "get_user_profile", "search_contacts", "add_contact", "get_contacts", "transfer_money", "deposit_check", "get_transaction_history", "get_balance", "create_budget", "get_budgets", "update_budget", "delete_budget"}
+	count(input.allowed_tools) == 0
+	input.agent_kind == "payments"
+	input.action in {
+		"login",
+		"get_user_profile",
+		"search_contacts",
+		"add_contact",
+		"get_contacts",
+		"transfer_money",
+		"deposit_funds",
+		"get_transaction_history",
+		"get_transaction_count",
+		"get_balance",
+		"create_budget",
+		"get_budgets",
+		"update_budget",
+		"delete_budget"
+	}
 }
 
+# Rule 4: Securities / Trading Agent (Transfers & Trading)
 allow if {
-    count(input.allowed_tools) == 0
-    input.agent_kind == "trading"
-    input.action in {"login", "get_user_profile", "transfer_money", "get_balance", "get_transaction_history"}
+	count(input.allowed_tools) == 0
+	input.agent_kind == "trading"
+	input.action in {
+		"login",
+		"get_user_profile",
+		"transfer_money",
+		"get_balance",
+		"get_transaction_history",
+		"get_transaction_count"
+	}
 }
 
+# Rule 5: Risk & Security Ops Agent (Fraud & Anomaly Review)
 allow if {
-    count(input.allowed_tools) == 0
-    input.agent_kind == "ops"
-    input.action in {"login", "evaluate_transaction_risk", "get_flagged_anomalies", "confirm_pending_transaction", "cancel_pending_transaction"}
+	count(input.allowed_tools) == 0
+	input.agent_kind == "ops"
+	input.action in {
+		"login",
+		"evaluate_transaction_risk",
+		"get_flagged_anomalies",
+		"confirm_pending_transaction",
+		"cancel_pending_transaction"
+	}
 }
 
-reason := sprintf("agent kind ''%s'' not allowed to perform action ''%s''", [input.agent_kind, input.action]) if {
-    count(input.allowed_tools) == 0
-    not allow
+# Catch-all deny reason if no rule matched
+reason := sprintf("agent kind ''%s'' is not allowed to perform action ''%s''", [input.agent_kind, input.action]) if {
+	count(input.allowed_tools) == 0
+	not allow
 }
 ') ON CONFLICT (name) DO UPDATE SET source = EXCLUDED.source;
 
 -- Seed Default Profiles
 INSERT INTO agent_profiles (profile_id, profile_name, description, allowed_tools, hourly_spend_cap_cents) VALUES
-('conversational', 'Conversational Read-Only Profile', 'Read-only profile for chat assistants', ARRAY['login', 'get_user_profile', 'search_contacts', 'get_contacts', 'get_transaction_history', 'get_balance', 'get_spending_summary', 'get_budgets'], 0),
-('payments', 'Standard Payments Profile', 'Profile for wire transfer and payment bots', ARRAY['login', 'get_user_profile', 'search_contacts', 'add_contact', 'get_contacts', 'transfer_money', 'deposit_check', 'get_transaction_history', 'get_balance', 'create_budget', 'get_budgets', 'update_budget', 'delete_budget'], 500000),
-('trading', 'Securities Trading Profile', 'Profile for automated stock trading bots', ARRAY['login', 'get_user_profile', 'transfer_money', 'get_balance', 'get_transaction_history'], 5000000),
+('conversational', 'Conversational Read-Only Profile', 'Read-only profile for chat assistants', ARRAY['login', 'get_user_profile', 'search_contacts', 'get_contacts', 'get_transaction_history', 'get_transaction_count', 'get_balance', 'get_spending_summary', 'get_budgets'], 0),
+('payments', 'Standard Payments Profile', 'Profile for wire transfer and payment bots', ARRAY['login', 'get_user_profile', 'search_contacts', 'add_contact', 'get_contacts', 'transfer_money', 'deposit_funds', 'get_transaction_history', 'get_transaction_count', 'get_balance', 'create_budget', 'get_budgets', 'update_budget', 'delete_budget'], 500000),
+('trading', 'Securities Trading Profile', 'Profile for automated stock trading bots', ARRAY['login', 'get_user_profile', 'transfer_money', 'get_balance', 'get_transaction_history', 'get_transaction_count'], 5000000),
 ('ops', 'Security Risk Ops Profile', 'Profile for fraud evaluation and risk management', ARRAY['login', 'evaluate_transaction_risk', 'get_flagged_anomalies', 'confirm_pending_transaction', 'cancel_pending_transaction'], 0),
 ('custom_alpha', 'Restricted Custom Alpha Profile', 'Custom profile allowing only balance checks and wire transfers', ARRAY['login', 'get_balance', 'transfer_money'], 100000)
 ON CONFLICT (profile_id) DO NOTHING;
