@@ -22,9 +22,9 @@ type Route struct {
 
 // actionRoutes maps agent action names to downstream Bank API endpoints.
 var actionRoutes = map[string]Route{
-	"payment.initiate":    {Method: "POST", Path: "/transfer"},
-	"trading.execute":     {Method: "POST", Path: "/buy"},
-	"account.balance":     {Method: "GET", Path: "/balance"},
+	"payment.initiate":     {Method: "POST", Path: "/transfer"},
+	"trading.execute":      {Method: "POST", Path: "/buy"},
+	"account.balance":      {Method: "GET", Path: "/balance"},
 	"account.transactions": {Method: "GET", Path: "/transactions"},
 }
 

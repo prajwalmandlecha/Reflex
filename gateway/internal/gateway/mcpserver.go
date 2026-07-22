@@ -2,9 +2,9 @@
 //
 // Pattern 2: The gateway is a FORCED PROXY. Agents cannot reach the Bank API directly.
 // When an agent calls the "execute" tool, the gateway:
-//   1. Runs the full authorization gauntlet (killswitch → OPA → spend cap → audit)
-//   2. If authorized, forwards the request to the Bank API on the agent's behalf
-//   3. Returns the Bank API response to the agent
+//  1. Runs the full authorization gauntlet (killswitch → OPA → spend cap → audit)
+//  2. If authorized, forwards the request to the Bank API on the agent's behalf
+//  3. Returns the Bank API response to the agent
 //
 // The agent never sees or touches the Bank API directly.
 package gateway
