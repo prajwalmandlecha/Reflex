@@ -158,10 +158,10 @@ func (l *Logger) writeBatch(ctx context.Context, entries []*Entry) error {
 	b := &pgx.Batch{}
 	for _, e := range entries {
 		b.Queue(
-			`INSERT INTO audit_log (ts, agent_id, action, resource, decision, policy_id, spend_delta, latency_ms, reason, prev_hash, entry_hash)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+			`INSERT INTO audit_log (ts, agent_id, action, resource, decision, spend_delta, latency_ms, reason, prev_hash, entry_hash)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
 			e.Timestamp, e.AgentID, e.Action, e.Resource, e.Decision,
-			e.PolicyID, e.SpendDelta, e.LatencyMs, e.Reason, e.PrevHash, e.EntryHash,
+			e.SpendDelta, e.LatencyMs, e.Reason, e.PrevHash, e.EntryHash,
 		)
 	}
 
