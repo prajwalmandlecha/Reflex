@@ -1,4 +1,5 @@
--- Agent Governance Platform (AGP) - Initial Database Schema
+-- +goose Up
+-- SQL migration for Agent Governance Platform (AGP)
 
 CREATE TABLE IF NOT EXISTS audit_log (
     id BIGSERIAL PRIMARY KEY,
@@ -26,7 +27,6 @@ CREATE TABLE IF NOT EXISTS policies (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Agent Profiles (Blueprints / Templates)
 CREATE TABLE IF NOT EXISTS agent_profiles (
     profile_id VARCHAR(64) PRIMARY KEY,
     profile_name VARCHAR(128) NOT NULL,
@@ -36,7 +36,6 @@ CREATE TABLE IF NOT EXISTS agent_profiles (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Agent Instances (Deployed Bots)
 CREATE TABLE IF NOT EXISTS agent_instances (
     agent_id VARCHAR(64) PRIMARY KEY,
     profile_id VARCHAR(64) REFERENCES agent_profiles(profile_id),
@@ -84,7 +83,7 @@ allow if {
 allow if {
     count(input.allowed_tools) == 0
     input.agent_kind == "trading"
-    input.action in {"login", "get_user_profile", "trading.execute", "get_balance", "get_transaction_history"}
+    input.action in {"login", "get_user_profile", "transfer_money", "get_balance", "get_transaction_history"}
 }
 
 allow if {
@@ -103,7 +102,7 @@ reason := sprintf("agent kind ''%s'' not allowed to perform action ''%s''", [inp
 INSERT INTO agent_profiles (profile_id, profile_name, description, allowed_tools, hourly_spend_cap_cents) VALUES
 ('conversational', 'Conversational Read-Only Profile', 'Read-only profile for chat assistants', ARRAY['login', 'get_user_profile', 'search_contacts', 'get_contacts', 'get_transaction_history', 'get_balance', 'get_spending_summary', 'get_budgets'], 0),
 ('payments', 'Standard Payments Profile', 'Profile for wire transfer and payment bots', ARRAY['login', 'get_user_profile', 'search_contacts', 'add_contact', 'get_contacts', 'transfer_money', 'deposit_check', 'get_transaction_history', 'get_balance', 'create_budget', 'get_budgets', 'update_budget', 'delete_budget'], 500000),
-('trading', 'Securities Trading Profile', 'Profile for automated stock trading bots', ARRAY['login', 'get_user_profile', 'trading.execute', 'get_balance', 'get_transaction_history'], 5000000),
+('trading', 'Securities Trading Profile', 'Profile for automated stock trading bots', ARRAY['login', 'get_user_profile', 'transfer_money', 'get_balance', 'get_transaction_history'], 5000000),
 ('ops', 'Security Risk Ops Profile', 'Profile for fraud evaluation and risk management', ARRAY['login', 'evaluate_transaction_risk', 'get_flagged_anomalies', 'confirm_pending_transaction', 'cancel_pending_transaction'], 0),
 ('custom_alpha', 'Restricted Custom Alpha Profile', 'Custom profile allowing only balance checks and wire transfers', ARRAY['login', 'get_balance', 'transfer_money'], 100000)
 ON CONFLICT (profile_id) DO NOTHING;
@@ -116,3 +115,9 @@ INSERT INTO agent_instances (agent_id, profile_id, status) VALUES
 ('risk-agent-01', 'ops', 'active'),
 ('custom-agent-alpha', 'custom_alpha', 'active')
 ON CONFLICT (agent_id) DO NOTHING;
+
+-- +goose Down
+DROP TABLE IF EXISTS agent_instances;
+DROP TABLE IF EXISTS agent_profiles;
+DROP TABLE IF EXISTS policies;
+DROP TABLE IF EXISTS audit_log;

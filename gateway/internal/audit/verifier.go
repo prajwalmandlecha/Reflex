@@ -2,12 +2,10 @@ package audit
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/agp/gateway/internal/db"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -19,80 +17,49 @@ type VerifyResult struct {
 	Error        string `json:"error,omitempty"`
 }
 
-// Verify reads the entire audit log and checks the hash chain integrity.
-// Returns the result with the first broken link (if any).
-func Verify(ctx context.Context, db *pgxpool.Pool) (*VerifyResult, error) {
-	rows, err := db.Query(ctx,
-		`SELECT id, ts, agent_id, action, resource, decision, spend_delta, latency_ms, reason, prev_hash, entry_hash
-		 FROM audit_log ORDER BY id ASC`)
+// Verify reads the entire audit log via sqlc and checks the hash chain integrity.
+func Verify(ctx context.Context, pool *pgxpool.Pool) (*VerifyResult, error) {
+	queries := db.New(pool)
+	rows, err := queries.ListAuditLogs(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("querying audit log: %w", err)
+		return nil, fmt.Errorf("querying audit log via sqlc: %w", err)
 	}
-	defer rows.Close()
 
 	result := &VerifyResult{Valid: true}
 	var prevHash string
 
-	for rows.Next() {
-		var (
-			id         int64
-			ts         time.Time
-			agentID    string
-			action     string
-			resource   string
-			decision   string
-			spendDelta int64
-			latencyMs  float64
-			reason     string
-			rowPrev    string
-			rowHash    string
-		)
-
-		if err := rows.Scan(&id, &ts, &agentID, &action, &resource, &decision,
-			&spendDelta, &latencyMs, &reason, &rowPrev, &rowHash); err != nil {
-			return nil, fmt.Errorf("scanning row %d: %w", id, err)
-		}
-
+	for _, row := range rows {
 		result.TotalEntries++
 
 		// Check that prev_hash matches what we expect.
-		if rowPrev != prevHash {
+		if row.PrevHash != prevHash {
 			result.Valid = false
-			result.BrokenAt = &id
-			result.Error = fmt.Sprintf("entry %d: prev_hash mismatch (expected %s, got %s)", id, prevHash, rowPrev)
+			result.BrokenAt = &row.ID
+			result.Error = fmt.Sprintf("row %d: prev_hash mismatch (got %s, expected %s)", row.ID, row.PrevHash, prevHash)
 			return result, nil
 		}
 
-		// Recompute the hash using the same hashContent type as the writer.
-		c := hashContent{
-			Timestamp:  ts.Truncate(time.Microsecond).UTC(),
-			AgentID:    agentID,
-			Action:     action,
-			Resource:   resource,
-			Decision:   decision,
-			SpendDelta: spendDelta,
-			LatencyMs:  latencyMs,
-			Reason:     reason,
+		// Recompute entry_hash.
+		entry := &Entry{
+			Timestamp:  row.Ts.Truncate(time.Microsecond).UTC(),
+			AgentID:    row.AgentID,
+			Action:     row.Action,
+			Resource:   row.Resource,
+			Decision:   row.Decision,
+			SpendDelta: row.SpendDelta,
+			LatencyMs:  row.LatencyMs,
+			Reason:     row.Reason,
 		}
 
-		contentJSON, _ := json.Marshal(c)
-		h := sha256.New()
-		h.Write([]byte(prevHash))
-		h.Write(contentJSON)
-		expectedHash := hex.EncodeToString(h.Sum(nil))
-
-		if rowHash != expectedHash {
+		expectedHash := computeHash(prevHash, entry)
+		if row.EntryHash != expectedHash {
 			result.Valid = false
-			result.BrokenAt = &id
-			result.Error = fmt.Sprintf("entry %d: hash mismatch (expected %s, got %s)", id, expectedHash, rowHash)
+			result.BrokenAt = &row.ID
+			result.Error = fmt.Sprintf("row %d: entry_hash mismatch (got %s, computed %s)", row.ID, row.EntryHash, expectedHash)
 			return result, nil
 		}
 
-		prevHash = rowHash
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating audit log: %w", err)
+		prevHash = row.EntryHash
 	}
 
 	return result, nil

@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/agp/gateway/internal/db"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -53,9 +54,9 @@ type Logger struct {
 
 // NewLogger creates an audit logger. It starts a background goroutine that flushes
 // entries in batches.
-func NewLogger(ctx context.Context, db *pgxpool.Pool, logger *slog.Logger, batchSize int, flushEvery time.Duration) (*Logger, error) {
+func NewLogger(ctx context.Context, dbPool *pgxpool.Pool, logger *slog.Logger, batchSize int, flushEvery time.Duration) (*Logger, error) {
 	l := &Logger{
-		db:         db,
+		db:         dbPool,
 		logger:     logger,
 		ch:         make(chan *Entry, batchSize*4),
 		batchSize:  batchSize,
@@ -63,14 +64,11 @@ func NewLogger(ctx context.Context, db *pgxpool.Pool, logger *slog.Logger, batch
 		done:       make(chan struct{}),
 	}
 
-	// Load the last hash from Postgres to continue the chain.
-	var lastHash *string
-	err := db.QueryRow(ctx, `SELECT entry_hash FROM audit_log ORDER BY id DESC LIMIT 1`).Scan(&lastHash)
-	if err != nil && err != pgx.ErrNoRows {
-		return nil, fmt.Errorf("loading last audit hash: %w", err)
-	}
-	if lastHash != nil {
-		l.prevHash = *lastHash
+	// Load the last hash from Postgres via sqlc to continue the chain.
+	queries := db.New(dbPool)
+	lastEntry, err := queries.GetLastAuditLog(ctx)
+	if err == nil {
+		l.prevHash = lastEntry.EntryHash
 	}
 
 	go l.flushLoop(ctx)

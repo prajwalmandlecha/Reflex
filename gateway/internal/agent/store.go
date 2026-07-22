@@ -1,4 +1,4 @@
-// Package agent manages Agent Profiles and Instances with Redis caching and Postgres persistence.
+// Package agent manages Agent Profiles and Instances with Redis caching and sqlc-generated Postgres queries.
 package agent
 
 import (
@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/agp/gateway/internal/db"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
@@ -27,21 +29,21 @@ type Instance struct {
 }
 
 type Store struct {
-	db     *pgxpool.Pool
-	rdb    *redis.Client
-	logger *slog.Logger
+	queries *db.Queries
+	rdb     *redis.Client
+	logger  *slog.Logger
 }
 
-func NewStore(db *pgxpool.Pool, rdb *redis.Client, logger *slog.Logger) *Store {
+func NewStore(pool *pgxpool.Pool, rdb *redis.Client, logger *slog.Logger) *Store {
 	return &Store{
-		db:     db,
-		rdb:    rdb,
-		logger: logger,
+		queries: db.New(pool),
+		rdb:     rdb,
+		logger:  logger,
 	}
 }
 
 // GetAgentPermissions resolves an agent instance and its profile.
-// Checks Redis cache first (under agent:perm:{agent_id}), falls back to Postgres.
+// Checks Redis cache first (under agent:perm:{agent_id}), falls back to Postgres via sqlc.
 func (s *Store) GetAgentPermissions(ctx context.Context, agentID string) ([]string, string, error) {
 	cacheKey := fmt.Sprintf("agent:perm:%s", agentID)
 
@@ -57,18 +59,8 @@ func (s *Store) GetAgentPermissions(ctx context.Context, agentID string) ([]stri
 		}
 	}
 
-	// Cache miss: query Postgres join
-	query := `
-		SELECT i.status, COALESCE(p.allowed_tools, '{}')
-		FROM agent_instances i
-		LEFT JOIN agent_profiles p ON i.profile_id = p.profile_id
-		WHERE i.agent_id = $1
-	`
-
-	var status string
-	var allowedTools []string
-
-	err = s.db.QueryRow(ctx, query, agentID).Scan(&status, &allowedTools)
+	// Cache miss: query Postgres join via sqlc
+	res, err := s.queries.GetAgentPermissions(ctx, agentID)
 	if err != nil {
 		// Not found in agent_instances table -> return empty allowed_tools (fallback to default RBAC)
 		return nil, "active", nil
@@ -76,72 +68,66 @@ func (s *Store) GetAgentPermissions(ctx context.Context, agentID string) ([]stri
 
 	// Cache in Redis for 5 minutes
 	cacheData, _ := json.Marshal(map[string]any{
-		"tools":  allowedTools,
-		"status": status,
+		"tools":  res.AllowedTools,
+		"status": res.Status,
 	})
 	s.rdb.Set(ctx, cacheKey, cacheData, 5*time.Minute)
 
-	return allowedTools, status, nil
+	return res.AllowedTools, res.Status, nil
 }
 
-// UpsertProfile inserts or updates an Agent Profile in Postgres and clears Redis cache.
+// UpsertProfile inserts or updates an Agent Profile via sqlc and clears Redis cache.
 func (s *Store) UpsertProfile(ctx context.Context, p *Profile) error {
-	query := `
-		INSERT INTO agent_profiles (profile_id, profile_name, description, allowed_tools, hourly_spend_cap_cents)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (profile_id) DO UPDATE SET
-			profile_name = EXCLUDED.profile_name,
-			description = EXCLUDED.description,
-			allowed_tools = EXCLUDED.allowed_tools,
-			hourly_spend_cap_cents = EXCLUDED.hourly_spend_cap_cents
-	`
-	_, err := s.db.Exec(ctx, query, p.ProfileID, p.ProfileName, p.Description, p.AllowedTools, p.HourlySpendCapCents)
+	err := s.queries.UpsertAgentProfile(ctx, db.UpsertAgentProfileParams{
+		ProfileID:           p.ProfileID,
+		ProfileName:         p.ProfileName,
+		Description:         pgtype.Text{String: p.Description, Valid: p.Description != ""},
+		AllowedTools:        p.AllowedTools,
+		HourlySpendCapCents: pgtype.Int8{Int64: p.HourlySpendCapCents, Valid: true},
+	})
 	if err != nil {
-		return fmt.Errorf("upserting profile: %w", err)
+		return fmt.Errorf("upserting profile via sqlc: %w", err)
 	}
 
-	// Clear profile cache
-	s.logger.Info("agent profile updated", "profile_id", p.ProfileID)
+	s.logger.Info("agent profile updated via sqlc", "profile_id", p.ProfileID)
 	return nil
 }
 
-// UpsertInstance registers an agent instance with a profile.
+// UpsertInstance registers an agent instance with a profile via sqlc.
 func (s *Store) UpsertInstance(ctx context.Context, inst *Instance) error {
-	query := `
-		INSERT INTO agent_instances (agent_id, profile_id, status)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (agent_id) DO UPDATE SET
-			profile_id = EXCLUDED.profile_id,
-			status = EXCLUDED.status
-	`
-	_, err := s.db.Exec(ctx, query, inst.AgentID, inst.ProfileID, inst.Status)
+	err := s.queries.UpsertAgentInstance(ctx, db.UpsertAgentInstanceParams{
+		AgentID:   inst.AgentID,
+		ProfileID: pgtype.Text{String: inst.ProfileID, Valid: inst.ProfileID != ""},
+		Status:    inst.Status,
+	})
 	if err != nil {
-		return fmt.Errorf("upserting instance: %w", err)
+		return fmt.Errorf("upserting instance via sqlc: %w", err)
 	}
 
 	// Clear cache for this agent
 	cacheKey := fmt.Sprintf("agent:perm:%s", inst.AgentID)
 	s.rdb.Del(ctx, cacheKey)
 
-	s.logger.Info("agent instance updated", "agent_id", inst.AgentID, "profile_id", inst.ProfileID)
+	s.logger.Info("agent instance updated via sqlc", "agent_id", inst.AgentID, "profile_id", inst.ProfileID)
 	return nil
 }
 
-// ListProfiles returns all agent profiles.
+// ListProfiles returns all agent profiles via sqlc.
 func (s *Store) ListProfiles(ctx context.Context) ([]Profile, error) {
-	rows, err := s.db.Query(ctx, `SELECT profile_id, profile_name, COALESCE(description, ''), allowed_tools, COALESCE(hourly_spend_cap_cents, 0) FROM agent_profiles ORDER BY profile_id ASC`)
+	rows, err := s.queries.ListAgentProfiles(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	var profiles []Profile
-	for rows.Next() {
-		var p Profile
-		if err := rows.Scan(&p.ProfileID, &p.ProfileName, &p.Description, &p.AllowedTools, &p.HourlySpendCapCents); err != nil {
-			return nil, err
-		}
-		profiles = append(profiles, p)
+	for _, r := range rows {
+		profiles = append(profiles, Profile{
+			ProfileID:           r.ProfileID,
+			ProfileName:         r.ProfileName,
+			Description:         r.Description,
+			AllowedTools:        r.AllowedTools,
+			HourlySpendCapCents: r.HourlySpendCapCents,
+		})
 	}
 	return profiles, nil
 }

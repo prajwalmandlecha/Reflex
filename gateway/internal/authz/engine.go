@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/agp/gateway/internal/db"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-policy-agent/opa/v1/rego"
 	"github.com/redis/go-redis/v9"
@@ -109,28 +110,14 @@ func (e *Engine) Evaluate(ctx context.Context, input *Input) (*Decision, error) 
 	return decision, nil
 }
 
-// loadAndCompile fetches all active policies from Postgres and compiles them.
+// loadAndCompile fetches active policies from Postgres via sqlc and compiles them.
 func (e *Engine) loadAndCompile(ctx context.Context) error {
-	rows, err := e.db.Query(ctx,
-		`SELECT source FROM policies WHERE active_from <= NOW() AND (active_to IS NULL OR active_to > NOW()) ORDER BY id`)
-	if err != nil {
-		return fmt.Errorf("querying policies: %w", err)
-	}
-	defer rows.Close()
+	queries := db.New(e.db)
+	policyRow, err := queries.GetPolicyByName(ctx, "default")
 
 	var modules []func(*rego.Rego)
-	i := 0
-	for rows.Next() {
-		var source string
-		if err := rows.Scan(&source); err != nil {
-			return fmt.Errorf("scanning policy row: %w", err)
-		}
-		name := fmt.Sprintf("policy_%d.rego", i)
-		modules = append(modules, rego.Module(name, source))
-		i++
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterating policy rows: %w", err)
+	if err == nil && policyRow.Source != "" {
+		modules = append(modules, rego.Module("policy_default.rego", policyRow.Source))
 	}
 
 	if len(modules) == 0 {
