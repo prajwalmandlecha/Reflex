@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  # Postgres Database (Source of truth and audit log)
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: guardian
+      POSTGRES_PASSWORD: guardian_password
+      POSTGRES_DB: guardian_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U guardian -d guardian_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis (Fast-path cache for kill-switches and spend caps)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # FastAPI Backend Control Plane
+  backend:
+    build: 
+      context: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql+asyncpg://guardian:guardian_password@postgres:5432/guardian_db
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  # Go MCP Gateway
+  gateway:
+    build:
+      context: ./gateway
+    ports:
+      - "8080:8080" # Exposed MCP endpoint for agents
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - POSTGRES_URL=postgres://guardian:guardian_password@postgres:5432/guardian_db
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata:
