@@ -13,7 +13,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/ui/checkbox';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
@@ -21,20 +21,23 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import type { BankConnection, BankTool } from '@/lib/types';
+import type { BankConnection } from '@/lib/types';
 import { formatRelative } from '@/lib/format';
-import { Plus, Plug, FileUp, Link2, Keyboard, Check, AlertCircle, ChevronRight, ChevronLeft, Lock } from 'lucide-react';
+import { api } from '@/lib/api';
+import { Plus, Plug, FileUp, Link2, AlertCircle, Loader2 } from 'lucide-react';
 
 const sourceTypeLabel: Record<string, string> = {
   native_mcp: 'Native MCP',
-  openapi: 'OpenAPI',
+  openapi: 'OpenAPI Virtualized',
   manual: 'Manual',
 };
 
 export function BankConnectionsView({
   connections,
+  onRefresh,
 }: {
   connections: BankConnection[];
+  onRefresh?: () => void;
 }) {
   const [showWizard, setShowWizard] = useState(false);
 
@@ -43,15 +46,15 @@ export function BankConnectionsView({
       <div className="flex items-center justify-between">
         <div>
           <h2 className="font-mono text-sm uppercase tracking-widest text-ink-primary">
-            Bank Connections
+            Bank Connections & MCP Servers
           </h2>
           <p className="font-sans text-xs text-ink-secondary">
-            Registered bank systems and their exposed tools. Agents can only use tools from connected systems.
+            Connect existing native MCP servers or virtualize OpenAPI REST services into governed MCP tools.
           </p>
         </div>
         <Button
           onClick={() => setShowWizard(true)}
-          className="border border-accent/30 bg-accent/10 text-accent hover:bg-accent/20"
+          className="border border-accent/30 bg-accent/10 text-accent hover:bg-accent/20 font-mono text-xs"
         >
           <Plus className="mr-1.5 h-4 w-4" />
           Add connection
@@ -69,9 +72,9 @@ export function BankConnectionsView({
                 <div>
                   <div className="font-mono text-sm text-ink-primary">{conn.name}</div>
                   <div className="mt-0.5 flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
-                    {sourceTypeLabel[conn.sourceType]}
+                    <span className="text-accent">{sourceTypeLabel[conn.sourceType] || conn.sourceType}</span>
                     <span>·</span>
-                    <span>{conn.toolCount} tools</span>
+                    <span>{conn.toolCount || (conn.tools ? conn.tools.length : 0)} tools</span>
                     {conn.lastSync && (
                       <>
                         <span>·</span>
@@ -79,44 +82,43 @@ export function BankConnectionsView({
                       </>
                     )}
                   </div>
+                  {conn.mcpUrl && (
+                    <div className="mt-1 font-mono text-[11px] text-ink-secondary/70 truncate max-w-sm">
+                      {conn.mcpUrl}
+                    </div>
+                  )}
+                  {conn.baseUrl && !conn.mcpUrl && (
+                    <div className="mt-1 font-mono text-[11px] text-ink-secondary/70 truncate max-w-sm">
+                      REST: {conn.baseUrl}
+                    </div>
+                  )}
                 </div>
               </div>
               <StatusBadge status={conn.status} />
             </div>
 
-            {conn.tools.length > 0 ? (
+            {(conn.tools?.length ?? 0) > 0 ? (
               <div className="p-3">
-                <div className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
-                  Exposed Tools
+                <div className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary mb-2">
+                  Exposed MCP Tools ({conn.tools?.filter((t) => t.exposed).length})
                 </div>
-                <div className="mt-1.5 space-y-1">
-                  {conn.tools.filter((t) => t.exposed).map((tool) => (
-                    <div key={tool.id} className="flex items-center gap-2">
-                      <span className={cn('rounded px-1 py-0.5 font-mono text-[9px]', methodColor(tool.method))}>
-                        {tool.method}
+                <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                  {conn.tools?.filter((t) => t.exposed).map((tool) => (
+                    <div key={tool.id} className="flex items-center gap-2 border border-white/5 bg-white/[0.02] p-1.5 rounded">
+                      <span className={cn('rounded px-1.5 py-0.5 font-mono text-[9px] font-semibold', methodColor(tool.method || 'GET'))}>
+                        {tool.method || 'MCP'}
                       </span>
-                      <span className="font-mono text-xs text-ink-primary">{tool.name}</span>
-                      <span className="truncate font-mono text-[10px] text-ink-secondary">{tool.path}</span>
+                      <span className="font-mono text-xs text-ink-primary font-medium">{tool.name}</span>
+                      <span className="truncate font-mono text-[10px] text-ink-secondary flex-1">{tool.path || tool.description}</span>
                     </div>
                   ))}
                 </div>
-                {conn.tools.some((t) => !t.exposed) && (
-                  <div className="mt-2 font-mono text-[10px] text-ink-secondary/60">
-                    {conn.tools.filter((t) => !t.exposed).length} tools hidden (not exposed)
-                  </div>
-                )}
-                {conn.tools.some((t) => !t.convertible) && (
-                  <div className="mt-1 flex items-center gap-1.5 font-mono text-[10px] text-signal-caution">
-                    <AlertCircle className="h-3 w-3" />
-                    {conn.tools.filter((t) => !t.convertible).length} tools could not be auto-converted
-                  </div>
-                )}
               </div>
             ) : (
               <div className="p-6 text-center font-mono text-xs text-ink-secondary">
                 {conn.status === 'pending'
                   ? 'Awaiting configuration — complete setup to expose tools.'
-                  : 'No tools registered.'}
+                  : 'No tools registered for this server.'}
               </div>
             )}
           </Panel>
@@ -124,13 +126,18 @@ export function BankConnectionsView({
       </div>
 
       <Dialog open={showWizard} onOpenChange={setShowWizard}>
-        <DialogContent className="max-w-2xl border-white/10 bg-white/[0.02]">
+        <DialogContent className="max-w-2xl border-white/10 bg-slate-950 text-white">
           <DialogHeader>
-            <DialogTitle className="font-mono text-sm uppercase tracking-widest">
-              Add Bank Connection
+            <DialogTitle className="font-mono text-sm uppercase tracking-widest text-ink-primary">
+              Register Bank Connection / MCP Server
             </DialogTitle>
           </DialogHeader>
-          <AddConnectionWizard />
+          <RegisterConnectionForm
+            onComplete={() => {
+              setShowWizard(false);
+              if (onRefresh) onRefresh();
+            }}
+          />
         </DialogContent>
       </Dialog>
     </div>
@@ -138,269 +145,315 @@ export function BankConnectionsView({
 }
 
 function methodColor(method: string): string {
-  switch (method) {
-    case 'GET': return 'bg-signal-healthy/10 text-signal-healthy';
-    case 'POST': return 'bg-accent/10 text-accent';
-    case 'DELETE': return 'bg-signal-stopped/10 text-signal-stopped';
-    case 'PUT': return 'bg-signal-caution/10 text-signal-caution';
-    default: return 'bg-white/5 text-ink-secondary';
+  switch (method.toUpperCase()) {
+    case 'GET': return 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
+    case 'POST': return 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20';
+    case 'DELETE': return 'bg-rose-500/10 text-rose-400 border border-rose-500/20';
+    case 'PUT': return 'bg-amber-500/10 text-amber-400 border border-amber-500/20';
+    default: return 'bg-purple-500/10 text-purple-400 border border-purple-500/20';
   }
 }
 
-function AddConnectionWizard() {
-  const [step, setStep] = useState(0);
-  const [sourceType, setSourceType] = useState<'openapi' | 'manual' | 'native_mcp'>('openapi');
+function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
+  const [sourceType, setSourceType] = useState<'native_mcp' | 'openapi'>('native_mcp');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  // Native MCP Form Fields
+  const [mcpName, setMcpName] = useState('');
+  const [mcpId, setMcpId] = useState('');
+  const [mcpUrl, setMcpUrl] = useState('');
+  const [mcpAuthType, setMcpAuthType] = useState('none');
+  const [mcpToken, setMcpToken] = useState('');
+
+  // OpenAPI Form Fields
+  const [apiName, setApiName] = useState('');
+  const [apiId, setApiId] = useState('');
+  const [apiBaseUrl, setApiBaseUrl] = useState('');
+  const [specInputMode, setSpecInputMode] = useState<'url' | 'raw'>('raw');
   const [specUrl, setSpecUrl] = useState('');
-  const [parsedTools, setParsedTools] = useState<BankTool[]>([]);
-  const [authType, setAuthType] = useState<string>('bearer');
+  const [specRaw, setSpecRaw] = useState('');
 
-  const steps = ['Source', 'Endpoints', 'Auth', 'Review'];
+  const handleNativeMcpSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (!mcpName || !mcpId || !mcpUrl) {
+      setError('Please provide Name, ID, and MCP Server URL.');
+      return;
+    }
+    setLoading(true);
+    try {
+      await api.createBankConnection({
+        id: mcpId.trim().toLowerCase().replace(/\s+/g, '-'),
+        name: mcpName,
+        source_type: 'native_mcp',
+        sourceType: 'native_mcp',
+        mcp_url: mcpUrl.trim(),
+        mcpUrl: mcpUrl.trim(),
+        credential_type: mcpAuthType,
+        status: 'connected',
+      } as any);
+      onComplete();
+    } catch (err: any) {
+      setError(err.message || 'Failed to register native MCP server');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  const simulateParse = () => {
-    setParsedTools([
-      { id: 'p1', name: 'get_account', method: 'GET', path: '/v1/accounts/{id}', description: 'Retrieve account details', exposed: true, convertible: true },
-      { id: 'p2', name: 'create_transfer', method: 'POST', path: '/v1/transfers', description: 'Create a new transfer', exposed: true, convertible: true },
-      { id: 'p3', name: 'get_balance', method: 'GET', path: '/v1/accounts/{id}/balance', description: 'Get account balance', exposed: false, convertible: true },
-      { id: 'p4', name: 'raw_webhook', method: 'POST', path: '/v1/webhooks/raw', description: 'Raw webhook passthrough', exposed: false, convertible: false },
-    ]);
-    setStep(1);
+  const handleOpenApiSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    const connId = apiId.trim().toLowerCase().replace(/\s+/g, '-');
+    if (!apiName || !connId) {
+      setError('Please provide Connection Name and ID.');
+      return;
+    }
+
+    let specText = specRaw;
+    if (specInputMode === 'url') {
+      if (!specUrl) {
+        setError('Please provide OpenAPI Spec URL.');
+        return;
+      }
+      try {
+        setLoading(true);
+        const res = await fetch(specUrl);
+        specText = await res.text();
+      } catch (err: any) {
+        setError(`Failed to fetch spec from URL: ${err.message}`);
+        setLoading(false);
+        return;
+      }
+    }
+
+    if (!specText.trim()) {
+      setError('OpenAPI Spec content cannot be empty.');
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await api.registerOpenAPISpec(connId, specText, apiBaseUrl || undefined);
+      onComplete();
+    } catch (err: any) {
+      setError(err.message || 'Failed to register OpenAPI spec');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
-    <div className="space-y-4">
-      {/* Step indicator */}
-      <div className="flex items-center gap-1">
-        {steps.map((s, i) => (
-          <div key={s} className="flex items-center gap-1">
-            <div
-              className={cn(
-                'flex h-6 w-6 items-center justify-center border font-mono text-[10px]',
-                i === step
-                  ? 'border-accent bg-accent/10 text-accent'
-                  : i < step
-                  ? 'border-signal-healthy/40 bg-signal-healthy/10 text-signal-healthy'
-                  : 'border-border text-ink-secondary'
-              )}
-            >
-              {i < step ? <Check className="h-3 w-3" /> : i + 1}
-            </div>
-            {i < steps.length - 1 && <div className="h-px w-8 bg-border" />}
-          </div>
-        ))}
+    <div className="space-y-4 pt-2">
+      {/* 2-Option Source Selection */}
+      <div>
+        <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary mb-2 block">
+          Registration Type
+        </Label>
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={() => { setSourceType('native_mcp'); setError(''); }}
+            className={cn(
+              'flex flex-col items-center gap-1.5 border p-4 transition-all rounded',
+              sourceType === 'native_mcp'
+                ? 'border-cyan-500 bg-cyan-500/10 text-cyan-400 font-semibold'
+                : 'border-white/10 bg-white/[0.02] text-ink-secondary hover:text-ink-primary hover:border-white/20'
+            )}
+          >
+            <Link2 className="h-6 w-6" />
+            <span className="font-mono text-xs uppercase tracking-wider">1. Native MCP Server</span>
+            <span className="font-sans text-[11px] text-ink-secondary text-center">Connect an existing MCP server directly via URL</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => { setSourceType('openapi'); setError(''); }}
+            className={cn(
+              'flex flex-col items-center gap-1.5 border p-4 transition-all rounded',
+              sourceType === 'openapi'
+                ? 'border-cyan-500 bg-cyan-500/10 text-cyan-400 font-semibold'
+                : 'border-white/10 bg-white/[0.02] text-ink-secondary hover:text-ink-primary hover:border-white/20'
+            )}
+          >
+            <FileUp className="h-6 w-6" />
+            <span className="font-mono text-xs uppercase tracking-wider">2. Virtualize OpenAPI REST</span>
+            <span className="font-sans text-[11px] text-ink-secondary text-center">Convert REST endpoints into governed MCP tools</span>
+          </button>
+        </div>
       </div>
 
-      {/* Step 0: Source */}
-      {step === 0 && (
-        <div className="space-y-3">
-          <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
-            Choose Source
-          </Label>
-          <div className="grid grid-cols-3 gap-2">
-            {[
-              { id: 'openapi', label: 'OpenAPI Spec', icon: FileUp, desc: 'Upload or paste URL' },
-              { id: 'native_mcp', label: 'Native MCP', icon: Link2, desc: 'MCP server' },
-              { id: 'manual', label: 'Manual Entry', icon: Keyboard, desc: 'Define by hand' },
-            ].map((opt) => {
-              const Icon = opt.icon;
-              return (
-                <button
-                  key={opt.id}
-                  onClick={() => setSourceType(opt.id as typeof sourceType)}
-                  className={cn(
-                    'flex flex-col items-center gap-1 border p-3 transition-colors',
-                    sourceType === opt.id
-                      ? 'border-accent bg-accent/10 text-accent'
-                      : 'border-border bg-white/5 text-ink-secondary hover:text-ink-primary'
-                  )}
-                >
-                  <Icon className="h-5 w-5" />
-                  <span className="font-mono text-[10px] uppercase tracking-wider">{opt.label}</span>
-                  <span className="font-sans text-[10px] text-ink-secondary">{opt.desc}</span>
-                </button>
-              );
-            })}
+      {error && (
+        <div className="flex items-center gap-2 border border-rose-500/30 bg-rose-500/10 p-3 rounded text-xs font-mono text-rose-400">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {/* Option 1: Native MCP Form */}
+      {sourceType === 'native_mcp' && (
+        <form onSubmit={handleNativeMcpSubmit} className="space-y-3 pt-2">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Server Name</Label>
+              <Input
+                value={mcpName}
+                onChange={(e) => setMcpName(e.target.value)}
+                placeholder="e.g. Bank of Anthos Payments"
+                className="mt-1 border-white/10 bg-white/5 font-mono text-xs"
+                required
+              />
+            </div>
+            <div>
+              <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Connection ID</Label>
+              <Input
+                value={mcpId}
+                onChange={(e) => setMcpId(e.target.value)}
+                placeholder="e.g. bank-payments"
+                className="mt-1 border-white/10 bg-white/5 font-mono text-xs"
+                required
+              />
+            </div>
           </div>
 
-          {sourceType === 'openapi' && (
+          <div>
+            <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Target MCP Server URL</Label>
+            <Input
+              value={mcpUrl}
+              onChange={(e) => setMcpUrl(e.target.value)}
+              placeholder="http://20.2.83.126:31200/mcp"
+              className="mt-1 border-white/10 bg-white/5 font-mono text-xs"
+              required
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
-                OpenAPI Spec URL
-              </Label>
+              <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Authentication</Label>
+              <Select value={mcpAuthType} onValueChange={setMcpAuthType}>
+                <SelectTrigger className="mt-1 border-white/10 bg-white/5 font-mono text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="border-white/10 bg-slate-900 text-white font-mono text-xs">
+                  <SelectItem value="none">None / Public</SelectItem>
+                  <SelectItem value="bearer">Bearer Token</SelectItem>
+                  <SelectItem value="api_key">API Key Header</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {mcpAuthType !== 'none' && (
+              <div>
+                <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Secret / Token</Label>
+                <Input
+                  type="password"
+                  value={mcpToken}
+                  onChange={(e) => setMcpToken(e.target.value)}
+                  placeholder="••••••••••••"
+                  className="mt-1 border-white/10 bg-white/5 font-mono text-xs"
+                />
+              </div>
+            )}
+          </div>
+
+          <div className="flex justify-end pt-3">
+            <Button
+              type="submit"
+              disabled={loading}
+              className="bg-cyan-600 text-white hover:bg-cyan-500 font-mono text-xs px-5"
+            >
+              {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Plug className="h-4 w-4 mr-2" />}
+              Connect MCP Server
+            </Button>
+          </div>
+        </form>
+      )}
+
+      {/* Option 2: OpenAPI Spec Virtualization Form */}
+      {sourceType === 'openapi' && (
+        <form onSubmit={handleOpenApiSubmit} className="space-y-3 pt-2">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Service Name</Label>
+              <Input
+                value={apiName}
+                onChange={(e) => setApiName(e.target.value)}
+                placeholder="e.g. Core Banking REST API"
+                className="mt-1 border-white/10 bg-white/5 font-mono text-xs"
+                required
+              />
+            </div>
+            <div>
+              <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Connection ID</Label>
+              <Input
+                value={apiId}
+                onChange={(e) => setApiId(e.target.value)}
+                placeholder="e.g. legacy-bank-rest"
+                className="mt-1 border-white/10 bg-white/5 font-mono text-xs"
+                required
+              />
+            </div>
+          </div>
+
+          <div>
+            <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Base REST API URL</Label>
+            <Input
+              value={apiBaseUrl}
+              onChange={(e) => setApiBaseUrl(e.target.value)}
+              placeholder="http://api.bank.internal:8080"
+              className="mt-1 border-white/10 bg-white/5 font-mono text-xs"
+            />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">OpenAPI Specification</Label>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setSpecInputMode('raw')}
+                  className={cn('px-2 py-0.5 font-mono text-[10px] rounded', specInputMode === 'raw' ? 'bg-cyan-500/20 text-cyan-400' : 'text-ink-secondary')}
+                >
+                  Raw Spec (JSON/YAML)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSpecInputMode('url')}
+                  className={cn('px-2 py-0.5 font-mono text-[10px] rounded', specInputMode === 'url' ? 'bg-cyan-500/20 text-cyan-400' : 'text-ink-secondary')}
+                >
+                  Spec URL
+                </button>
+              </div>
+            </div>
+
+            {specInputMode === 'raw' ? (
+              <Textarea
+                value={specRaw}
+                onChange={(e) => setSpecRaw(e.target.value)}
+                placeholder='{"openapi": "3.0.0", "info": {"title": "Bank REST API"}, "paths": {...}}'
+                className="h-36 border-white/10 bg-white/5 font-mono text-[11px] leading-relaxed"
+              />
+            ) : (
               <Input
                 value={specUrl}
                 onChange={(e) => setSpecUrl(e.target.value)}
-                placeholder="https://api.bank.example/openapi.json"
-                className="mt-1 border-border bg-white/5 font-mono text-sm"
+                placeholder="https://api.bank.example/v1/openapi.json"
+                className="border-white/10 bg-white/5 font-mono text-xs"
               />
-            </div>
-          )}
-
-          <Button onClick={simulateParse} className="bg-accent text-white hover:bg-accent/90">
-            Parse spec
-          </Button>
-        </div>
-      )}
-
-      {/* Step 1: Endpoints */}
-      {step === 1 && (
-        <div className="space-y-3">
-          <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
-            Select Endpoints to Expose as Tools
-          </Label>
-          <div className="space-y-1.5">
-            {parsedTools.map((tool) => (
-              <label
-                key={tool.id}
-                className="flex items-center gap-3 border border-border bg-white/5 p-2"
-              >
-                <Checkbox
-                  checked={tool.exposed}
-                  onCheckedChange={(checked) =>
-                    setParsedTools((prev) =>
-                      prev.map((t) =>
-                        t.id === tool.id ? { ...t, exposed: !!checked } : t
-                      )
-                    )
-                  }
-                />
-                <span className={cn('rounded px-1.5 py-0.5 font-mono text-[9px]', methodColor(tool.method))}>
-                  {tool.method}
-                </span>
-                <span className="font-mono text-xs text-ink-primary">{tool.path}</span>
-                <span className="flex-1 truncate font-sans text-[11px] text-ink-secondary">
-                  {tool.description}
-                </span>
-                {!tool.convertible && (
-                  <span className="flex items-center gap-1 font-mono text-[9px] text-signal-caution">
-                    <AlertCircle className="h-3 w-3" />
-                    not convertible
-                  </span>
-                )}
-              </label>
-            ))}
-          </div>
-          <div className="flex justify-between">
-            <Button variant="outline" onClick={() => setStep(0)} className="border-border text-ink-secondary">
-              <ChevronLeft className="mr-1 h-4 w-4" /> Back
-            </Button>
-            <Button onClick={() => setStep(2)} className="bg-accent text-white hover:bg-accent/90">
-              Continue <ChevronRight className="ml-1 h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* Step 2: Auth */}
-      {step === 2 && (
-        <div className="space-y-3">
-          <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
-            Authentication Type
-          </Label>
-          <Select value={authType} onValueChange={setAuthType}>
-            <SelectTrigger className="border-border bg-white/5 font-mono text-sm">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="border-border bg-white/5">
-              <SelectItem value="api_key">API Key</SelectItem>
-              <SelectItem value="bearer">Bearer Token</SelectItem>
-              <SelectItem value="basic">Basic Auth</SelectItem>
-              <SelectItem value="oauth2">OAuth2 (Client Credentials)</SelectItem>
-            </SelectContent>
-          </Select>
-
-          {authType === 'api_key' && (
-            <div>
-              <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
-                API Key
-              </Label>
-              <Input type="password" placeholder="••••••••••••" className="mt-1 border-border bg-white/5 font-mono text-sm" />
-            </div>
-          )}
-          {authType === 'bearer' && (
-            <div>
-              <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
-                Bearer Token
-              </Label>
-              <Input type="password" placeholder="••••••••••••" className="mt-1 border-border bg-white/5 font-mono text-sm" />
-            </div>
-          )}
-          {authType === 'basic' && (
-            <>
-              <div>
-                <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Username</Label>
-                <Input className="mt-1 border-border bg-white/5 font-mono text-sm" />
-              </div>
-              <div>
-                <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Password</Label>
-                <Input type="password" className="mt-1 border-border bg-white/5 font-mono text-sm" />
-              </div>
-            </>
-          )}
-          {authType === 'oauth2' && (
-            <>
-              <div>
-                <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Token URL</Label>
-                <Input placeholder="https://auth.bank.example/token" className="mt-1 border-border bg-white/5 font-mono text-sm" />
-              </div>
-              <div>
-                <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Client ID</Label>
-                <Input className="mt-1 border-border bg-white/5 font-mono text-sm" />
-              </div>
-              <div>
-                <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Client Secret</Label>
-                <Input type="password" className="mt-1 border-border bg-white/5 font-mono text-sm" />
-              </div>
-            </>
-          )}
-
-          <div className="flex items-center gap-1.5 font-mono text-[10px] text-ink-secondary">
-            <Lock className="h-3 w-3" />
-            Credential values are masked and never re-displayed after save.
+            )}
           </div>
 
-          <div className="flex justify-between">
-            <Button variant="outline" onClick={() => setStep(1)} className="border-border text-ink-secondary">
-              <ChevronLeft className="mr-1 h-4 w-4" /> Back
-            </Button>
-            <Button onClick={() => setStep(3)} className="bg-accent text-white hover:bg-accent/90">
-              Continue <ChevronRight className="ml-1 h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* Step 3: Review */}
-      {step === 3 && (
-        <div className="space-y-3">
-          <div className="border border-border bg-white/5 p-3">
-            <div className="grid grid-cols-2 gap-2 font-mono text-xs">
-              <div>
-                <span className="text-ink-secondary">Source: </span>
-                <span className="text-ink-primary">{sourceTypeLabel[sourceType]}</span>
-              </div>
-              <div>
-                <span className="text-ink-secondary">Tools: </span>
-                <span className="text-ink-primary">{parsedTools.filter((t) => t.exposed).length} exposed</span>
-              </div>
-              <div>
-                <span className="text-ink-secondary">Auth: </span>
-                <span className="text-ink-primary">{authType}</span>
-              </div>
-              <div>
-                <span className="text-ink-secondary">Spec URL: </span>
-                <span className="truncate text-ink-primary">{specUrl || 'manual'}</span>
-              </div>
-            </div>
-          </div>
-          <div className="flex justify-between">
-            <Button variant="outline" onClick={() => setStep(2)} className="border-border text-ink-secondary">
-              <ChevronLeft className="mr-1 h-4 w-4" /> Back
-            </Button>
-            <Button className="bg-signal-healthy text-black hover:bg-signal-healthy/90">
-              Publish connection
+          <div className="flex justify-end pt-3">
+            <Button
+              type="submit"
+              disabled={loading}
+              className="bg-cyan-600 text-white hover:bg-cyan-500 font-mono text-xs px-5"
+            >
+              {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <FileUp className="h-4 w-4 mr-2" />}
+              Register & Virtualize Spec
             </Button>
           </div>
-        </div>
+        </form>
       )}
     </div>
   );

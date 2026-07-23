@@ -1,84 +1,291 @@
-// Typed API client layer. All components import from here, never directly
-// from mock data. When a real backend is ready, replace the function bodies
-// with fetch calls — the signatures and return types stay the same.
+// Typed API client layer communicating directly with FastAPI control-plane backend.
 
 import type {
   AgentClass,
   AgentInstance,
   BankConnection,
   Policy,
-  ActivityEvent,
   AuditLogEntry,
-  StopEvent,
-  AlertItem,
-  FleetStatus,
+  FleetStatusResponse,
+  MetricsSnapshot,
+  BankTool,
 } from './types';
-import {
-  agentClasses,
-  agentInstances,
-  bankConnections,
-  policies,
-  auditLog,
-  stopEvents,
-  alerts,
-  operatorName,
-} from './mock-data';
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...options?.headers,
+    },
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`API ${path} failed (${res.status}): ${errorText}`);
+  }
+  return res.json();
+}
 
 export const api = {
-  getAgentClasses(): Promise<AgentClass[]> {
-    return Promise.resolve(agentClasses);
+  // --- Agent Classes ---
+  async getAgentClasses(): Promise<AgentClass[]> {
+    const raw = await request<any[]>('/api/v1/classes');
+    return raw.map((c) => ({
+      id: c.id,
+      name: c.name,
+      description: c.description || '',
+      allowedTools: c.default_allowed_tools || c.allowedTools || [],
+      defaultAllowedTools: c.default_allowed_tools || [],
+      defaultConstraints: c.default_constraints || c.defaultConstraints || {},
+      defaultCap: c.default_caps?.hourly ? { amount: (c.default_caps.hourly.amount_cents || 0) / 100, window: 'day' } : { amount: 500, window: 'day' },
+      defaultCaps: c.default_caps || {},
+      instanceCount: c.instance_count ?? 0,
+      status: c.status || 'active',
+      created_at: c.created_at,
+      updated_at: c.updated_at,
+    }));
   },
 
-  getAgentInstances(): Promise<AgentInstance[]> {
-    return Promise.resolve(agentInstances);
+  async createAgentClass(cls: Partial<AgentClass>): Promise<AgentClass> {
+    return request<AgentClass>('/api/v1/classes', {
+      method: 'POST',
+      body: JSON.stringify(cls),
+    });
   },
 
-  getBankConnections(): Promise<BankConnection[]> {
-    return Promise.resolve(bankConnections);
+  async updateAgentClass(id: string, cls: Partial<AgentClass>): Promise<AgentClass> {
+    return request<AgentClass>(`/api/v1/classes/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(cls),
+    });
   },
 
-  getPolicies(): Promise<Policy[]> {
-    return Promise.resolve(policies);
+  async revokeAgentClass(id: string): Promise<void> {
+    await request(`/api/v1/classes/${id}/revoke`, { method: 'POST' });
   },
 
-  getAuditLog(): Promise<AuditLogEntry[]> {
-    return Promise.resolve(auditLog);
+  async reviveAgentClass(id: string): Promise<void> {
+    await request(`/api/v1/classes/${id}/revoke`, { method: 'DELETE' });
   },
 
-  getStopEvents(): Promise<StopEvent[]> {
-    return Promise.resolve(stopEvents);
+  // --- Agent Instances ---
+  async getAgentInstances(): Promise<AgentInstance[]> {
+    const raw = await request<any[]>('/api/v1/agents');
+    return raw.map((i) => ({
+      id: i.id,
+      classId: i.class_id || i.classId,
+      class_id: i.class_id,
+      status: i.status || 'active',
+      spendToday: i.spend_today ?? 0,
+      capToday: i.cap_today ?? 500,
+      lastAction: i.last_action || 'Idle',
+      lastSeen: i.last_seen || 'Just now',
+      className: i.class_name || i.className || i.class_id,
+      class_name: i.class_name,
+      constraint_overrides: i.constraint_overrides || {},
+      cap_overrides: i.cap_overrides || {},
+      tool_overrides: i.tool_overrides || [],
+    }));
   },
 
-  getAlerts(): Promise<AlertItem[]> {
-    return Promise.resolve(alerts);
+  async registerAgentInstance(inst: Partial<AgentInstance>): Promise<AgentInstance> {
+    return request<AgentInstance>('/api/v1/agents', {
+      method: 'POST',
+      body: JSON.stringify(inst),
+    });
   },
 
-  getOperator(): Promise<string> {
-    return Promise.resolve(operatorName);
+  async revokeAgent(agentId: string): Promise<void> {
+    await request(`/api/v1/agents/${agentId}/revoke`, { method: 'POST' });
   },
 
-  computeFleetStatus(instances: AgentInstance[]): FleetStatus {
-    const hasKilled = instances.some((i) => i.status === 'killed');
-    const hasRevoked = instances.some((i) => i.status === 'revoked');
-    if (hasKilled) return 'stopped';
-    if (hasRevoked) return 'degraded';
-    return 'healthy';
+  async reviveAgent(agentId: string): Promise<void> {
+    await request(`/api/v1/agents/${agentId}/revoke`, { method: 'DELETE' });
   },
 
-  computeFleetSpend(instances: AgentInstance[]): { spent: number; cap: number } {
-    return instances.reduce(
-      (acc, i) => ({
-        spent: acc.spent + i.spendToday,
-        cap: acc.cap + i.capToday,
-      }),
-      { spent: 0, cap: 0 }
-    );
+  async getAgentSpend(agentId: string): Promise<Record<string, number>> {
+    const res = await request<{ spend_counters: Record<string, number> }>(`/api/v1/agents/${agentId}/spend`);
+    return res.spend_counters;
   },
 
-  countDenialsLastHour(events: ActivityEvent[]): number {
-    const oneHourAgo = Date.now() - 3600000;
-    return events.filter(
-      (e) => e.decision === 'deny' && new Date(e.timestamp).getTime() > oneHourAgo
-    ).length;
+  // --- Bank Connections & Tools ---
+  async getBankConnections(): Promise<BankConnection[]> {
+    const raw = await request<any[]>('/api/v1/connections');
+    return raw.map((b) => ({
+      id: b.id,
+      name: b.name,
+      sourceType: b.source_type || b.sourceType || 'native_mcp',
+      source_type: b.source_type,
+      mcpUrl: b.mcp_url || b.mcpUrl,
+      baseUrl: b.base_url || b.baseUrl,
+      openapiSpec: b.openapi_spec || b.openapiSpec,
+      toolCount: b.tool_count ?? b.toolCount ?? (b.tools ? b.tools.length : 0),
+      tool_count: b.tool_count,
+      status: b.status || 'connected',
+      tools: b.tools || [],
+      authType: b.credential_type || 'bearer',
+    }));
+  },
+
+  async getAllTools(): Promise<BankTool[]> {
+    const raw = await request<any[]>('/api/v1/tools');
+    return raw.map((t) => ({
+      id: String(t.id),
+      name: t.name,
+      description: t.description || '',
+      exposed: t.exposed,
+      input_schema: t.input_schema || {},
+      bank_connection_id: t.bank_connection_id,
+    }));
+  },
+
+  async createBankConnection(conn: Partial<BankConnection>): Promise<BankConnection> {
+    return request<BankConnection>('/api/v1/connections', {
+      method: 'POST',
+      body: JSON.stringify(conn),
+    });
+  },
+
+  async clearAllConnections(): Promise<void> {
+    await request('/api/v1/connections/all', { method: 'DELETE' });
+  },
+
+  async registerOpenAPISpec(connectionId: string, spec: string, baseUrl?: string): Promise<{ tool_count: number }> {
+    return request<{ tool_count: number }>(`/api/v1/connections/${connectionId}/openapi`, {
+      method: 'POST',
+      body: JSON.stringify({ spec, base_url: baseUrl }),
+    });
+  },
+
+  // --- Policies ---
+  async getPolicies(): Promise<Policy[]> {
+    const raw = await request<any[]>('/api/v1/policies');
+    return raw.map((p) => ({
+      id: strId(p.id),
+      name: p.name,
+      scope: p.scope || 'global',
+      type: p.type || 'rego',
+      version: p.version || 1,
+      regoSource: p.rego_source || p.regoSource || '',
+      rego_source: p.rego_source,
+      visualRules: p.visual_rules || p.visualRules || [],
+      visual_rules: p.visual_rules,
+      status: p.status || 'active',
+      created_at: p.created_at,
+      updated_at: p.updated_at,
+    }));
+  },
+
+  async createPolicy(policy: Partial<Policy>): Promise<Policy> {
+    return request<Policy>('/api/v1/policies', {
+      method: 'POST',
+      body: JSON.stringify(policy),
+    });
+  },
+
+  async updatePolicy(id: string, policy: Partial<Policy>): Promise<Policy> {
+    return request<Policy>(`/api/v1/policies/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(policy),
+    });
+  },
+
+  async validatePolicy(regoSource: string): Promise<{ valid: boolean; errors?: string[] }> {
+    return request<{ valid: boolean; errors?: string[] }>('/api/v1/policies/validate', {
+      method: 'POST',
+      body: JSON.stringify({ rego_source: regoSource }),
+    });
+  },
+
+  async dryRunPolicy(regoSource: string, sampleSize = 50): Promise<any> {
+    return request<any>('/api/v1/policies/dry-run', {
+      method: 'POST',
+      body: JSON.stringify({ rego_source: regoSource, sample_size: sampleSize }),
+    });
+  },
+
+  // --- Audit Log ---
+  async getAuditLog(params?: {
+    agentId?: string;
+    agentClassId?: string;
+    action?: string;
+    decision?: string;
+    limit?: number;
+  }): Promise<AuditLogEntry[]> {
+    const query = new URLSearchParams();
+    if (params?.agentId) query.set('agent_id', params.agentId);
+    if (params?.agentClassId) query.set('agent_class_id', params.agentClassId);
+    if (params?.action) query.set('action', params.action);
+    if (params?.decision) query.set('decision', params.decision);
+    if (params?.limit) query.set('limit', params.limit.toString());
+
+    const raw = await request<any[]>(`/api/v1/audit?${query.toString()}`);
+    return raw.map((a) => ({
+      id: String(a.id),
+      timestamp: a.ts || a.timestamp,
+      agentId: a.agent_id || a.agentId,
+      agentClass: a.agent_class_id || a.agentClassId || a.agentClass || '',
+      agentClassId: a.agent_class_id || a.agentClassId || '',
+      action: a.action,
+      bankConnectionId: a.bank_connection_id || a.bankConnectionId || '',
+      params: a.params || {},
+      decision: a.decision,
+      denyStage: a.deny_stage || a.denyStage || '',
+      reason: a.reason || '',
+      spendDeltaCents: a.spend_delta || a.spendDeltaCents || 0,
+      latencyMs: a.total_latency_ms || a.totalLatencyMs || 0,
+      totalLatencyMs: a.total_latency_ms || a.totalLatencyMs || 0,
+      killswitch_latency_ms: a.killswitch_latency_ms || 0,
+      policy_latency_ms: a.policy_latency_ms || 0,
+      spend_check_latency_ms: a.spend_check_latency_ms || 0,
+      constraint_latency_ms: a.constraint_latency_ms || 0,
+      downstream_latency_ms: a.downstream_latency_ms || 0,
+      governance_overhead_ms: a.governance_overhead_ms || 0,
+      governanceOverheadMs: a.governance_overhead_ms || a.governanceOverheadMs || 0,
+      prev_hash: a.prev_hash || a.prevHash || '',
+      entry_hash: a.entry_hash || a.entryHash || '',
+    }));
+  },
+
+  async verifyAuditChain(): Promise<{ valid: boolean; total_records: number; verified_until_id: number }> {
+    return request<{ valid: boolean; total_records: number; verified_until_id: number }>('/api/v1/audit/verify');
+  },
+
+  // --- Emergency Stop & Fleet Control ---
+  async haltFleet(reason?: string): Promise<FleetStatusResponse> {
+    return request<FleetStatusResponse>('/api/v1/fleet/halt', {
+      method: 'POST',
+      body: JSON.stringify({ reason: reason || 'Manual emergency stop triggered via operator console' }),
+    });
+  },
+
+  async resumeFleet(): Promise<FleetStatusResponse> {
+    return request<FleetStatusResponse>('/api/v1/fleet/halt', {
+      method: 'DELETE',
+    });
+  },
+
+  async getFleetStatus(): Promise<FleetStatusResponse> {
+    return request<FleetStatusResponse>('/api/v1/fleet/status');
+  },
+
+  // --- Metrics Snapshot ---
+  async getMetricsSnapshot(): Promise<MetricsSnapshot> {
+    return request<MetricsSnapshot>('/api/v1/metrics/snapshot');
+  },
+
+  // --- Dashboard Summary & Activity ---
+  async getDashboardSummary(): Promise<any> {
+    return request<any>('/api/v1/dashboard/summary');
+  },
+
+  async getDashboardActivity(limit = 50): Promise<any[]> {
+    return request<any[]>(`/api/v1/dashboard/activity?limit=${limit}`);
   },
 };
+
+function strId(id: any): string {
+  return id != null ? String(id) : '';
+}

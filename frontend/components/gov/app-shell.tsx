@@ -14,10 +14,6 @@ import type {
   AlertItem,
   FleetStatus,
 } from '@/lib/types';
-import {
-  generateActivityEvent,
-  seedActivityFeed,
-} from '@/lib/mock-data';
 import { EmergencyStopControl } from '@/components/gov/emergency-stop';
 import { StatusBadge } from '@/components/gov/status-badge';
 import { formatCurrency } from '@/lib/format';
@@ -28,6 +24,7 @@ import {
   ScrollText,
   Plug,
   Activity,
+  Gauge,
   FileClock,
   Octagon,
   Settings,
@@ -40,6 +37,7 @@ import { AgentClassesView } from '@/components/views/agent-classes';
 import { PoliciesView } from '@/components/views/policies';
 import { BankConnectionsView } from '@/components/views/bank-connections';
 import { ActivityView } from '@/components/views/activity';
+import { PerformanceView } from '@/components/views/performance';
 import { AuditLogView } from '@/components/views/audit-log';
 import { EmergencyStopView } from '@/components/views/emergency-stop';
 import { SettingsView } from '@/components/views/settings';
@@ -51,6 +49,7 @@ export type ViewId =
   | 'policies'
   | 'bank'
   | 'activity'
+  | 'performance'
   | 'audit'
   | 'estop'
   | 'settings';
@@ -62,6 +61,7 @@ const navItems: { id: ViewId; label: string; icon: React.ComponentType<{ classNa
   { id: 'policies', label: 'Policies', icon: ScrollText },
   { id: 'bank', label: 'Bank Connections', icon: Plug },
   { id: 'activity', label: 'Activity', icon: Activity },
+  { id: 'performance', label: 'Performance & Latency', icon: Gauge },
   { id: 'audit', label: 'Audit Log', icon: FileClock },
   { id: 'estop', label: 'Emergency Stop', icon: Octagon },
   { id: 'settings', label: 'Settings', icon: Settings },
@@ -84,152 +84,119 @@ export function AppShell() {
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [agentsFilter, setAgentsFilter] = useState<{ classId?: string; status?: string } | null>(null);
 
-  useEffect(() => {
-    api.getAgentInstances().then(setInstances);
-    api.getAgentClasses().then(setClasses);
-    api.getBankConnections().then(setConnections);
-    api.getPolicies().then(setPolicies);
-    api.getAuditLog().then(setAuditEntries);
-    api.getStopEvents().then(setStopEvents);
-    api.getAlerts().then(setAlertItems);
-    api.getOperator().then(setOperator);
-    setActivityFeed(seedActivityFeed(30));
+  const reloadData = useCallback(() => {
+    api.getAgentInstances().then(setInstances).catch(() => {});
+    api.getAgentClasses().then(setClasses).catch(() => {});
+    api.getBankConnections().then(setConnections).catch(() => {});
+    api.getPolicies().then(setPolicies).catch(() => {});
+    api.getAuditLog().then(setAuditEntries).catch(() => {});
+    api.getFleetStatus().then((res) => {
+      if (res && res.status) setFleetStatus(res.status);
+    }).catch(() => {});
   }, []);
 
   useEffect(() => {
-    setFleetStatus(api.computeFleetStatus(instances));
-    setFleetSpend(api.computeFleetSpend(instances));
-  }, [instances]);
+    reloadData();
+    const timer = setInterval(reloadData, 5000);
+    return () => clearInterval(timer);
+  }, [reloadData]);
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const evt = generateActivityEvent();
-      setActivityFeed((prev) => [evt, ...prev].slice(0, 200));
-    }, 2500);
-    return () => clearInterval(interval);
-  }, []);
+  const handleFleetAction = async (action: 'stop' | 'resume') => {
+    if (action === 'stop') {
+      await api.haltFleet();
+    } else {
+      await api.resumeFleet();
+    }
+    reloadData();
+  };
 
-  useEffect(() => {
-    setDenialsLastHour(api.countDenialsLastHour(activityFeed));
-  }, [activityFeed]);
+  const handleRevokeAgent = async (agentId: string) => {
+    await api.revokeAgent(agentId);
+    reloadData();
+  };
 
-  const handleEmergencyStop = useCallback(() => {
-    setInstances((prev) => prev.map((i) => ({ ...i, status: 'killed' as const })));
-    setStopEvents((prev) => [
-      {
-        id: `stop-${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        scope: 'fleet',
-        action: 'stop',
-        operator,
-        reason: 'Manual fleet-wide emergency stop from top bar',
-      },
-      ...prev,
-    ]);
-    setAlertItems((prev) => [
-      {
-        id: `alert-${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        severity: 'critical',
-        category: 'emergency_stop',
-        title: 'FLEET-WIDE EMERGENCY STOP TRIGGERED',
-        detail: `Operator ${operator} triggered a fleet-wide emergency stop. All agents killed.`,
-        source: 'Emergency Stop Control',
-      },
-      ...prev,
-    ]);
-  }, [operator]);
+  const handleReviveAgent = async (agentId: string) => {
+    await api.reviveAgent(agentId);
+    reloadData();
+  };
 
-  const navigateToAgent = useCallback((agentId: string) => {
+  const navigateToAgents = (filter?: { classId?: string; status?: string }) => {
+    setAgentsFilter(filter || null);
+    setView('agents');
+  };
+
+  const navigateToAgentDetail = (agentId: string) => {
     setSelectedAgentId(agentId);
     setView('agents');
-  }, []);
-
-  const navigateToAgentsFiltered = useCallback((filter: { classId?: string; status?: string }) => {
-    setAgentsFilter(filter);
-    setSelectedAgentId(null);
-    setView('agents');
-  }, []);
-
-  const activeAgents = instances.filter((i) => i.status === 'active').length;
+  };
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-bg-deep text-ink-primary">
-      {/* Top status bar — glass */}
-      <header className="glass-strong z-20 flex h-14 shrink-0 items-center justify-between border-b border-white/5 px-5">
-        <div className="flex items-center gap-5">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg border border-accent/30 bg-accent/10 shadow-[0_0_16px_-4px_rgba(76,141,255,0.4)]">
-              <Octagon className="h-4 w-4 text-accent" />
-            </div>
-            <span className="font-mono text-xs font-semibold uppercase tracking-widest text-ink-primary">
-              Governance Control Center
-            </span>
+    <div className="min-h-screen bg-[#0B0F14] text-[#E4E9EE] flex font-sans antialiased">
+      {/* Sidebar */}
+      <aside className="w-64 bg-[#131A22] border-r border-[#232B35] flex flex-col flex-shrink-0">
+        <div className="p-4 border-b border-[#232B35] flex items-center gap-3">
+          <div className="w-8 h-8 rounded bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center font-mono font-bold text-white text-sm shadow-md">
+            AGP
           </div>
-          <div className="flex items-center gap-2 border-l border-white/10 pl-5">
-            <StatusBadge status={fleetStatus} size="sm" />
-            <span className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
-              {activeAgents} agents active
-            </span>
+          <div>
+            <div className="font-mono font-bold text-sm text-[#E4E9EE] tracking-tight">
+              REFLEX AGP
+            </div>
+            <div className="text-[10px] font-mono text-[#8B96A3]">
+              AI Governance Control Plane
+            </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
-          <EmergencyStopControl onConfirm={handleEmergencyStop} compact />
-          <div className="flex items-center gap-2 border-l border-white/10 pl-4">
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/5">
-              <Bell className="h-3.5 w-3.5 text-ink-secondary" />
-            </div>
-            <span className="font-mono text-xs text-ink-secondary">{operator}</span>
-          </div>
-        </div>
-      </header>
-
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left nav rail — glass */}
-        <nav className="z-10 flex w-48 shrink-0 flex-col border-r border-white/5 bg-white/[0.02] py-3 backdrop-blur-xl">
+        <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
           {navItems.map((item) => {
             const Icon = item.icon;
-            const isActive = view === item.id;
+            const active = view === item.id;
             return (
               <button
                 key={item.id}
-                onClick={() => {
-                  setView(item.id);
-                  if (item.id !== 'agents') {
-                    setSelectedAgentId(null);
-                    setAgentsFilter(null);
-                  }
-                }}
+                onClick={() => setView(item.id)}
                 className={cn(
-                  'group mx-2 flex items-center gap-2.5 rounded-xl px-3 py-2 text-left font-mono text-xs uppercase tracking-wider transition-all',
-                  isActive
-                    ? 'bg-accent/10 text-accent shadow-[0_0_16px_-6px_rgba(76,141,255,0.4)]'
-                    : 'text-ink-secondary hover:bg-white/5 hover:text-ink-primary'
+                  'w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-mono transition-colors text-left',
+                  active
+                    ? 'bg-[#4C8DFF]/15 text-[#4C8DFF] font-semibold border border-[#4C8DFF]/30'
+                    : 'text-[#8B96A3] hover:text-[#E4E9EE] hover:bg-[#232B35]/40'
                 )}
               >
-                <Icon className="h-4 w-4 shrink-0" />
-                {item.label}
+                <Icon className={cn('w-4 h-4', active ? 'text-[#4C8DFF]' : 'text-[#8B96A3]')} />
+                <span>{item.label}</span>
               </button>
             );
           })}
-          <div className="mt-auto px-3 py-3">
-            <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
-              <div className="font-mono text-[9px] uppercase tracking-widest text-ink-secondary/60">
-                Fleet Spend Today
-              </div>
-              <div className="mt-0.5 font-mono text-sm text-ink-primary tabular">
-                {formatCurrency(fleetSpend.spent)}
-              </div>
-              <div className="font-mono text-[10px] text-ink-secondary tabular">
-                of {formatCurrency(fleetSpend.cap)} cap
-              </div>
-            </div>
-          </div>
         </nav>
 
-        {/* Main content */}
-        <main className="flex-1 overflow-auto">
+        <div className="p-3 border-t border-[#232B35] text-[11px] font-mono text-[#8B96A3] flex justify-between items-center bg-[#0B0F14]/50">
+          <span>Operator: <strong className="text-[#E4E9EE]">{operator}</strong></span>
+          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" title="System Online" />
+        </div>
+      </aside>
+
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Top Header */}
+        <header className="h-14 bg-[#131A22] border-b border-[#232B35] px-6 flex items-center justify-between flex-shrink-0">
+          <div className="flex items-center gap-4">
+            <StatusBadge status={fleetStatus} />
+            <div className="h-4 w-[1px] bg-[#232B35]" />
+            <div className="text-xs font-mono text-[#8B96A3]">
+              Active Fleet: <span className="text-[#E4E9EE] font-semibold">{instances.filter(i => i.status === 'active').length}</span> / {instances.length}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <EmergencyStopControl
+              onConfirm={() => handleFleetAction(fleetStatus === 'stopped' ? 'resume' : 'stop')}
+            />
+          </div>
+        </header>
+
+        {/* View Router */}
+        <main className="flex-1 overflow-y-auto p-6">
           {view === 'command' && (
             <CommandCenterView
               instances={instances}
@@ -239,8 +206,8 @@ export function AppShell() {
               fleetStatus={fleetStatus}
               fleetSpend={fleetSpend}
               denialsLastHour={denialsLastHour}
-              onAgentClick={navigateToAgent}
-              onNavigateAgents={navigateToAgentsFiltered}
+              onAgentClick={navigateToAgentDetail}
+              onNavigateAgents={navigateToAgents}
               onNavigatePolicies={() => setView('policies')}
               onNavigateAudit={() => setView('audit')}
             />
@@ -252,19 +219,14 @@ export function AppShell() {
               activityFeed={activityFeed}
               selectedAgentId={selectedAgentId}
               onSelectAgent={setSelectedAgentId}
-              initialFilter={agentsFilter}
+              onRefresh={reloadData}
             />
           )}
-          {view === 'classes' && (
-            <AgentClassesView classes={classes} instances={instances} />
-          )}
-          {view === 'policies' && (
-            <PoliciesView policies={policies} classes={classes} />
-          )}
-          {view === 'bank' && <BankConnectionsView connections={connections} />}
-          {view === 'activity' && (
-            <ActivityView activityFeed={activityFeed} classes={classes} />
-          )}
+          {view === 'classes' && <AgentClassesView classes={classes} instances={instances} onRefresh={reloadData} />}
+          {view === 'policies' && <PoliciesView policies={policies} classes={classes} />}
+          {view === 'bank' && <BankConnectionsView connections={connections} onRefresh={reloadData} />}
+          {view === 'activity' && <ActivityView activityFeed={activityFeed} classes={classes} />}
+          {view === 'performance' && <PerformanceView />}
           {view === 'audit' && <AuditLogView entries={auditEntries} />}
           {view === 'estop' && (
             <EmergencyStopView
@@ -272,24 +234,10 @@ export function AppShell() {
               classes={classes}
               stopEvents={stopEvents}
               operator={operator}
-              onStopInstance={(id) =>
-                setInstances((prev) =>
-                  prev.map((i) => (i.id === id ? { ...i, status: 'killed' as const } : i))
-                )
-              }
-              onStopClass={(classId) =>
-                setInstances((prev) =>
-                  prev.map((i) =>
-                    i.classId === classId ? { ...i, status: 'killed' as const } : i
-                  )
-                )
-              }
-              onStopFleet={handleEmergencyStop}
-              onResumeInstance={(id) =>
-                setInstances((prev) =>
-                  prev.map((i) => (i.id === id ? { ...i, status: 'active' as const } : i))
-                )
-              }
+              onStopInstance={handleRevokeAgent}
+              onStopClass={(classId) => api.revokeAgentClass(classId).then(reloadData)}
+              onStopFleet={() => handleFleetAction('stop')}
+              onResumeInstance={handleReviveAgent}
             />
           )}
           {view === 'settings' && <SettingsView operator={operator} />}

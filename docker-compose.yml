@@ -32,6 +32,30 @@ services:
       timeout: 5s
       retries: 10
 
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://agp:agp@postgres:5432/agp"
+      PG_DSN: "postgres://agp:agp@postgres:5432/agp?sslmode=disable"
+      REDIS_URL: "redis://redis:6379/0"
+      JWT_SECRET: "jwt-secret"
+      JWT_ISSUER: "agp-gateway"
+      GATEWAY_URL: "http://gateway:8080"
+      CORS_ORIGINS: "*"
+    networks:
+      - frontend
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
   gateway:
     build:
       context: ./gateway
@@ -44,8 +68,9 @@ services:
       GATEWAY_METRICS_PORT: "9090"
       REDIS_ADDR: "redis:6379"
       POSTGRES_DSN: "postgres://agp:agp@postgres:5432/agp?sslmode=disable"
+      BACKEND_URL: "http://backend:8000"
       MCP_TARGETS: '{"default":"http://20.2.83.126:31200/mcp","bank-identity":"http://20.2.83.126:31100/mcp","bank-payments":"http://20.2.83.126:31200/mcp","bank-financial":"http://20.2.83.126:31300/mcp","bank-risk":"http://20.2.83.126:31400/mcp"}'
-      GATEWAY_JWT_SECRET: "hackathon-demo-secret-2026"
+      GATEWAY_JWT_SECRET: "jwt-secret"
       GATEWAY_JWT_ISSUER: "agp-gateway"
     networks:
       - frontend
@@ -55,6 +80,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      backend:
+        condition: service_started
     restart: unless-stopped
 
 networks:

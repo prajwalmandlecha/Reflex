@@ -148,10 +148,10 @@ export function AuditLogView({ entries }: { entries: AuditLogEntry[] }) {
                     <span
                       className={cn(
                         'font-mono text-[10px] uppercase tracking-wider',
-                        entryTypeColor[entry.entryType]
+                        entryTypeColor[entry.entryType || 'action'] || 'text-ink-secondary'
                       )}
                     >
-                      {entryTypeLabel[entry.entryType]}
+                      {entryTypeLabel[entry.entryType || 'action'] || 'Action'}
                     </span>
                   </td>
                   <td className="px-4 py-2 font-mono text-[10px] text-accent">

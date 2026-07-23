@@ -176,7 +176,7 @@ export function CommandCenterView({
                   <div className="mt-1 flex items-center gap-3 font-mono text-[10px] text-ink-secondary">
                     <span>{clsInstances.length} instances</span>
                     <span>·</span>
-                    <span>{cls.allowedTools.length} tools</span>
+                    <span>{(cls.allowedTools || cls.defaultAllowedTools || []).length} tools</span>
                   </div>
                 </div>
               );

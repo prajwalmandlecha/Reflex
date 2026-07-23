@@ -78,7 +78,7 @@ export function PoliciesView({
                   <span>{pol.targetName}</span>
                 </div>
                 <div className="mt-0.5 font-mono text-[10px] text-ink-secondary/60">
-                  {formatRelative(pol.lastModified)}
+                  {formatRelative(pol.lastModified || pol.updated_at || new Date().toISOString())}
                 </div>
               </button>
             ))}
@@ -343,7 +343,7 @@ function PolicyEditor({
 
         {policy && (
           <div className="mt-3 font-mono text-[10px] text-ink-secondary">
-            Last modified: {formatDateTime(policy.lastModified)}
+            Last modified: {formatDateTime(policy.lastModified || policy.updated_at || new Date().toISOString())}
           </div>
         )}
       </div>

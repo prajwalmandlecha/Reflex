@@ -3,6 +3,26 @@ skills-lock.json
 .agents/
 .agent/
 
+# Build binaries & Executables
+*.exe
+gateway/gateway
+gateway/gateway.exe
+
+# Node & Next.js
+node_modules/
+.next/
+dist/
+build/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+env/
+venv/
+
 # Logs & temp files
 *.log
 tmp/
+.DS_Store
