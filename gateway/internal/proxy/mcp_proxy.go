@@ -161,7 +161,7 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			amount = amtCents / 100.0
 		}
 
-		allowed, reason := p.governCall(r.Context(), agentID, agentKind, toolName, amount, allowedTools)
+		allowed, reason := p.governCall(r.Context(), agentID, agentKind, toolName, amount, allowedTools, args)
 
 		p.auditor.Log(&audit.Entry{
 			AgentID:    agentID,
@@ -267,7 +267,7 @@ func (p *MCPProxy) handleOpenAPIRequest(
 		}
 
 		// Run Governance Pipeline
-		allowed, reason := p.governCall(r.Context(), agentID, agentKind, toolName, amount, allowedTools)
+		allowed, reason := p.governCall(r.Context(), agentID, agentKind, toolName, amount, allowedTools, args)
 
 		p.auditor.Log(&audit.Entry{
 			AgentID:    agentID,
@@ -464,7 +464,14 @@ func (p *MCPProxy) resolveTargetURL(path string) string {
 	return "http://localhost:9000"
 }
 
-func (p *MCPProxy) governCall(ctx context.Context, agentID, agentKind, toolName string, amount float64, allowedTools []string) (bool, string) {
+func (p *MCPProxy) governCall(ctx context.Context, agentID, agentKind, toolName string, amount float64, allowedTools []string, args map[string]any) (bool, string) {
+	if args == nil {
+		args = make(map[string]any)
+	}
+	if amount > 0 {
+		args["amount"] = amount
+	}
+
 	// 1. Killswitch
 	ksRes, err := p.ks.Check(ctx, agentID)
 	if err != nil {
@@ -481,6 +488,7 @@ func (p *MCPProxy) governCall(ctx context.Context, agentID, agentKind, toolName 
 		Action:       toolName,
 		Amount:       amount,
 		AllowedTools: allowedTools,
+		Params:       args,
 	})
 	if err != nil {
 		return false, "internal error: policy evaluation failed"

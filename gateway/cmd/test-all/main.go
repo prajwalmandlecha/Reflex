@@ -187,12 +187,20 @@ func (ts *TestSuite) testOPAPolicies(sessionID string) {
 		ts.fail("Conversational Agent payment.initiate was not denied: " + res2)
 	}
 
-	// Trading Agent: transfer_money -> Allow
+	// Trading Agent: transfer_money ($500.00) -> Allow
 	res3 := ts.callTool("/mcp", "trade-agent-01", "trading", "transfer_money", map[string]any{"amount": 500}, sessionID)
 	if !strings.Contains(res3, "revoked") && !strings.Contains(res3, "halted") {
 		ts.pass("Trading Agent: transfer_money ($500.00) -> ALLOWED & EXECUTED")
 	} else {
 		ts.fail("Trading Agent transfer_money failed: " + res3)
+	}
+
+	// Trading Agent: transfer_money ($5,000.00) -> Denied by Parameter Bound ($1,000.00 max)
+	res4 := ts.callTool("/mcp", "trade-agent-01", "trading", "transfer_money", map[string]any{"amount": 5000.00}, sessionID)
+	if strings.Contains(res4, "exceeds maximum allowed") || strings.Contains(res4, "parameter bound") || strings.Contains(res4, "1000") {
+		ts.pass("Trading Agent: transfer_money ($5,000.00) -> DENIED BY PARAMETER BOUND ($1,000.00 max)")
+	} else {
+		ts.fail("Trading Agent transfer_money ($5,000.00) parameter bound denial failed: " + res4)
 	}
 }
 

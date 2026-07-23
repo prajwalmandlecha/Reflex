@@ -50,16 +50,19 @@ package agp.authz
 import rego.v1
 
 default allow := false
+default deny := false
 
 # Rule 1: Explicit Per-Agent Allowed Tools Whitelist (Profile / ABAC)
 allow if {
 	count(input.allowed_tools) > 0
 	input.action in input.allowed_tools
+	not deny
 }
 
 reason := sprintf("action ''%s'' allowed by agent profile whitelist", [input.action]) if {
 	count(input.allowed_tools) > 0
 	input.action in input.allowed_tools
+	not deny
 }
 
 reason := sprintf("action ''%s'' is not permitted by agent profile whitelist", [input.action]) if {
@@ -144,8 +147,18 @@ allow if {
 reason := sprintf("agent kind ''%s'' is not allowed to perform action ''%s''", [input.agent_kind, input.action]) if {
 	count(input.allowed_tools) == 0
 	not allow
+	not deny
 }
-') ON CONFLICT (name) DO UPDATE SET source = EXCLUDED.source;
+
+# Rule 6: Parameter Bounds Enforcement (Single-Transaction Transfer Cap of $1,000.00)
+deny if {
+	input.action == "transfer_money"
+	input.amount > 1000.00
+}
+
+reason := sprintf("transfer amount $%.2f exceeds maximum allowed single-transaction parameter bound of $1000.00", [input.amount]) if {
+	deny
+}') ON CONFLICT (name) DO UPDATE SET source = EXCLUDED.source, version = policies.version + 1;
 
 -- Seed Default Profiles
 INSERT INTO agent_profiles (profile_id, profile_name, description, allowed_tools, hourly_spend_cap_cents) VALUES

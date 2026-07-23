@@ -34,8 +34,9 @@ type Input struct {
 	Resource      string   `json:"resource"`
 	PolicyVersion int      `json:"policy_version"`
 	Amount        float64  `json:"amount,omitempty"`
-	Currency      string   `json:"currency,omitempty"`
-	AllowedTools  []string `json:"allowed_tools,omitempty"`
+	Currency      string         `json:"currency,omitempty"`
+	AllowedTools  []string       `json:"allowed_tools,omitempty"`
+	Params        map[string]any `json:"params,omitempty"`
 }
 
 // Engine is the embedded OPA policy engine.
@@ -98,7 +99,9 @@ func (e *Engine) Evaluate(ctx context.Context, input *Input) (*Decision, error) 
 	}
 
 	decision := &Decision{}
-	if allow, ok := resultMap["allow"].(bool); ok {
+	if deny, ok := resultMap["deny"].(bool); ok && deny {
+		decision.Allow = false
+	} else if allow, ok := resultMap["allow"].(bool); ok {
 		decision.Allow = allow
 	}
 	if reason, ok := resultMap["reason"].(string); ok {
