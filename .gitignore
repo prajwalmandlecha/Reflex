@@ -1,0 +1,8 @@
+# IDE & Agent Skills lockfiles
+skills-lock.json
+.agents/
+.agent/
+
+# Logs & temp files
+*.log
+tmp/
