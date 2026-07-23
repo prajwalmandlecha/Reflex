@@ -45,3 +45,11 @@ class AuditLog(Base):
     decision = Column(String, nullable=False) # allow, deny
     risk_score = Column(Float, default=0.0)
     hash = Column(String, nullable=False)
+
+class BankConnection(Base):
+    __tablename__ = "bank_connections"
+    
+    id = Column(String, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    server_url = Column(String, nullable=False)
+    status = Column(String, default="active")
