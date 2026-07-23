@@ -8,9 +8,9 @@ import (
 	"time"
 )
 
-// Config holds all gateway configuration, sourced from environment variables.
+// Config holds gateway configuration sourced from environment variables.
 type Config struct {
-	// Server
+	// Server ports
 	MCPPort     string
 	MetricsPort string
 
@@ -22,10 +22,12 @@ type Config struct {
 	// Postgres
 	PostgresDSN string
 
+	// Backend Service URL for config cache misses
+	BackendURL string
+
 	// JWT
-	JWTSecret     string
-	JWTIssuer     string
-	JWTDefaultTTL time.Duration
+	JWTSecret string
+	JWTIssuer string
 
 	// Audit
 	AuditBatchSize     int
@@ -34,13 +36,11 @@ type Config struct {
 	// Policy
 	PolicyPollInterval time.Duration
 
-	// Downstream MCP Target Servers (multi-server support)
-	// Map of service names to target MCP URLs
-	// e.g. {"default": "http://localhost:9000", "bank-payments": "http://localhost:9001"}
+	// Downstream MCP Target Servers
 	MCPTargets map[string]string
 }
 
-// Load reads configuration from environment variables with defaults.
+// Load reads configuration from environment variables with sensible defaults.
 func Load() *Config {
 	targets := make(map[string]string)
 	if targetsJSON := os.Getenv("MCP_TARGETS"); targetsJSON != "" {
@@ -59,11 +59,11 @@ func Load() *Config {
 		RedisPassword: envOr("REDIS_PASSWORD", ""),
 		RedisDB:       envIntOr("REDIS_DB", 0),
 
-		PostgresDSN: envOr("POSTGRES_DSN", "postgres://agp:agp@localhost:5432/agp?sslmode=disable"),
+		PostgresDSN: envOr("POSTGRES_DSN", "postgres://agp:agp@localhost:5433/agp?sslmode=disable"),
+		BackendURL:  envOr("BACKEND_URL", "http://localhost:8000"),
 
-		JWTSecret:     envOr("GATEWAY_JWT_SECRET", "dev-secret-change-in-prod"),
-		JWTIssuer:     envOr("GATEWAY_JWT_ISSUER", "agp-gateway"),
-		JWTDefaultTTL: envDurationOr("GATEWAY_JWT_TTL", 15*time.Minute),
+		JWTSecret: envOr("GATEWAY_JWT_SECRET", envOr("JWT_SECRET", "dev-secret-2026")),
+		JWTIssuer: envOr("GATEWAY_JWT_ISSUER", envOr("JWT_ISSUER", "agp-gateway")),
 
 		AuditBatchSize:     envIntOr("AUDIT_BATCH_SIZE", 100),
 		AuditFlushInterval: envDurationOr("AUDIT_FLUSH_INTERVAL", 500*time.Millisecond),

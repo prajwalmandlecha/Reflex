@@ -1,5 +1,6 @@
 // Package proxy implements an in-flight MCP Security Interceptor & Proxy with multi-server routing,
-// Agent Profile/ABAC tool whitelisting, dynamic tools/list discovery filtering, and OpenAPI-to-MCP virtualization.
+// Agent Profile/ABAC tool whitelisting, dynamic constraints/caps, OpenAPI-to-MCP virtualization,
+// high-precision per-stage latency metrics, and Redis pub/sub event publishing.
 package proxy
 
 import (
@@ -15,10 +16,11 @@ import (
 	"time"
 
 	"github.com/agp/gateway/internal/adapter"
-	"github.com/agp/gateway/internal/agent"
 	"github.com/agp/gateway/internal/audit"
 	"github.com/agp/gateway/internal/authn"
 	"github.com/agp/gateway/internal/authz"
+	"github.com/agp/gateway/internal/configcache"
+	"github.com/agp/gateway/internal/constraints"
 	"github.com/agp/gateway/internal/killswitch"
 	"github.com/agp/gateway/internal/metrics"
 	"github.com/agp/gateway/internal/spend"
@@ -31,19 +33,41 @@ type OpenAPISpecTarget struct {
 	Doc     *openapi3.T
 }
 
+type GovernanceTimings struct {
+	KillswitchMs    float64
+	ConstraintMs    float64
+	PolicyMs        float64
+	SpendCheckMs    float64
+	GovernanceTotal float64
+}
+
+type GovernanceEvent struct {
+	Type            string            `json:"type"`
+	AgentID         string            `json:"agent_id"`
+	AgentClassID    string            `json:"agent_class_id"`
+	Tool            string            `json:"tool"`
+	Decision        string            `json:"decision"`
+	DenyStage       string            `json:"deny_stage"`
+	Reason          string            `json:"reason"`
+	SpendDeltaCents int64             `json:"spend_delta_cents"`
+	Latency         map[string]float64 `json:"latency"`
+	Timestamp       string            `json:"timestamp"`
+}
+
 type MCPProxy struct {
-	targets        map[string]string
-	openAPITargets map[string]*OpenAPISpecTarget
-	openAPIMux     sync.RWMutex
-	ks             *killswitch.Switch
-	policyEngine   *authz.Engine
-	spendLimiter   *spend.Limiter
-	auditor        *audit.Logger
-	jwtMgr         *authn.JWTManager
-	agentStore     *agent.Store
-	rdb            *redis.Client
-	logger         *slog.Logger
-	client         *http.Client
+	targets          map[string]string
+	openAPITargets   map[string]*OpenAPISpecTarget
+	openAPIMux       sync.RWMutex
+	ks               *killswitch.Switch
+	policyEngine     *authz.Engine
+	spendLimiter     *spend.Limiter
+	constraintCheck  *constraints.Checker
+	configCache      *configcache.ConfigCache
+	auditor          *audit.Logger
+	jwtMgr           *authn.JWTManager
+	rdb              *redis.Client
+	logger           *slog.Logger
+	client           *http.Client
 }
 
 func NewMCPProxy(
@@ -51,28 +75,29 @@ func NewMCPProxy(
 	ks *killswitch.Switch,
 	policyEngine *authz.Engine,
 	spendLimiter *spend.Limiter,
+	constraintCheck *constraints.Checker,
+	configCache *configcache.ConfigCache,
 	auditor *audit.Logger,
 	jwtMgr *authn.JWTManager,
-	agentStore *agent.Store,
 	rdb *redis.Client,
 	logger *slog.Logger,
 ) *MCPProxy {
 	return &MCPProxy{
-		targets:        targets,
-		openAPITargets: make(map[string]*OpenAPISpecTarget),
-		ks:             ks,
-		policyEngine:   policyEngine,
-		spendLimiter:   spendLimiter,
-		auditor:        auditor,
-		jwtMgr:         jwtMgr,
-		agentStore:     agentStore,
-		rdb:            rdb,
-		logger:         logger,
-		client:         &http.Client{Timeout: 15 * time.Second},
+		targets:         targets,
+		openAPITargets:  make(map[string]*OpenAPISpecTarget),
+		ks:              ks,
+		policyEngine:    policyEngine,
+		spendLimiter:    spendLimiter,
+		constraintCheck: constraintCheck,
+		configCache:     configCache,
+		auditor:         auditor,
+		jwtMgr:          jwtMgr,
+		rdb:             rdb,
+		logger:          logger,
+		client:          &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
-// RegisterOpenAPISpec registers an OpenAPI spec to be dynamically virtualized as an MCP server at /mcp/<serviceName>.
 func (p *MCPProxy) RegisterOpenAPISpec(serviceName string, baseURL string, specData []byte) error {
 	doc, err := adapter.LoadSpec(specData)
 	if err != nil {
@@ -89,8 +114,9 @@ func (p *MCPProxy) RegisterOpenAPISpec(serviceName string, baseURL string, specD
 	return nil
 }
 
-// ServeHTTP acts as the Multi-Target MCP Reverse Proxy + Security Interceptor.
 func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	reqStart := time.Now()
+
 	// Step 1: Extract Agent Identity
 	agentID, agentKind, err := p.extractIdentity(r)
 	if err != nil {
@@ -98,14 +124,23 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 2: Check if target is a virtualized OpenAPI endpoint
+	// Step 2: Fetch Agent Config from ConfigCache (Redis with Backend fallback)
+	agentCfg := p.configCache.Get(r.Context(), agentID)
+	classID := agentCfg.ClassID
+	allowedTools := agentCfg.EffectiveTools
+
+	if agentCfg.Status == "revoked" {
+		p.logger.Warn("request blocked by agent status revocation", "agent_id", agentID)
+		p.sendErrorResponse(w, r, nil, "agent is revoked")
+		return
+	}
+
 	serviceName := p.extractServiceName(r.URL.Path)
 
 	p.openAPIMux.RLock()
 	openAPITarget, isOpenAPI := p.openAPITargets[serviceName]
 	p.openAPIMux.RUnlock()
 
-	// Read body payload
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -113,42 +148,30 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
-	// Parse JSON-RPC envelope
 	var rpcReq map[string]any
 	if len(bodyBytes) > 0 {
 		_ = json.Unmarshal(bodyBytes, &rpcReq)
 	}
 
 	method, _ := rpcReq["method"].(string)
+	reqID := rpcReq["id"]
 
-	// Track active MCP session in Redis if Mcp-Session-Id header is present
 	if sessionID := r.Header.Get("Mcp-Session-Id"); sessionID != "" {
 		p.trackSession(r.Context(), sessionID, agentID, agentKind, serviceName)
 	}
 
-	// Fetch Agent Instance Profile & Status from Redis/Postgres Store
-	allowedTools, agentStatus, _ := p.agentStore.GetAgentPermissions(r.Context(), agentID)
-	if agentStatus == "revoked" {
-		p.logger.Warn("request blocked by agent status revocation", "agent_id", agentID)
-		p.sendErrorResponse(w, r, rpcReq["id"], fmt.Sprintf("agent '%s' is revoked", agentID))
-		return
-	}
-
 	if isOpenAPI {
-		p.handleOpenAPIRequest(w, r, openAPITarget, rpcReq, method, agentID, agentKind, allowedTools)
+		p.handleOpenAPIRequest(w, r, openAPITarget, rpcReq, method, agentID, agentKind, classID, allowedTools, agentCfg, reqStart)
 		return
 	}
 
-	// Step 3: Resolve Target Native MCP Server URL
 	targetURL := p.resolveTargetURL(r.URL.Path)
 
-	// Handle tools/list for native MCP — Filter discovery schema dynamically!
 	if method == "tools/list" && len(allowedTools) > 0 {
 		p.handleFilteredToolsList(w, r, targetURL, bodyBytes, allowedTools)
 		return
 	}
 
-	// Step 4: Governance Pipeline Interception for tools/call
 	if method == "tools/call" {
 		params, _ := rpcReq["params"].(map[string]any)
 		toolName, _ := params["name"].(string)
@@ -161,35 +184,209 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			amount = amtCents / 100.0
 		}
 
-		allowed, reason := p.governCall(r.Context(), agentID, agentKind, toolName, amount, allowedTools, args)
+		allowed, denyStage, reason, timings := p.governCall(r.Context(), agentID, classID, agentKind, toolName, amount, allowedTools, agentCfg, args)
 
-		p.auditor.Log(&audit.Entry{
-			AgentID:    agentID,
-			Action:     toolName,
-			Resource:   targetURL,
-			Decision:   map[bool]string{true: "allow", false: "deny"}[allowed],
-			SpendDelta: int64(amount * 100),
-			Reason:     reason,
-		})
-
+		downstreamStart := time.Now()
+		if allowed {
+			p.proxyToTarget(w, r, targetURL, bodyBytes)
+		} else {
+			p.logger.Warn("mcp tool execution DENIED", "agent_id", agentID, "tool", toolName, "stage", denyStage, "reason", reason)
+			p.sendErrorResponse(w, r, reqID, reason)
+		}
+		downstreamMs := ms(time.Since(downstreamStart))
 		if !allowed {
-			p.logger.Warn("mcp tool execution DENIED", "agent_id", agentID, "tool", toolName, "reason", reason)
-			p.sendErrorResponse(w, r, rpcReq["id"], reason)
-			return
+			downstreamMs = 0
 		}
 
-		p.logger.Info("mcp tool execution ALLOWED",
-			"agent_id", agentID,
-			"tool", toolName,
-			"target_url", targetURL,
-		)
+		totalMs := ms(time.Since(reqStart))
+		govOverheadMs := timings.GovernanceTotal
+
+		decisionStr := map[bool]string{true: "allow", false: "deny"}[allowed]
+
+		// Record Prometheus Metrics
+		metrics.RequestDuration.WithLabelValues(toolName, classID, decisionStr).Observe(totalMs / 1000.0)
+		metrics.GovernanceOverhead.WithLabelValues(toolName, decisionStr).Observe(govOverheadMs / 1000.0)
+		if allowed {
+			metrics.DownstreamDuration.WithLabelValues(serviceName, toolName).Observe(downstreamMs / 1000.0)
+			metrics.SpendProcessed.WithLabelValues(agentID, classID).Add(amount * 100)
+		}
+		metrics.DecisionsTotal.WithLabelValues(toolName, classID, decisionStr, denyStage).Inc()
+
+		// Publish event to Redis pub/sub for WebSocket streaming to frontend
+		p.publishEvent(r.Context(), GovernanceEvent{
+			Type:            "decision",
+			AgentID:         agentID,
+			AgentClassID:    classID,
+			Tool:            toolName,
+			Decision:        decisionStr,
+			DenyStage:       denyStage,
+			Reason:          reason,
+			SpendDeltaCents: int64(amount * 100),
+			Latency: map[string]float64{
+				"total_ms":               totalMs,
+				"killswitch_ms":          timings.KillswitchMs,
+				"constraint_ms":          timings.ConstraintMs,
+				"policy_ms":              timings.PolicyMs,
+				"spend_ms":               timings.SpendCheckMs,
+				"downstream_ms":          downstreamMs,
+				"governance_overhead_ms": govOverheadMs,
+			},
+			Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+		})
+
+		// Write permanent audit log entry
+		p.auditor.Log(&audit.Entry{
+			AgentID:              agentID,
+			AgentClassID:         classID,
+			Action:               toolName,
+			BankConnectionID:     serviceName,
+			Params:               args,
+			Decision:             decisionStr,
+			DenyStage:            denyStage,
+			Reason:               reason,
+			SpendDelta:           int64(amount * 100),
+			TotalLatencyMs:       totalMs,
+			KillswitchLatencyMs:  timings.KillswitchMs,
+			PolicyLatencyMs:      timings.PolicyMs,
+			SpendCheckLatencyMs:  timings.SpendCheckMs,
+			ConstraintLatencyMs:  timings.ConstraintMs,
+			DownstreamLatencyMs:  downstreamMs,
+			GovernanceOverheadMs: govOverheadMs,
+		})
+
+		return
 	}
 
-	// Step 5: Forward to Target MCP Server
 	p.proxyToTarget(w, r, targetURL, bodyBytes)
 }
 
-// handleOpenAPIRequest handles MCP requests virtualized over OpenAPI REST endpoints.
+func (p *MCPProxy) governCall(
+	ctx context.Context,
+	agentID, classID, agentKind, toolName string,
+	amount float64,
+	allowedTools []string,
+	cfg *configcache.AgentConfig,
+	args map[string]any,
+) (bool, string, string, GovernanceTimings) {
+	var t GovernanceTimings
+
+	// Stage 1: Killswitch
+	ksStart := time.Now()
+	ksRes, err := p.ks.Check(ctx, agentID, classID)
+	t.KillswitchMs = ms(time.Since(ksStart))
+	metrics.KillswitchDuration.Observe(t.KillswitchMs / 1000.0)
+
+	if err != nil {
+		t.GovernanceTotal = t.KillswitchMs
+		return false, "killswitch", "internal error: killswitch check failed", t
+	}
+	if ksRes.Killed {
+		t.GovernanceTotal = t.KillswitchMs
+		return false, "killswitch", ksRes.Reason, t
+	}
+
+	// Stage 2: Dynamic Per-Tool Constraints
+	cStart := time.Now()
+	cOk, cReason := p.constraintCheck.Check(ctx, cfg, toolName, args)
+	t.ConstraintMs = ms(time.Since(cStart))
+	metrics.ConstraintCheckDuration.WithLabelValues(toolName).Observe(t.ConstraintMs / 1000.0)
+
+	if !cOk {
+		t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs
+		return false, "constraint", cReason, t
+	}
+
+	// Stage 3: OPA Policy Engine
+	opaStart := time.Now()
+	decision, err := p.policyEngine.Evaluate(ctx, &authz.Input{
+		AgentID:      agentID,
+		AgentKind:    agentKind,
+		Action:       toolName,
+		Amount:       amount,
+		AllowedTools: allowedTools,
+		Params:       args,
+	})
+	t.PolicyMs = ms(time.Since(opaStart))
+	metrics.PolicyEvalDuration.WithLabelValues("default").Observe(t.PolicyMs / 1000.0)
+
+	if err != nil {
+		t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs + t.PolicyMs
+		return false, "policy", "internal error: policy evaluation failed", t
+	}
+	if !decision.Allow {
+		t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs + t.PolicyMs
+		return false, "policy", decision.Reason, t
+	}
+
+	// Stage 4: Hierarchical Spend Caps
+	spendStart := time.Now()
+	spendDelta := int64(amount * 100)
+	if spendDelta > 0 {
+		dynamicScopes := p.buildDynamicScopes(agentID, classID, cfg.EffectiveCaps)
+		spendRes, err := p.spendLimiter.Check(ctx, spendDelta, dynamicScopes)
+		t.SpendCheckMs = ms(time.Since(spendStart))
+		metrics.SpendCheckDuration.Observe(t.SpendCheckMs / 1000.0)
+
+		if err != nil {
+			t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs + t.PolicyMs + t.SpendCheckMs
+			return false, "spend", "internal error: spend limit check failed", t
+		}
+		if !spendRes.Allowed {
+			t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs + t.PolicyMs + t.SpendCheckMs
+			return false, "spend", fmt.Sprintf("spend cap exceeded on scope %s (current: %d cents)", spendRes.ExceededKey, spendRes.Current), t
+		}
+	} else {
+		t.SpendCheckMs = ms(time.Since(spendStart))
+	}
+
+	t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs + t.PolicyMs + t.SpendCheckMs
+	return true, "", decision.Reason, t
+}
+
+func (p *MCPProxy) buildDynamicScopes(agentID, classID string, caps map[string]map[string]any) []spend.Scope {
+	scopes := []spend.Scope{}
+	now := time.Now().UTC()
+
+	// Default fallback caps if not set in config
+	hourlyCap := int64(500000)
+	dailyCap := int64(5000000)
+
+	if caps != nil {
+		if h, ok := caps["hourly"]; ok {
+			if amt, ok := h["amount_cents"].(float64); ok && amt > 0 {
+				hourlyCap = int64(amt)
+			}
+		}
+		if d, ok := caps["daily"]; ok {
+			if amt, ok := d["amount_cents"].(float64); ok && amt > 0 {
+				dailyCap = int64(amt)
+			}
+		}
+	}
+
+	// Instance-level hourly scope
+	scopes = append(scopes, spend.Scope{
+		Key: fmt.Sprintf("spend:agent:%s:%s", agentID, now.Format("2006010215")),
+		Cap: hourlyCap,
+	})
+
+	// Class-level daily scope
+	if classID != "" {
+		scopes = append(scopes, spend.Scope{
+			Key: fmt.Sprintf("spend:class:%s:%s", classID, now.Format("20060102")),
+			Cap: dailyCap,
+		})
+	}
+
+	// Fleet-level daily scope
+	scopes = append(scopes, spend.Scope{
+		Key: fmt.Sprintf("spend:fleet:all:%s", now.Format("20060102")),
+		Cap: 50000000,
+	})
+
+	return scopes
+}
+
 func (p *MCPProxy) handleOpenAPIRequest(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -198,7 +395,10 @@ func (p *MCPProxy) handleOpenAPIRequest(
 	method string,
 	agentID string,
 	agentKind string,
+	classID string,
 	allowedTools []string,
+	agentCfg *configcache.AgentConfig,
+	reqStart time.Time,
 ) {
 	reqID := rpcReq["id"]
 
@@ -214,7 +414,7 @@ func (p *MCPProxy) handleOpenAPIRequest(
 			"result": map[string]any{
 				"protocolVersion": "2024-11-05",
 				"capabilities":    map[string]any{"tools": map[string]any{}},
-				"serverInfo":      map[string]any{"name": "reflex-virtual-openapi-mcp", "version": "1.0.0"},
+				"serverInfo":      map[string]any{"name": "agp-virtual-openapi-mcp", "version": "1.0.0"},
 			},
 		}
 		p.sendJSONRPCResponse(w, r, res)
@@ -229,7 +429,6 @@ func (p *MCPProxy) handleOpenAPIRequest(
 			return
 		}
 
-		// Filter tools by agent profile whitelist if configured
 		filteredTools := []adapter.MCPTool{}
 		if len(allowedTools) > 0 {
 			allowedSet := make(map[string]bool)
@@ -266,49 +465,90 @@ func (p *MCPProxy) handleOpenAPIRequest(
 			amount = amtCents / 100.0
 		}
 
-		// Run Governance Pipeline
-		allowed, reason := p.governCall(r.Context(), agentID, agentKind, toolName, amount, allowedTools, args)
+		allowed, denyStage, reason, timings := p.governCall(r.Context(), agentID, classID, agentKind, toolName, amount, allowedTools, agentCfg, args)
 
-		p.auditor.Log(&audit.Entry{
-			AgentID:    agentID,
-			Action:     toolName,
-			Resource:   target.BaseURL,
-			Decision:   map[bool]string{true: "allow", false: "deny"}[allowed],
-			SpendDelta: int64(amount * 100),
-			Reason:     reason,
+		downstreamStart := time.Now()
+		var mcpResult map[string]any
+		if allowed {
+			restReq, err := adapter.BuildRESTRequest(target.BaseURL, target.Doc, toolName, args)
+			if err != nil {
+				p.sendErrorResponse(w, r, reqID, fmt.Sprintf("invalid tool arguments: %v", err))
+				return
+			}
+			restReq = restReq.WithContext(r.Context())
+
+			resp, err := p.client.Do(restReq)
+			if err != nil {
+				p.sendErrorResponse(w, r, reqID, "downstream bank REST API unreachable")
+				return
+			}
+			mcpResult = adapter.RESTResponseToMCPResult(resp)
+		} else {
+			p.sendErrorResponse(w, r, reqID, reason)
+		}
+		downstreamMs := ms(time.Since(downstreamStart))
+		if !allowed {
+			downstreamMs = 0
+		}
+
+		totalMs := ms(time.Since(reqStart))
+		govOverheadMs := timings.GovernanceTotal
+		decisionStr := map[bool]string{true: "allow", false: "deny"}[allowed]
+
+		if allowed {
+			res := map[string]any{"jsonrpc": "2.0", "id": reqID, "result": mcpResult}
+			p.sendJSONRPCResponse(w, r, res)
+		}
+
+		p.publishEvent(r.Context(), GovernanceEvent{
+			Type:            "decision",
+			AgentID:         agentID,
+			AgentClassID:    classID,
+			Tool:            toolName,
+			Decision:        decisionStr,
+			DenyStage:       denyStage,
+			Reason:          reason,
+			SpendDeltaCents: int64(amount * 100),
+			Latency: map[string]float64{
+				"total_ms":               totalMs,
+				"killswitch_ms":          timings.KillswitchMs,
+				"constraint_ms":          timings.ConstraintMs,
+				"policy_ms":              timings.PolicyMs,
+				"spend_ms":               timings.SpendCheckMs,
+				"downstream_ms":          downstreamMs,
+				"governance_overhead_ms": govOverheadMs,
+			},
+			Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
 		})
 
-		if !allowed {
-			p.logger.Warn("openapi virtual tool execution DENIED", "agent_id", agentID, "tool", toolName, "reason", reason)
-			p.sendErrorResponse(w, r, reqID, reason)
-			return
-		}
-
-		// Build and execute REST HTTP Request against legacy bank endpoint
-		restReq, err := adapter.BuildRESTRequest(target.BaseURL, target.Doc, toolName, args)
-		if err != nil {
-			p.sendErrorResponse(w, r, reqID, fmt.Sprintf("invalid tool arguments: %v", err))
-			return
-		}
-		restReq = restReq.WithContext(r.Context())
-
-		resp, err := p.client.Do(restReq)
-		if err != nil {
-			p.logger.Error("failed REST request to virtual openapi target", "url", restReq.URL.String(), "error", err)
-			p.sendErrorResponse(w, r, reqID, "downstream bank REST API unreachable")
-			return
-		}
-
-		mcpResult := adapter.RESTResponseToMCPResult(resp)
-		res := map[string]any{
-			"jsonrpc": "2.0",
-			"id":      reqID,
-			"result":  mcpResult,
-		}
-		p.sendJSONRPCResponse(w, r, res)
+		p.auditor.Log(&audit.Entry{
+			AgentID:              agentID,
+			AgentClassID:         classID,
+			Action:               toolName,
+			BankConnectionID:     p.extractServiceName(r.URL.Path),
+			Params:               args,
+			Decision:             decisionStr,
+			DenyStage:            denyStage,
+			Reason:               reason,
+			SpendDelta:           int64(amount * 100),
+			TotalLatencyMs:       totalMs,
+			KillswitchLatencyMs:  timings.KillswitchMs,
+			PolicyLatencyMs:      timings.PolicyMs,
+			SpendCheckLatencyMs:  timings.SpendCheckMs,
+			ConstraintLatencyMs:  timings.ConstraintMs,
+			DownstreamLatencyMs:  downstreamMs,
+			GovernanceOverheadMs: govOverheadMs,
+		})
 
 	default:
 		p.sendErrorResponse(w, r, reqID, fmt.Sprintf("method '%s' not supported", method))
+	}
+}
+
+func (p *MCPProxy) publishEvent(ctx context.Context, event GovernanceEvent) {
+	data, err := json.Marshal(event)
+	if err == nil {
+		p.rdb.Publish(ctx, "gateway:events", string(data))
 	}
 }
 
@@ -325,14 +565,29 @@ func (p *MCPProxy) sendJSONRPCResponse(w http.ResponseWriter, r *http.Request, r
 	}
 }
 
-func (p *MCPProxy) extractServiceName(path string) string {
-	cleanPath := strings.TrimPrefix(path, "/mcp")
-	cleanPath = strings.TrimPrefix(cleanPath, "/")
-	parts := strings.Split(cleanPath, "/")
-	if len(parts) > 0 {
-		return parts[0]
+func (p *MCPProxy) sendErrorResponse(w http.ResponseWriter, r *http.Request, reqID any, reason string) {
+	errResp := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      reqID,
+		"result": map[string]any{
+			"content": []map[string]any{
+				{
+					"type": "text",
+					"text": fmt.Sprintf(`{"allow":false,"reason":"%s"}`, reason),
+				},
+			},
+			"isError": true,
+		},
 	}
-	return ""
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	errJSON, _ := json.Marshal(errResp)
+	if strings.Contains(r.Header.Get("Accept"), "text/event-stream") && !strings.Contains(r.Header.Get("Accept"), "application/json") {
+		fmt.Fprintf(w, "event: message\ndata: %s\n\n", string(errJSON))
+	} else {
+		w.Write(errJSON)
+	}
 }
 
 func (p *MCPProxy) handleFilteredToolsList(w http.ResponseWriter, r *http.Request, targetBaseURL string, bodyBytes []byte, allowedTools []string) {
@@ -365,7 +620,6 @@ func (p *MCPProxy) handleFilteredToolsList(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Parse SSE wrapper if present
 	rawStr := strings.TrimSpace(string(respBytes))
 	isSSE := strings.HasPrefix(rawStr, "event: message")
 	rawJSON := respBytes
@@ -421,102 +675,6 @@ func (p *MCPProxy) handleFilteredToolsList(w http.ResponseWriter, r *http.Reques
 	}
 }
 
-func (p *MCPProxy) sendErrorResponse(w http.ResponseWriter, r *http.Request, reqID any, reason string) {
-	errResp := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      reqID,
-		"result": map[string]any{
-			"content": []map[string]any{
-				{
-					"type": "text",
-					"text": fmt.Sprintf(`{"allow":false,"reason":"%s"}`, reason),
-				},
-			},
-			"isError": true,
-		},
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-
-	errJSON, _ := json.Marshal(errResp)
-	if strings.Contains(r.Header.Get("Accept"), "text/event-stream") && !strings.Contains(r.Header.Get("Accept"), "application/json") {
-		fmt.Fprintf(w, "event: message\ndata: %s\n\n", string(errJSON))
-	} else {
-		w.Write(errJSON)
-	}
-}
-
-func (p *MCPProxy) resolveTargetURL(path string) string {
-	cleanPath := strings.TrimPrefix(path, "/mcp")
-	cleanPath = strings.TrimPrefix(cleanPath, "/")
-
-	parts := strings.Split(cleanPath, "/")
-	if len(parts) > 0 && parts[0] != "" {
-		serviceName := parts[0]
-		if url, ok := p.targets[serviceName]; ok {
-			return url
-		}
-	}
-
-	if defaultURL, ok := p.targets["default"]; ok {
-		return defaultURL
-	}
-	return "http://localhost:9000"
-}
-
-func (p *MCPProxy) governCall(ctx context.Context, agentID, agentKind, toolName string, amount float64, allowedTools []string, args map[string]any) (bool, string) {
-	if args == nil {
-		args = make(map[string]any)
-	}
-	if amount > 0 {
-		args["amount"] = amount
-	}
-
-	// 1. Killswitch
-	ksRes, err := p.ks.Check(ctx, agentID)
-	if err != nil {
-		return false, "internal error: killswitch check failed"
-	}
-	if ksRes.Killed {
-		return false, ksRes.Reason
-	}
-
-	// 2. OPA Policy Engine
-	decision, err := p.policyEngine.Evaluate(ctx, &authz.Input{
-		AgentID:      agentID,
-		AgentKind:    agentKind,
-		Action:       toolName,
-		Amount:       amount,
-		AllowedTools: allowedTools,
-		Params:       args,
-	})
-	if err != nil {
-		return false, "internal error: policy evaluation failed"
-	}
-	if !decision.Allow {
-		return false, decision.Reason
-	}
-
-	// 3. Spend Cap Limiter
-	spendDelta := int64(amount * 100)
-	if spendDelta > 0 {
-		scopes := []spend.Scope{
-			{Key: fmt.Sprintf("spend:agent:%s:%s", agentID, time.Now().UTC().Format("2006010215")), Cap: 500000},
-			{Key: fmt.Sprintf("spend:fleet:all:%s", time.Now().UTC().Format("20060102")), Cap: 50000000},
-		}
-
-		spendRes, err := p.spendLimiter.Check(ctx, spendDelta, scopes)
-		if err != nil {
-			return false, "internal error: spend limit check failed"
-		}
-		if !spendRes.Allowed {
-			return false, fmt.Sprintf("spend cap exceeded on scope %s (current: %d)", spendRes.ExceededKey, spendRes.Current)
-		}
-	}
-
-	return true, decision.Reason
-}
-
 func (p *MCPProxy) proxyToTarget(w http.ResponseWriter, r *http.Request, targetBaseURL string, bodyBytes []byte) {
 	targetURL := targetBaseURL
 	if !strings.HasSuffix(targetBaseURL, "/mcp") {
@@ -556,6 +714,34 @@ func (p *MCPProxy) proxyToTarget(w http.ResponseWriter, r *http.Request, targetB
 	io.Copy(w, resp.Body)
 }
 
+func (p *MCPProxy) extractServiceName(path string) string {
+	cleanPath := strings.TrimPrefix(path, "/mcp")
+	cleanPath = strings.TrimPrefix(cleanPath, "/")
+	parts := strings.Split(cleanPath, "/")
+	if len(parts) > 0 {
+		return parts[0]
+	}
+	return ""
+}
+
+func (p *MCPProxy) resolveTargetURL(path string) string {
+	cleanPath := strings.TrimPrefix(path, "/mcp")
+	cleanPath = strings.TrimPrefix(cleanPath, "/")
+
+	parts := strings.Split(cleanPath, "/")
+	if len(parts) > 0 && parts[0] != "" {
+		serviceName := parts[0]
+		if url, ok := p.targets[serviceName]; ok {
+			return url
+		}
+	}
+
+	if defaultURL, ok := p.targets["default"]; ok {
+		return defaultURL
+	}
+	return "http://localhost:9000"
+}
+
 func (p *MCPProxy) extractIdentity(r *http.Request) (string, string, error) {
 	agentID := r.Header.Get("X-Agent-ID")
 	agentKind := r.Header.Get("X-Agent-Kind")
@@ -592,4 +778,8 @@ func (p *MCPProxy) trackSession(ctx context.Context, sessionID, agentID, agentKi
 	})
 	p.rdb.Set(ctx, key, string(data), 24*time.Hour)
 	metrics.ActiveSessions.Inc()
+}
+
+func ms(d time.Duration) float64 {
+	return float64(d.Microseconds()) / 1000.0
 }

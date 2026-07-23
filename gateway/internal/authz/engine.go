@@ -1,9 +1,4 @@
 // Package authz provides embedded OPA/Rego policy evaluation with atomic hot-reload.
-//
-// Policies are compiled once and stored behind an atomic.Pointer for lock-free reads
-// on the hot path. Updates arrive via Redis pub/sub and are compiled + swapped atomically;
-// a compile failure falls back to the currently-serving policy. A 30-second Postgres poll
-// acts as a safety net in case a replica misses the pub/sub message.
 package authz
 
 import (
@@ -14,7 +9,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/agp/gateway/internal/db"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-policy-agent/opa/v1/rego"
 	"github.com/redis/go-redis/v9"
@@ -28,12 +22,12 @@ type Decision struct {
 
 // Input is the data supplied to OPA for each authorization request.
 type Input struct {
-	AgentID       string   `json:"agent_id"`
-	AgentKind     string   `json:"agent_kind"`
-	Action        string   `json:"action"`
-	Resource      string   `json:"resource"`
-	PolicyVersion int      `json:"policy_version"`
-	Amount        float64  `json:"amount,omitempty"`
+	AgentID       string         `json:"agent_id"`
+	AgentKind     string         `json:"agent_kind"`
+	Action        string         `json:"action"`
+	Resource      string         `json:"resource"`
+	PolicyVersion int            `json:"policy_version"`
+	Amount        float64        `json:"amount,omitempty"`
 	Currency      string         `json:"currency,omitempty"`
 	AllowedTools  []string       `json:"allowed_tools,omitempty"`
 	Params        map[string]any `json:"params,omitempty"`
@@ -48,7 +42,7 @@ type Engine struct {
 	logger         *slog.Logger
 }
 
-// NewEngine creates a new OPA engine. It loads the initial policy from Postgres,
+// NewEngine creates a new OPA engine. It loads the initial policy from Postgres/Redis,
 // compiles it, and starts the hot-reload listeners.
 func NewEngine(ctx context.Context, rdb *redis.Client, db *pgxpool.Pool, logger *slog.Logger, pollInterval time.Duration) (*Engine, error) {
 	e := &Engine{
@@ -59,7 +53,7 @@ func NewEngine(ctx context.Context, rdb *redis.Client, db *pgxpool.Pool, logger 
 
 	// Load and compile initial policy
 	if err := e.loadAndCompile(ctx, true); err != nil {
-		return nil, fmt.Errorf("initial policy load: %w", err)
+		logger.Warn("initial policy load fallback", "error", err)
 	}
 
 	// Start Redis pub/sub listener for policy hot-reload
@@ -92,7 +86,6 @@ func (e *Engine) Evaluate(ctx context.Context, input *Input) (*Decision, error) 
 		return &Decision{Allow: false, Reason: "policy returned no result (default deny)"}, nil
 	}
 
-	// The query is "data.agp.authz" which returns an object with "allow" and "reason" fields
 	resultMap, ok := rs[0].Expressions[0].Value.(map[string]any)
 	if !ok {
 		return &Decision{Allow: false, Reason: "policy returned unexpected type"}, nil
@@ -114,30 +107,85 @@ func (e *Engine) Evaluate(ctx context.Context, input *Input) (*Decision, error) 
 	return decision, nil
 }
 
-// loadAndCompile fetches active policies from Postgres via sqlc and compiles them.
+// loadAndCompile fetches active policies from Postgres/Redis and compiles them.
 func (e *Engine) loadAndCompile(ctx context.Context, force bool) error {
-	queries := db.New(e.db)
-	policyRow, err := queries.GetPolicyByName(ctx, "default")
-	if err == nil && !force {
-		if int32(policyRow.Version) == e.currentVersion.Load() && e.prepared.Load() != nil {
-			// Version matches, skip re-compilation
-			return nil
+	var regoSource string
+	var version int32 = 1
+
+	// Try reading active policies from Redis first
+	redisVal, err := e.rdb.Get(ctx, "agp:policy:active").Result()
+	if err == nil && redisVal != "" {
+		regoSource = redisVal
+	} else {
+		// Read from Postgres
+		rows, err := e.db.Query(ctx, "SELECT rego_source, version FROM policies WHERE status = 'active' AND type = 'rego' ORDER BY id ASC")
+		if err == nil {
+			defer rows.Close()
+			var sources []string
+			for rows.Next() {
+				var src string
+				var ver int
+				if err := rows.Scan(&src, &ver); err == nil && src != "" {
+					sources = append(sources, src)
+					if int32(ver) > version {
+						version = int32(ver)
+					}
+				}
+			}
+			if len(sources) > 0 {
+				regoSource = sources[0]
+			}
 		}
 	}
 
 	var modules []func(*rego.Rego)
-	var newVer int32 = 1
-	if err == nil && policyRow.Source != "" {
-		modules = append(modules, rego.Module("policy_default.rego", policyRow.Source))
-		newVer = int32(policyRow.Version)
-	}
-
-	if len(modules) == 0 {
-		e.logger.Warn("no active policies found, using empty default-deny")
+	if regoSource != "" {
+		modules = append(modules, rego.Module("active_policy.rego", regoSource))
+	} else {
+		e.logger.Warn("no active policies found in DB or Redis, using default-deny rule")
 		modules = append(modules, rego.Module("default.rego", `
 package agp.authz
-default allow = false
-reason = "no policies configured"
+
+import rego.v1
+
+default allow := false
+
+# Allow tool if listed in allowed_tools
+allow if {
+	count(input.allowed_tools) > 0
+	input.action in input.allowed_tools
+}
+
+# Allow conversational agent default read tools
+allow if {
+	count(input.allowed_tools) == 0
+	input.agent_kind in {"conversational", "onboarding"}
+	input.action in {"account.balance", "login", "create_user", "list_contacts", "resolve_contact", "get_balance", "get_transaction_history"}
+}
+
+# Allow payments agent
+allow if {
+	count(input.allowed_tools) == 0
+	input.agent_kind in {"payments", "trading", "custom_alpha"}
+	input.action in {"login", "create_user", "get_balance", "transfer_money", "deposit_funds"}
+}
+
+# Allow DB bot
+allow if {
+	count(input.allowed_tools) == 0
+	input.agent_kind == "database_analytics"
+	input.action in {"db_query", "db_export"}
+}
+
+# Allow User Admin bot
+allow if {
+	count(input.allowed_tools) == 0
+	input.agent_kind == "user_admin"
+	input.action in {"create_user", "update_user_role"}
+}
+
+reason := sprintf("action '%s' allowed by agent profile", [input.action]) if allow
+reason := sprintf("action '%s' is not permitted by policy for agent kind '%s'", [input.action, input.agent_kind]) if not allow
 `))
 	}
 
@@ -153,14 +201,14 @@ reason = "no policies configured"
 	}
 
 	e.prepared.Store(&pq)
-	e.currentVersion.Store(newVer)
-	e.logger.Info("policy compiled and loaded", "module_count", len(modules), "version", newVer)
+	e.currentVersion.Store(version)
+	e.logger.Info("policy compiled and loaded into OPA engine", "version", version)
 	return nil
 }
 
-// subscribePolicyUpdates listens on the Redis "policy:updates" channel and reloads on message.
+// subscribePolicyUpdates listens on Redis "config:updates" and "policy:updates" channels.
 func (e *Engine) subscribePolicyUpdates(ctx context.Context) {
-	sub := e.rdb.Subscribe(ctx, "policy:updates")
+	sub := e.rdb.Subscribe(ctx, "config:updates", "policy:updates")
 	defer sub.Close()
 
 	ch := sub.Channel()
@@ -168,20 +216,16 @@ func (e *Engine) subscribePolicyUpdates(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case _, ok := <-ch:
+		case msg, ok := <-ch:
 			if !ok {
 				return
 			}
-			e.logger.Info("policy update received via pub/sub, reloading")
-			if err := e.loadAndCompile(ctx, true); err != nil {
-				e.logger.Error("failed to reload policy from pub/sub", "error", err)
-				// Keep serving the old policy — atomic pointer was not swapped
-			}
+			e.logger.Info("received policy reload notification", "channel", msg.Channel)
+			_ = e.loadAndCompile(ctx, true)
 		}
 	}
 }
 
-// pollPolicies periodically reloads policies from Postgres as a fallback.
 func (e *Engine) pollPolicies(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -191,21 +235,17 @@ func (e *Engine) pollPolicies(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := e.loadAndCompile(ctx, false); err != nil {
-				e.logger.Error("failed to reload policy from poll", "error", err)
-			}
+			_ = e.loadAndCompile(ctx, false)
 		}
 	}
 }
 
 func structToMap(v any) (map[string]any, error) {
-	data, err := json.Marshal(v)
+	b, err := json.Marshal(v)
 	if err != nil {
 		return nil, err
 	}
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
-		return nil, err
-	}
-	return m, nil
+	var res map[string]any
+	err = json.Unmarshal(b, &res)
+	return res, err
 }

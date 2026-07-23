@@ -1,12 +1,10 @@
 // Package main is the entrypoint for the AGP gateway.
 //
-// It wires all components together and starts the MCP server and metrics endpoint.
+// It wires all hot-path components together and starts the MCP server and metrics endpoint.
 package main
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -14,11 +12,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/agp/gateway/internal/agent"
 	"github.com/agp/gateway/internal/audit"
 	"github.com/agp/gateway/internal/authn"
 	"github.com/agp/gateway/internal/authz"
 	"github.com/agp/gateway/internal/config"
+	"github.com/agp/gateway/internal/configcache"
+	"github.com/agp/gateway/internal/constraints"
 	"github.com/agp/gateway/internal/killswitch"
 	"github.com/agp/gateway/internal/proxy"
 	"github.com/agp/gateway/internal/spend"
@@ -39,6 +38,7 @@ func main() {
 		"mcp_port", cfg.MCPPort,
 		"metrics_port", cfg.MetricsPort,
 		"redis_addr", cfg.RedisAddr,
+		"backend_url", cfg.BackendURL,
 	)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -69,8 +69,8 @@ func main() {
 	}
 	logger.Info("connected to Postgres")
 
-	// --- Components ---
-	jwtMgr := authn.NewJWTManager(cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTDefaultTTL)
+	// --- Hot-Path Components ---
+	jwtMgr := authn.NewJWTManager(cfg.JWTSecret, cfg.JWTIssuer, 1*time.Hour)
 	ks := killswitch.NewSwitch(rdb)
 
 	policyEngine, err := authz.NewEngine(ctx, rdb, pool, logger, cfg.PolicyPollInterval)
@@ -80,6 +80,8 @@ func main() {
 	}
 
 	spendLimiter := spend.NewLimiter(rdb)
+	constraintChecker := constraints.NewChecker(rdb)
+	cfgCache := configcache.New(ctx, rdb, cfg.BackendURL, logger)
 
 	auditor, err := audit.NewLogger(ctx, pool, logger, cfg.AuditBatchSize, cfg.AuditFlushInterval)
 	if err != nil {
@@ -87,177 +89,37 @@ func main() {
 		os.Exit(1)
 	}
 
-	agentStore := agent.NewStore(pool, rdb, logger)
-
-	// --- Pattern 3: Transparent MCP Reverse Proxy & Security Interceptor (Multi-Server & Profile Support) ---
-	mcpInterceptor := proxy.NewMCPProxy(cfg.MCPTargets, ks, policyEngine, spendLimiter, auditor, jwtMgr, agentStore, rdb, logger)
+	// --- MCP Security Interceptor & Proxy ---
+	mcpInterceptor := proxy.NewMCPProxy(
+		cfg.MCPTargets,
+		ks,
+		policyEngine,
+		spendLimiter,
+		constraintChecker,
+		cfgCache,
+		auditor,
+		jwtMgr,
+		rdb,
+		logger,
+	)
 	logger.Info("MCP Security Interceptor Proxy initialized", "targets", cfg.MCPTargets)
 
-	// --- Chi router ---
+	// --- Chi Router ---
 	r := chi.NewRouter()
 	r.Use(chimw.RequestID)
 	r.Use(chimw.Recoverer)
 
-	// Health — no auth
+	// Health check (no auth)
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ok"}`))
+		w.Write([]byte(`{"status":"ok","service":"agp-gateway"}`))
 	})
 
 	// MCP Transparent Reverse Proxy (governs all MCP tools/call traffic)
 	r.Mount("/mcp", mcpInterceptor)
 
-	// Control-plane routes — grouped under /v1
-	r.Route("/v1", func(r chi.Router) {
-		// Active MCP Sessions
-		r.Get("/sessions", func(w http.ResponseWriter, r *http.Request) {
-			keys, err := rdb.Keys(r.Context(), "mcp:session:*").Result()
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			var sessions []map[string]any
-			for _, k := range keys {
-				val, err := rdb.Get(r.Context(), k).Result()
-				if err == nil {
-					var sess map[string]any
-					if json.Unmarshal([]byte(val), &sess) == nil {
-						sessions = append(sessions, sess)
-					}
-				}
-			}
-			writeJSON(w, http.StatusOK, map[string]any{
-				"total_active": len(sessions),
-				"sessions":     sessions,
-			})
-		})
-
-		// Profile Management
-		r.Get("/profiles", func(w http.ResponseWriter, r *http.Request) {
-			profiles, err := agentStore.ListProfiles(r.Context())
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			writeJSON(w, http.StatusOK, profiles)
-		})
-
-		r.Post("/profiles", func(w http.ResponseWriter, r *http.Request) {
-			var p agent.Profile
-			if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			if err := agentStore.UpsertProfile(r.Context(), &p); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]string{"status": "profile updated", "profile_id": p.ProfileID})
-		})
-
-		r.Post("/instances", func(w http.ResponseWriter, r *http.Request) {
-			var inst agent.Instance
-			if err := json.NewDecoder(r.Body).Decode(&inst); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			if err := agentStore.UpsertInstance(r.Context(), &inst); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]string{"status": "instance registered", "agent_id": inst.AgentID})
-		})
-		// Token mint — demo convenience, no operator auth needed
-		r.Post("/token", func(w http.ResponseWriter, r *http.Request) {
-			agentID := r.URL.Query().Get("agent_id")
-			agentKind := r.URL.Query().Get("agent_kind")
-			if agentID == "" {
-				http.Error(w, `{"error":"agent_id required"}`, http.StatusBadRequest)
-				return
-			}
-			token, err := jwtMgr.Mint(agentID, agentKind, 1)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]string{"token": token})
-		})
-		// Agent revocation
-		r.Post("/agents/{agentID}/revoke", func(w http.ResponseWriter, r *http.Request) {
-			id := chi.URLParam(r, "agentID")
-			if err := ks.KillAgent(r.Context(), id); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			logger.Info("agent revoked", "agent_id", id)
-			writeJSON(w, http.StatusOK, map[string]string{"revoked": id})
-		})
-
-		r.Delete("/agents/{agentID}/revoke", func(w http.ResponseWriter, r *http.Request) {
-			id := chi.URLParam(r, "agentID")
-			if err := ks.ReviveAgent(r.Context(), id); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			logger.Info("agent revived", "agent_id", id)
-			writeJSON(w, http.StatusOK, map[string]string{"revived": id})
-		})
-
-		// Fleet emergency stop
-		r.Post("/fleet/halt", func(w http.ResponseWriter, r *http.Request) {
-			if err := ks.HaltFleet(r.Context()); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			logger.Warn("FLEET HALTED by operator")
-			writeJSON(w, http.StatusOK, map[string]string{"fleet": "halted"})
-		})
-
-		r.Delete("/fleet/halt", func(w http.ResponseWriter, r *http.Request) {
-			if err := ks.ResumeFleet(r.Context()); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			logger.Info("fleet resumed by operator")
-			writeJSON(w, http.StatusOK, map[string]string{"fleet": "resumed"})
-		})
-
-		// Audit integrity check
-		r.Get("/audit/verify", func(w http.ResponseWriter, r *http.Request) {
-			result, err := audit.Verify(r.Context(), pool)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			writeJSON(w, http.StatusOK, result)
-		})
-
-		// Dynamic OpenAPI Spec Registration Endpoint
-		r.Post("/openapi/register", func(w http.ResponseWriter, r *http.Request) {
-			var body struct {
-				ServiceName string `json:"service_name"`
-				BaseURL     string `json:"base_url"`
-				Spec        string `json:"spec"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				http.Error(w, `{"error":"invalid json body"}`, http.StatusBadRequest)
-				return
-			}
-			if body.ServiceName == "" || body.BaseURL == "" || body.Spec == "" {
-				http.Error(w, `{"error":"service_name, base_url, and spec are required"}`, http.StatusBadRequest)
-				return
-			}
-			if err := mcpInterceptor.RegisterOpenAPISpec(body.ServiceName, body.BaseURL, []byte(body.Spec)); err != nil {
-				http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusBadRequest)
-				return
-			}
-			logger.Info("registered openapi target", "service", body.ServiceName, "base_url", body.BaseURL)
-			writeJSON(w, http.StatusOK, map[string]string{"status": "registered", "service": body.ServiceName})
-		})
-	})
-
-	// --- HTTP servers ---
+	// --- HTTP Servers ---
 	mcpHTTP := &http.Server{
 		Addr:    ":" + cfg.MCPPort,
 		Handler: r,
@@ -274,7 +136,7 @@ func main() {
 	errCh := make(chan error, 2)
 
 	go func() {
-		logger.Info("MCP + control-plane server listening", "port", cfg.MCPPort)
+		logger.Info("MCP gateway server listening", "port", cfg.MCPPort)
 		errCh <- mcpHTTP.ListenAndServe()
 	}()
 
@@ -283,7 +145,7 @@ func main() {
 		errCh <- metricsHTTP.ListenAndServe()
 	}()
 
-	// --- Graceful shutdown ---
+	// --- Graceful Shutdown ---
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
@@ -305,11 +167,4 @@ func main() {
 	rdb.Close()
 
 	logger.Info("gateway shut down cleanly")
-}
-
-// writeJSON is a small helper to keep handlers clean.
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
 }

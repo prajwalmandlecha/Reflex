@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/agp/gateway/internal/db"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -17,49 +16,58 @@ type VerifyResult struct {
 	Error        string `json:"error,omitempty"`
 }
 
-// Verify reads the entire audit log via sqlc and checks the hash chain integrity.
+// Verify reads the entire audit log and checks the hash chain integrity.
 func Verify(ctx context.Context, pool *pgxpool.Pool) (*VerifyResult, error) {
-	queries := db.New(pool)
-	rows, err := queries.ListAuditLogs(ctx)
+	rows, err := pool.Query(ctx, "SELECT id, ts, agent_id, agent_class_id, action, decision, deny_stage, spend_delta, governance_overhead_ms, reason, prev_hash, entry_hash FROM audit_log ORDER BY id ASC")
 	if err != nil {
-		return nil, fmt.Errorf("querying audit log via sqlc: %w", err)
+		return nil, fmt.Errorf("querying audit log: %w", err)
 	}
+	defer rows.Close()
 
 	result := &VerifyResult{Valid: true}
 	var prevHash string
 
-	for _, row := range rows {
+	for rows.Next() {
+		var id int64
+		var ts time.Time
+		var agentID, agentClassID, action, decision, denyStage, reason, rowPrevHash, entryHash string
+		var spendDelta int64
+		var govOverhead float64
+
+		if err := rows.Scan(&id, &ts, &agentID, &agentClassID, &action, &decision, &denyStage, &spendDelta, &govOverhead, &reason, &rowPrevHash, &entryHash); err != nil {
+			return nil, fmt.Errorf("scanning audit row: %w", err)
+		}
+
 		result.TotalEntries++
 
-		// Check that prev_hash matches what we expect.
-		if row.PrevHash != prevHash {
+		if rowPrevHash != prevHash {
 			result.Valid = false
-			result.BrokenAt = &row.ID
-			result.Error = fmt.Sprintf("row %d: prev_hash mismatch (got %s, expected %s)", row.ID, row.PrevHash, prevHash)
+			result.BrokenAt = &id
+			result.Error = fmt.Sprintf("row %d: prev_hash mismatch (got %s, expected %s)", id, rowPrevHash, prevHash)
 			return result, nil
 		}
 
-		// Recompute entry_hash.
 		entry := &Entry{
-			Timestamp:  row.Ts.Truncate(time.Microsecond).UTC(),
-			AgentID:    row.AgentID,
-			Action:     row.Action,
-			Resource:   row.Resource,
-			Decision:   row.Decision,
-			SpendDelta: row.SpendDelta,
-			LatencyMs:  row.LatencyMs,
-			Reason:     row.Reason,
+			Timestamp:            ts.Truncate(time.Microsecond).UTC(),
+			AgentID:              agentID,
+			AgentClassID:         agentClassID,
+			Action:               action,
+			Decision:             decision,
+			DenyStage:            denyStage,
+			SpendDelta:           spendDelta,
+			GovernanceOverheadMs: govOverhead,
+			Reason:               reason,
 		}
 
 		expectedHash := computeHash(prevHash, entry)
-		if row.EntryHash != expectedHash {
+		if entryHash != expectedHash {
 			result.Valid = false
-			result.BrokenAt = &row.ID
-			result.Error = fmt.Sprintf("row %d: entry_hash mismatch (got %s, computed %s)", row.ID, row.EntryHash, expectedHash)
+			result.BrokenAt = &id
+			result.Error = fmt.Sprintf("row %d: entry_hash mismatch (got %s, computed %s)", id, entryHash, expectedHash)
 			return result, nil
 		}
 
-		prevHash = row.EntryHash
+		prevHash = entryHash
 	}
 
 	return result, nil
