@@ -21,3 +21,7 @@ env/
 .vscode/
 .idea/
 .DS_Store
+
+# Excluded project folders
+stitch_guardian_ai_mission_control/
+Reflex-Source/
