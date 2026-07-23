@@ -35,11 +35,8 @@ type Config struct {
 	PolicyPollInterval time.Duration
 
 	// Downstream MCP Target Servers (multi-server support)
-	// Default target URL (e.g. "http://bankapi:9000")
-	BankAPIURL string
-
 	// Map of service names to target MCP URLs
-	// e.g. {"payments": "http://localhost:9001", "trading": "http://localhost:9002", "friend_ops": "http://localhost:9003"}
+	// e.g. {"default": "http://localhost:9000", "bank-payments": "http://localhost:9001"}
 	MCPTargets map[string]string
 }
 
@@ -50,9 +47,8 @@ func Load() *Config {
 		_ = json.Unmarshal([]byte(targetsJSON), &targets)
 	}
 
-	defaultBankURL := envOr("BANK_API_URL", "http://localhost:9000")
 	if _, ok := targets["default"]; !ok {
-		targets["default"] = defaultBankURL
+		targets["default"] = "http://localhost:9000"
 	}
 
 	return &Config{
@@ -74,7 +70,6 @@ func Load() *Config {
 
 		PolicyPollInterval: envDurationOr("POLICY_POLL_INTERVAL", 30*time.Second),
 
-		BankAPIURL: defaultBankURL,
 		MCPTargets: targets,
 	}
 }

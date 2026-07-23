@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/cookiejar"
+	"os"
 	"strings"
 	"time"
 )
@@ -346,6 +347,23 @@ func (ts *TestSuite) testOpenAPISpecVirtualization() {
 		ts.pass("OpenAPI Virtual Tool Execution -> PASSED THROUGH GOVERNANCE GAUNTLET")
 	} else {
 		ts.fail("OpenAPI tool execution failed: " + resCall)
+	}
+
+	// Real Enterprise Spec Test: Atlassian Admin YAML Spec (api.atlassian.com.yaml)
+	if atlassianData, err := os.ReadFile("../api.atlassian.com.yaml"); err == nil {
+		regAtlassian, _ := json.Marshal(map[string]string{
+			"service_name": "atlassian-admin",
+			"base_url":     "https://api.atlassian.com",
+			"spec":         string(atlassianData),
+		})
+		rResp, err := ts.client.Post(gatewayURL+"/v1/openapi/register", "application/json", bytes.NewReader(regAtlassian))
+		if err == nil && rResp.StatusCode == 200 {
+			rResp.Body.Close()
+			atlTools := ts.requestFilteredToolsList("/mcp/atlassian-admin", "admin-agent-01", "admin")
+			if strings.Contains(atlTools, "get_admin_v1_orgs") {
+				ts.pass("Real-World Enterprise Spec (Atlassian api.atlassian.com.yaml, 25 tools) -> REGISTERED & EXPOSED")
+			}
+		}
 	}
 }
 

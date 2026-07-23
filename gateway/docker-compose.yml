@@ -44,8 +44,7 @@ services:
       GATEWAY_METRICS_PORT: "9090"
       REDIS_ADDR: "redis:6379"
       POSTGRES_DSN: "postgres://agp:agp@postgres:5432/agp?sslmode=disable"
-      BANK_API_URL: "http://20.2.83.126:31200/mcp"
-      MCP_TARGETS: '{"default":"http://20.2.83.126:31200/mcp","bank-identity":"http://20.2.83.126:31100/mcp","bank-payments":"http://20.2.83.126:31200/mcp","bank-financial":"http://20.2.83.126:31300/mcp","bank-risk":"http://20.2.83.126:31400/mcp","identity":"http://20.2.83.126:31100/mcp","payments":"http://20.2.83.126:31200/mcp","financial":"http://20.2.83.126:31300/mcp","risk":"http://20.2.83.126:31400/mcp"}'
+      MCP_TARGETS: '{"default":"http://20.2.83.126:31200/mcp","bank-identity":"http://20.2.83.126:31100/mcp","bank-payments":"http://20.2.83.126:31200/mcp","bank-financial":"http://20.2.83.126:31300/mcp","bank-risk":"http://20.2.83.126:31400/mcp"}'
       GATEWAY_JWT_SECRET: "hackathon-demo-secret-2026"
       GATEWAY_JWT_ISSUER: "agp-gateway"
     networks:
