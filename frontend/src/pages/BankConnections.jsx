@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Plus, Plug, Check, AlertCircle, ChevronRight, ChevronLeft, Lock, FileUp, Link2, Keyboard, X } from 'lucide-react';
-import { MOCK_CONNECTIONS } from '@/services/mockData';
+import { useAppStore } from '@/store/useAppStore';
 import { StatusBadge } from '@/components/layout/Layout';
 
 const S = {
@@ -24,7 +24,17 @@ const MOCK_TOOLS = [
 ];
 
 export default function BankConnections() {
-  const [connections, setConnections] = useState(MOCK_CONNECTIONS);
+  const { connections: storeConnections, fetchConnections } = useAppStore();
+  const [connections, setConnections] = useState([]);
+  
+  useEffect(() => {
+    fetchConnections();
+  }, [fetchConnections]);
+
+  useEffect(() => {
+    setConnections(storeConnections);
+  }, [storeConnections]);
+
   const [showWizard, setShowWizard] = useState(false);
 
   return (

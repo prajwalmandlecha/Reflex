@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Plus, CheckCircle2, XCircle, Pencil, Code2, Play, FileText, FileJson } from 'lucide-react';
-import { MOCK_POLICIES, MOCK_CLASSES } from '@/services/mockData';
+import { useAppStore } from '@/store/useAppStore';
 import { StatusBadge } from '@/components/layout/Layout';
 
 const S = {
@@ -18,7 +18,18 @@ const glass = { background: 'rgba(255,255,255,0.03)', border: `1px solid ${S.bor
 const mono = { fontFamily: 'JetBrains Mono, monospace' };
 
 export default function Policies() {
-  const [policies, setPolicies] = useState(MOCK_POLICIES);
+  const { policies: storePolicies, agentClasses: storeClasses, fetchPolicies, fetchClasses } = useAppStore();
+  const [policies, setPolicies] = useState([]);
+  
+  useEffect(() => {
+    fetchPolicies();
+    fetchClasses();
+  }, [fetchPolicies, fetchClasses]);
+
+  useEffect(() => {
+    setPolicies(storePolicies);
+  }, [storePolicies]);
+
   const [selectedPolicy, setSelectedPolicy] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
 
@@ -82,7 +93,7 @@ export default function Policies() {
         {/* Right: Policy Editor */}
         <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           {selectedPolicy || showCreate ? (
-            <PolicyEditor policy={selectedPolicy} isNew={showCreate} classes={MOCK_CLASSES} />
+            <PolicyEditor policy={selectedPolicy} isNew={showCreate} classes={storeClasses} />
           ) : (
             <div style={{ ...glass, flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px' }}>
               <FileText size={32} color="rgba(139,148,158,0.4)" />

@@ -1,6 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Search, Download, Lock, ArrowRight } from 'lucide-react';
-import { MOCK_AUDIT_LOGS } from '@/services/mockData';
+import { useAppStore } from '@/store/useAppStore';
 
 const S = {
   border: 'rgba(255,255,255,0.06)',
@@ -17,11 +17,16 @@ const glass = { background: 'rgba(255,255,255,0.03)', border: `1px solid ${S.bor
 const mono = { fontFamily: 'JetBrains Mono, monospace' };
 
 export default function AuditLog() {
+  const { auditLogs, fetchAuditLogs } = useAppStore();
   const [search, setSearch] = useState('');
   const [outcomeFilter, setOutcomeFilter] = useState('all');
 
+  useEffect(() => {
+    fetchAuditLogs();
+  }, [fetchAuditLogs]);
+
   const filtered = useMemo(() => {
-    return MOCK_AUDIT_LOGS.filter(e => {
+    return auditLogs.filter(e => {
       if (search) {
         const q = search.toLowerCase();
         if (!e.agent.toLowerCase().includes(q) && !e.tool.toLowerCase().includes(q) && !e.action.toLowerCase().includes(q)) return false;

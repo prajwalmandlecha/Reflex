@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Plus, Ban, Wrench, DollarSign, Clock, X } from 'lucide-react';
-import { MOCK_CLASSES } from '@/services/mockData';
+import { useAppStore } from '@/store/useAppStore';
 
 const S = {
   border: 'rgba(255,255,255,0.06)',
@@ -16,7 +16,17 @@ const glass = { background: 'rgba(255,255,255,0.03)', border: `1px solid ${S.bor
 const mono = { fontFamily: 'JetBrains Mono, monospace' };
 
 export default function AgentClasses() {
-  const [classes, setClasses] = useState(MOCK_CLASSES);
+  const { agentClasses, fetchClasses } = useAppStore();
+  const [classes, setClasses] = useState([]);
+
+  useEffect(() => {
+    fetchClasses();
+  }, [fetchClasses]);
+
+  useEffect(() => {
+    setClasses(agentClasses);
+  }, [agentClasses]);
+
   const [editClass, setEditClass] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
 
