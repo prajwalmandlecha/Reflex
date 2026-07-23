@@ -57,29 +57,6 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  prometheus:
-    image: prom/prometheus:v2.51.0
-    container_name: reflex-prometheus
-    ports:
-      - "9091:9090"
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
-    networks:
-      - backend
-    restart: unless-stopped
-
-  grafana:
-    image: grafana/grafana-oss:10.4.0
-    container_name: reflex-grafana
-    ports:
-      - "3000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_USERS_ALLOW_SIGN_UP=false
-    networks:
-      - backend
-    restart: unless-stopped
-
 networks:
   frontend:
   backend:
