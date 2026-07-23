@@ -164,9 +164,3 @@ INSERT INTO agent_instances (agent_id, profile_id, status) VALUES
 ('risk-agent-01', 'ops', 'active'),
 ('custom-agent-alpha', 'custom_alpha', 'active')
 ON CONFLICT (agent_id) DO NOTHING;
-
--- +goose Down
-DROP TABLE IF EXISTS agent_instances;
-DROP TABLE IF EXISTS agent_profiles;
-DROP TABLE IF EXISTS policies;
-DROP TABLE IF EXISTS audit_log;

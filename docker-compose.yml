@@ -34,7 +34,7 @@ services:
 
   gateway:
     build:
-      context: .
+      context: ./gateway
       dockerfile: Dockerfile
     ports:
       - "8080:8080"   # MCP server (agent-facing)
