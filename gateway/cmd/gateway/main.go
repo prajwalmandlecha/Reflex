@@ -90,7 +90,7 @@ func main() {
 	agentStore := agent.NewStore(pool, rdb, logger)
 
 	// --- Pattern 3: Transparent MCP Reverse Proxy & Security Interceptor (Multi-Server & Profile Support) ---
-	mcpInterceptor := proxy.NewMCPProxy(cfg.MCPTargets, ks, policyEngine, spendLimiter, auditor, jwtMgr, agentStore, logger)
+	mcpInterceptor := proxy.NewMCPProxy(cfg.MCPTargets, ks, policyEngine, spendLimiter, auditor, jwtMgr, agentStore, rdb, logger)
 	logger.Info("MCP Security Interceptor Proxy initialized", "targets", cfg.MCPTargets)
 
 	// --- Chi router ---
@@ -110,6 +110,29 @@ func main() {
 
 	// Control-plane routes — grouped under /v1
 	r.Route("/v1", func(r chi.Router) {
+		// Active MCP Sessions
+		r.Get("/sessions", func(w http.ResponseWriter, r *http.Request) {
+			keys, err := rdb.Keys(r.Context(), "mcp:session:*").Result()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			var sessions []map[string]any
+			for _, k := range keys {
+				val, err := rdb.Get(r.Context(), k).Result()
+				if err == nil {
+					var sess map[string]any
+					if json.Unmarshal([]byte(val), &sess) == nil {
+						sessions = append(sessions, sess)
+					}
+				}
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"total_active": len(sessions),
+				"sessions":     sessions,
+			})
+		})
+
 		// Profile Management
 		r.Get("/profiles", func(w http.ResponseWriter, r *http.Request) {
 			profiles, err := agentStore.ListProfiles(r.Context())

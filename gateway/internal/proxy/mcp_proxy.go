@@ -20,8 +20,10 @@ import (
 	"github.com/agp/gateway/internal/authn"
 	"github.com/agp/gateway/internal/authz"
 	"github.com/agp/gateway/internal/killswitch"
+	"github.com/agp/gateway/internal/metrics"
 	"github.com/agp/gateway/internal/spend"
 	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/redis/go-redis/v9"
 )
 
 type OpenAPISpecTarget struct {
@@ -39,6 +41,7 @@ type MCPProxy struct {
 	auditor        *audit.Logger
 	jwtMgr         *authn.JWTManager
 	agentStore     *agent.Store
+	rdb            *redis.Client
 	logger         *slog.Logger
 	client         *http.Client
 }
@@ -51,6 +54,7 @@ func NewMCPProxy(
 	auditor *audit.Logger,
 	jwtMgr *authn.JWTManager,
 	agentStore *agent.Store,
+	rdb *redis.Client,
 	logger *slog.Logger,
 ) *MCPProxy {
 	return &MCPProxy{
@@ -62,6 +66,7 @@ func NewMCPProxy(
 		auditor:        auditor,
 		jwtMgr:         jwtMgr,
 		agentStore:     agentStore,
+		rdb:            rdb,
 		logger:         logger,
 		client:         &http.Client{Timeout: 15 * time.Second},
 	}
@@ -115,6 +120,11 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	method, _ := rpcReq["method"].(string)
+
+	// Track active MCP session in Redis if Mcp-Session-Id header is present
+	if sessionID := r.Header.Get("Mcp-Session-Id"); sessionID != "" {
+		p.trackSession(r.Context(), sessionID, agentID, agentKind, serviceName)
+	}
 
 	// Fetch Agent Instance Profile & Status from Redis/Postgres Store
 	allowedTools, agentStatus, _ := p.agentStore.GetAgentPermissions(r.Context(), agentID)
@@ -194,6 +204,10 @@ func (p *MCPProxy) handleOpenAPIRequest(
 
 	switch method {
 	case "initialize":
+		sessionID := fmt.Sprintf("sess_%d_%s", time.Now().UnixNano(), agentID)
+		w.Header().Set("Mcp-Session-Id", sessionID)
+		p.trackSession(r.Context(), sessionID, agentID, agentKind, p.extractServiceName(r.URL.Path))
+
 		res := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      reqID,
@@ -554,4 +568,20 @@ func (p *MCPProxy) extractIdentity(r *http.Request) (string, string, error) {
 	}
 
 	return "", "", fmt.Errorf("missing X-Agent-ID or Authorization header")
+}
+
+func (p *MCPProxy) trackSession(ctx context.Context, sessionID, agentID, agentKind, service string) {
+	if sessionID == "" || p.rdb == nil {
+		return
+	}
+	key := fmt.Sprintf("mcp:session:%s", sessionID)
+	data, _ := json.Marshal(map[string]any{
+		"session_id": sessionID,
+		"agent_id":   agentID,
+		"agent_kind": agentKind,
+		"service":    service,
+		"updated_at": time.Now().UTC().Format(time.RFC3339),
+	})
+	p.rdb.Set(ctx, key, string(data), 24*time.Hour)
+	metrics.ActiveSessions.Inc()
 }

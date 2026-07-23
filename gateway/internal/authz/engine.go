@@ -40,10 +40,11 @@ type Input struct {
 
 // Engine is the embedded OPA policy engine.
 type Engine struct {
-	prepared atomic.Pointer[rego.PreparedEvalQuery]
-	rdb      *redis.Client
-	db       *pgxpool.Pool
-	logger   *slog.Logger
+	prepared       atomic.Pointer[rego.PreparedEvalQuery]
+	currentVersion atomic.Int32
+	rdb            *redis.Client
+	db             *pgxpool.Pool
+	logger         *slog.Logger
 }
 
 // NewEngine creates a new OPA engine. It loads the initial policy from Postgres,
@@ -56,7 +57,7 @@ func NewEngine(ctx context.Context, rdb *redis.Client, db *pgxpool.Pool, logger 
 	}
 
 	// Load and compile initial policy
-	if err := e.loadAndCompile(ctx); err != nil {
+	if err := e.loadAndCompile(ctx, true); err != nil {
 		return nil, fmt.Errorf("initial policy load: %w", err)
 	}
 
@@ -111,13 +112,21 @@ func (e *Engine) Evaluate(ctx context.Context, input *Input) (*Decision, error) 
 }
 
 // loadAndCompile fetches active policies from Postgres via sqlc and compiles them.
-func (e *Engine) loadAndCompile(ctx context.Context) error {
+func (e *Engine) loadAndCompile(ctx context.Context, force bool) error {
 	queries := db.New(e.db)
 	policyRow, err := queries.GetPolicyByName(ctx, "default")
+	if err == nil && !force {
+		if int32(policyRow.Version) == e.currentVersion.Load() && e.prepared.Load() != nil {
+			// Version matches, skip re-compilation
+			return nil
+		}
+	}
 
 	var modules []func(*rego.Rego)
+	var newVer int32 = 1
 	if err == nil && policyRow.Source != "" {
 		modules = append(modules, rego.Module("policy_default.rego", policyRow.Source))
+		newVer = int32(policyRow.Version)
 	}
 
 	if len(modules) == 0 {
@@ -141,7 +150,8 @@ reason = "no policies configured"
 	}
 
 	e.prepared.Store(&pq)
-	e.logger.Info("policy compiled and loaded", "module_count", len(modules))
+	e.currentVersion.Store(newVer)
+	e.logger.Info("policy compiled and loaded", "module_count", len(modules), "version", newVer)
 	return nil
 }
 
@@ -160,7 +170,7 @@ func (e *Engine) subscribePolicyUpdates(ctx context.Context) {
 				return
 			}
 			e.logger.Info("policy update received via pub/sub, reloading")
-			if err := e.loadAndCompile(ctx); err != nil {
+			if err := e.loadAndCompile(ctx, true); err != nil {
 				e.logger.Error("failed to reload policy from pub/sub", "error", err)
 				// Keep serving the old policy — atomic pointer was not swapped
 			}
@@ -178,7 +188,7 @@ func (e *Engine) pollPolicies(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := e.loadAndCompile(ctx); err != nil {
+			if err := e.loadAndCompile(ctx, false); err != nil {
 				e.logger.Error("failed to reload policy from poll", "error", err)
 			}
 		}
