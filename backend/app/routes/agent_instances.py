@@ -165,6 +165,21 @@ async def update_agent_instance(agent_id: str, inst: AgentInstanceUpdate):
     )
 
 
+@router.get("/{agent_id}/spend")
+async def get_agent_spend(agent_id: str):
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT id FROM agent_instances WHERE id = $1", agent_id)
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+        spend_today_cents = await conn.fetchval(
+            "SELECT COALESCE(SUM(spend_delta), 0) FROM audit_log WHERE agent_id = $1 AND ts >= CURRENT_DATE",
+            agent_id,
+        )
+    spend_dollars = (float(spend_today_cents) if spend_today_cents else 0.0) / 100.0
+    return {"agent_id": agent_id, "spend_counters": {"today": spend_dollars}}
+
+
 @router.post("/{agent_id}/revoke")
 async def revoke_agent_instance(agent_id: str):
     pool = get_pool()
@@ -187,3 +202,6 @@ async def revive_agent_instance(agent_id: str):
     redis = get_redis()
     await redis.delete(f"agp:kill:agent:{agent_id}")
     await cache_agent_instance(agent_id)
+    await publish_config_update("revive_agent", agent_id)
+    return {"status": "active", "agent_id": agent_id}
+

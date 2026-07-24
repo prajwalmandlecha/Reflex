@@ -79,7 +79,7 @@ async def create_bank_connection(b: BankConnectionCreate):
             b.id, b.name, b.source_type, b.mcp_url, b.base_url, b.openapi_spec, b.credential_type, enc_creds, b.status,
         )
 
-        # Auto-discover tools if native_mcp
+        # Auto-discover tools if native_mcp or openapi
         discovered_tools = []
         if b.source_type == "native_mcp" and b.mcp_url:
             mcp_tools = fetch_mcp_tools(b.mcp_url)
@@ -92,6 +92,26 @@ async def create_bank_connection(b: BankConnectionCreate):
                     RETURNING id, name, description, input_schema, exposed
                     """,
                     b.id, t["name"], t["description"], json.dumps(t["input_schema"]), t.get("exposed", True),
+                )
+                if t_row:
+                    discovered_tools.append({
+                        "id": str(t_row["id"]),
+                        "name": t_row["name"],
+                        "description": t_row["description"] or "",
+                        "input_schema": json.loads(t_row["input_schema"]) if isinstance(t_row["input_schema"], str) else (t_row["input_schema"] or {}),
+                        "exposed": t_row["exposed"],
+                    })
+        elif b.source_type == "openapi" and b.openapi_spec:
+            _, openapi_tools = parse_openapi_spec(b.openapi_spec)
+            for t in openapi_tools:
+                t_row = await conn.fetchrow(
+                    """
+                    INSERT INTO tools (bank_connection_id, name, description, input_schema, underlying_ops, exposed)
+                    VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6)
+                    ON CONFLICT DO NOTHING
+                    RETURNING id, name, description, input_schema, exposed
+                    """,
+                    b.id, t["name"], t["description"], json.dumps(t["input_schema"]), json.dumps(t["underlying_ops"]), t.get("exposed", True),
                 )
                 if t_row:
                     discovered_tools.append({
@@ -135,7 +155,14 @@ async def register_openapi_spec(connection_id: str, payload: dict):
 
     pool = get_pool()
     async with pool.acquire() as conn:
-        name = spec_data.get("info", {}).get("title", f"Service {connection_id}")
+        raw_title = spec_data.get("info", {}).get("title")
+        if payload.get("name"):
+            name = payload["name"]
+        elif raw_title and raw_title != "Imported Spec":
+            name = raw_title
+        else:
+            name = connection_id.replace("-", " ").title()
+
         base_url = payload.get("base_url", "http://localhost:8080")
         await conn.execute(
             """
