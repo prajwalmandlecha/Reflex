@@ -187,16 +187,3 @@ async def revive_agent_instance(agent_id: str):
     redis = get_redis()
     await redis.delete(f"agp:kill:agent:{agent_id}")
     await cache_agent_instance(agent_id)
-    await publish_config_update("revive_agent", agent_id)
-    return {"status": "active", "agent_id": agent_id}
-
-
-@router.get("/{agent_id}/spend")
-async def get_agent_spend(agent_id: str):
-    redis = get_redis()
-    keys = await redis.keys(f"spend:agent:{agent_id}:*")
-    result = {}
-    for k in keys:
-        val = await redis.get(k)
-        result[k] = int(val) if val else 0
-    return {"agent_id": agent_id, "spend_counters": result}

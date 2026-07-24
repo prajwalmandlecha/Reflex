@@ -4,7 +4,7 @@ export function formatCurrency(n: number): string {
     currency: 'USD',
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
-  }).format(n);
+  }).format(n || 0);
 }
 
 export function formatCurrencyPrecise(n: number): string {
@@ -13,11 +13,11 @@ export function formatCurrencyPrecise(n: number): string {
     currency: 'USD',
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(n);
+  }).format(n || 0);
 }
 
 export function formatNumber(n: number): string {
-  return new Intl.NumberFormat('en-US').format(n);
+  return new Intl.NumberFormat('en-US').format(n || 0);
 }
 
 export function formatTimestamp(iso?: string | null): string {
