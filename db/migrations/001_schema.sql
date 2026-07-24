@@ -97,9 +97,9 @@ CREATE TABLE IF NOT EXISTS policies (
     visual_rules            JSONB DEFAULT '[]',
     status                  VARCHAR(32) DEFAULT 'draft',  -- draft / active / archived
     created_at              TIMESTAMPTZ DEFAULT NOW(),
-    updated_at              TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(name, scope, COALESCE(target_id, '__global__'))
+    updated_at              TIMESTAMPTZ DEFAULT NOW()
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_policies_unique_target ON policies(name, scope, (COALESCE(target_id, '__global__')));
 
 -- ============================================================
 -- Policy Change Log (PRD §6.4: config changes versioned)
@@ -129,24 +129,22 @@ INSERT INTO config_version (id, version) VALUES (1, 1) ON CONFLICT DO NOTHING;
 -- ============================================================
 CREATE TABLE IF NOT EXISTS audit_log (
     id                      BIGSERIAL PRIMARY KEY,
-    ts                      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     agent_id                VARCHAR(64) NOT NULL,
-    agent_class_id          VARCHAR(64) DEFAULT '',
+    agent_kind              VARCHAR(64) DEFAULT 'conversational',
     action                  VARCHAR(128) NOT NULL,
-    bank_connection_id      VARCHAR(64) DEFAULT '',
-    params                  JSONB DEFAULT '{}',
-    decision                VARCHAR(16) NOT NULL,     -- allow / deny
-    deny_stage              VARCHAR(32) DEFAULT '',    -- killswitch / constraint / policy / spend
-    reason                  TEXT DEFAULT '',
-    spend_delta             BIGINT DEFAULT 0,
-    -- Per-stage latency breakdown (all in milliseconds)
-    total_latency_ms        DOUBLE PRECISION DEFAULT 0,
-    killswitch_latency_ms   DOUBLE PRECISION DEFAULT 0,
-    policy_latency_ms       DOUBLE PRECISION DEFAULT 0,
-    spend_check_latency_ms  DOUBLE PRECISION DEFAULT 0,
-    constraint_latency_ms   DOUBLE PRECISION DEFAULT 0,
-    downstream_latency_ms   DOUBLE PRECISION DEFAULT 0,
-    governance_overhead_ms  DOUBLE PRECISION DEFAULT 0,
+    decision                VARCHAR(16) NOT NULL,    -- allow / deny / spend_exceeded / killed
+    deny_reason             TEXT DEFAULT '',
+    amount                  NUMERIC(14, 2) DEFAULT 0.00,
+    currency                VARCHAR(8) DEFAULT 'USD',
+
+    -- Stage-by-stage latency tracking (PRD §6.4: breakdown)
+    latency_ms              DOUBLE PRECISION DEFAULT 0.0,
+    stage_killswitch_ms     DOUBLE PRECISION DEFAULT 0.0,
+    stage_opa_ms            DOUBLE PRECISION DEFAULT 0.0,
+    stage_spend_ms          DOUBLE PRECISION DEFAULT 0.0,
+
+    ts                      TIMESTAMPTZ DEFAULT NOW(),
+
     -- Hash chain for tamper detection
     prev_hash               VARCHAR(64) DEFAULT '',
     entry_hash              VARCHAR(64) NOT NULL
@@ -156,7 +154,6 @@ CREATE INDEX IF NOT EXISTS idx_audit_agent ON audit_log(agent_id);
 CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts);
 CREATE INDEX IF NOT EXISTS idx_audit_decision ON audit_log(decision);
 CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action);
-CREATE INDEX IF NOT EXISTS idx_audit_class ON audit_log(agent_class_id);
 
 -- ============================================================
 -- Stop Events Log (emergency stop history)
@@ -170,14 +167,3 @@ CREATE TABLE IF NOT EXISTS stop_events (
     reason                  TEXT DEFAULT '',
     created_at              TIMESTAMPTZ DEFAULT NOW()
 );
-
--- +goose Down
-DROP TABLE IF EXISTS stop_events;
-DROP TABLE IF EXISTS audit_log;
-DROP TABLE IF EXISTS config_version;
-DROP TABLE IF EXISTS policy_changelog;
-DROP TABLE IF EXISTS policies;
-DROP TABLE IF EXISTS tools;
-DROP TABLE IF EXISTS bank_connections;
-DROP TABLE IF EXISTS agent_instances;
-DROP TABLE IF EXISTS agent_classes;

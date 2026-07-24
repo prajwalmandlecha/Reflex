@@ -169,9 +169,3 @@ INSERT INTO bank_connections (id, name, source_type, mcp_url, status) VALUES
 ('bank-financial', 'Bank of Anthos — Financial Service', 'native_mcp', 'http://20.2.83.126:31300/mcp', 'connected'),
 ('bank-risk', 'Bank of Anthos — Risk Service', 'native_mcp', 'http://20.2.83.126:31400/mcp', 'connected')
 ON CONFLICT (id) DO NOTHING;
-
--- +goose Down
-DELETE FROM agent_instances;
-DELETE FROM agent_classes;
-DELETE FROM bank_connections;
-DELETE FROM policies WHERE name = 'default';
