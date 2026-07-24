@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import { Panel } from '@/components/gov/panel';
 import { StatusBadge } from '@/components/gov/status-badge';
@@ -28,7 +28,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { formatCurrency } from '@/lib/format';
 import type { AgentClass, AgentInstance, BankTool } from '@/lib/types';
 import { api } from '@/lib/api';
-import { Plus, Ban, Wrench, DollarSign, Clock, Settings2 } from 'lucide-react';
+import { Plus, Ban, Wrench, DollarSign, Clock, Settings2, Search, X } from 'lucide-react';
 
 export function AgentClassesView({
   classes,
@@ -226,10 +226,20 @@ function ClassForm({ classData, onComplete }: { classData: AgentClass | null; on
   const [selectedTools, setSelectedTools] = useState<string[]>(
     classData?.allowedTools || classData?.defaultAllowedTools || []
   );
+  const [toolSearch, setToolSearch] = useState('');
+  const [toolFilter, setToolFilter] = useState<'all' | 'selected' | 'unselected'>('all');
   const [classId, setClassId] = useState(classData?.id || '');
   const [name, setName] = useState(classData?.name || '');
   const [description, setDescription] = useState(classData?.description || '');
-  const [capAmount, setCapAmount] = useState('5000');
+  const caps = (classData as any)?.defaultCaps || (classData as any)?.default_caps || {};
+  const initHourly = caps.hourly?.amount_cents != null ? (caps.hourly.amount_cents / 100).toString() : '';
+  const initDaily = caps.daily?.amount_cents != null ? (caps.daily.amount_cents / 100).toString() : '';
+  const initPerTx = caps.per_transaction?.max_amount_cents != null ? (caps.per_transaction.max_amount_cents / 100).toString() : '';
+
+  const [hourlyCap, setHourlyCap] = useState(initHourly);
+  const [dailyCap, setDailyCap] = useState(initDaily);
+  const [perTxCap, setPerTxCap] = useState(initPerTx);
+
   const [constraintsJson, setConstraintsJson] = useState(
     JSON.stringify(classData?.defaultConstraints || {}, null, 2)
   );
@@ -239,6 +249,34 @@ function ClassForm({ classData, onComplete }: { classData: AgentClass | null; on
   useEffect(() => {
     api.getAllTools().then(setTools).catch(() => {});
   }, []);
+
+  const filteredTools = useMemo(() => {
+    return tools.filter((t) => {
+      const matchesSearch =
+        !toolSearch ||
+        t.name.toLowerCase().includes(toolSearch.toLowerCase()) ||
+        (t.description && t.description.toLowerCase().includes(toolSearch.toLowerCase()));
+
+      const isSelected = selectedTools.includes(t.name);
+      const matchesFilter =
+        toolFilter === 'all' ||
+        (toolFilter === 'selected' && isSelected) ||
+        (toolFilter === 'unselected' && !isSelected);
+
+      return matchesSearch && matchesFilter;
+    });
+  }, [tools, toolSearch, toolFilter, selectedTools]);
+
+  const handleSelectAllFiltered = () => {
+    const filteredNames = filteredTools.map((t) => t.name);
+    const newSelected = Array.from(new Set([...selectedTools, ...filteredNames]));
+    setSelectedTools(newSelected);
+  };
+
+  const handleDeselectAllFiltered = () => {
+    const filteredNames = new Set(filteredTools.map((t) => t.name));
+    setSelectedTools(selectedTools.filter((name) => !filteredNames.has(name)));
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -260,6 +298,17 @@ function ClassForm({ classData, onComplete }: { classData: AgentClass | null; on
       return;
     }
 
+    const defaultCaps: Record<string, any> = {};
+    if (hourlyCap.trim() !== '') {
+      defaultCaps.hourly = { amount_cents: Math.max(0, (parseFloat(hourlyCap) || 0) * 100) };
+    }
+    if (dailyCap.trim() !== '') {
+      defaultCaps.daily = { amount_cents: Math.max(0, (parseFloat(dailyCap) || 0) * 100) };
+    }
+    if (perTxCap.trim() !== '') {
+      defaultCaps.per_transaction = { max_amount_cents: Math.max(0, (parseFloat(perTxCap) || 0) * 100) };
+    }
+
     setLoading(true);
     try {
       const payload = {
@@ -268,7 +317,7 @@ function ClassForm({ classData, onComplete }: { classData: AgentClass | null; on
         description,
         default_allowed_tools: selectedTools,
         default_constraints: parsedConstraints,
-        default_caps: { hourly: { amount_cents: (parseFloat(capAmount) || 0) * 100 } },
+        default_caps: defaultCaps,
         status: 'active',
       };
 
@@ -328,38 +377,168 @@ function ClassForm({ classData, onComplete }: { classData: AgentClass | null; on
       </div>
 
       <div>
+        <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary mb-1 block">
+          Spend Caps Configuration ($ USD — Optional)
+        </Label>
+        <div className="grid grid-cols-3 gap-3 border border-white/10 bg-white/[0.02] p-2.5 rounded-lg">
+          <div>
+            <Label className="font-mono text-[10px] text-ink-secondary/80">Hourly Cap ($)</Label>
+            <Input
+              type="number"
+              value={hourlyCap}
+              onChange={(e) => setHourlyCap(e.target.value)}
+              placeholder="e.g. 5000"
+              className="mt-1 h-8 border-white/10 bg-slate-900/80 font-mono text-xs text-white placeholder:text-ink-secondary/40"
+            />
+          </div>
+          <div>
+            <Label className="font-mono text-[10px] text-ink-secondary/80">Daily Cap ($)</Label>
+            <Input
+              type="number"
+              value={dailyCap}
+              onChange={(e) => setDailyCap(e.target.value)}
+              placeholder="e.g. 50000"
+              className="mt-1 h-8 border-white/10 bg-slate-900/80 font-mono text-xs text-white placeholder:text-ink-secondary/40"
+            />
+          </div>
+          <div>
+            <Label className="font-mono text-[10px] text-ink-secondary/80">Per-Tx Cap ($)</Label>
+            <Input
+              type="number"
+              value={perTxCap}
+              onChange={(e) => setPerTxCap(e.target.value)}
+              placeholder="e.g. 1000"
+              className="mt-1 h-8 border-white/10 bg-slate-900/80 font-mono text-xs text-white placeholder:text-ink-secondary/40"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div>
         <div className="flex items-center justify-between mb-1.5">
           <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
-            Allowed Registered MCP Tools ({selectedTools.length} selected)
+            Allowed Registered MCP Tools ({selectedTools.length} of {tools.length} selected)
           </Label>
-          {tools.length === 0 && (
-            <span className="font-mono text-[10px] text-amber-400">No tools registered in database</span>
+          {tools.length > 0 && (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleSelectAllFiltered}
+                className="font-mono text-[10px] text-cyan-400 hover:underline cursor-pointer"
+              >
+                Select {toolSearch || toolFilter !== 'all' ? 'matching' : 'all'}
+              </button>
+              <span className="text-white/20 text-[10px]">·</span>
+              <button
+                type="button"
+                onClick={handleDeselectAllFiltered}
+                className="font-mono text-[10px] text-rose-400 hover:underline cursor-pointer"
+              >
+                Deselect {toolSearch || toolFilter !== 'all' ? 'matching' : 'all'}
+              </button>
+            </div>
           )}
         </div>
 
         {tools.length > 0 ? (
-          <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto border border-white/10 bg-white/[0.02] p-2 rounded">
-            {tools.map((t) => (
-              <label
-                key={t.name}
-                className={cn(
-                  'flex items-center gap-2 border p-1.5 rounded cursor-pointer transition-colors',
-                  selectedTools.includes(t.name)
-                    ? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-300'
-                    : 'border-white/5 bg-white/5 text-ink-secondary hover:text-ink-primary'
-                )}
-              >
-                <Checkbox
-                  checked={selectedTools.includes(t.name)}
-                  onCheckedChange={(checked) => {
-                    setSelectedTools((prev) =>
-                      checked ? [...prev, t.name] : prev.filter((name) => name !== t.name)
-                    );
-                  }}
+          <div className="space-y-2 border border-white/10 bg-white/[0.02] p-2.5 rounded-lg">
+            {/* Search & Filter Bar */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative flex-1 min-w-[180px]">
+                <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-secondary" />
+                <Input
+                  value={toolSearch}
+                  onChange={(e) => setToolSearch(e.target.value)}
+                  placeholder="Search tools by name..."
+                  className="h-8 border-white/10 bg-slate-900/80 pl-8 pr-7 font-mono text-xs text-white placeholder:text-ink-secondary/50 focus:border-cyan-500/50"
                 />
-                <span className="font-mono text-xs">{t.name}</span>
-              </label>
-            ))}
+                {toolSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setToolSearch('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-ink-secondary hover:text-white"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+              <div className="flex rounded border border-white/10 bg-slate-900/80 p-0.5 font-mono text-[10px]">
+                <button
+                  type="button"
+                  onClick={() => setToolFilter('all')}
+                  className={cn(
+                    'px-2 py-1 rounded transition-colors',
+                    toolFilter === 'all' ? 'bg-cyan-500/20 text-cyan-300 font-semibold' : 'text-ink-secondary hover:text-white'
+                  )}
+                >
+                  All ({tools.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setToolFilter('selected')}
+                  className={cn(
+                    'px-2 py-1 rounded transition-colors',
+                    toolFilter === 'selected' ? 'bg-cyan-500/20 text-cyan-300 font-semibold' : 'text-ink-secondary hover:text-white'
+                  )}
+                >
+                  Selected ({selectedTools.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setToolFilter('unselected')}
+                  className={cn(
+                    'px-2 py-1 rounded transition-colors',
+                    toolFilter === 'unselected' ? 'bg-cyan-500/20 text-cyan-300 font-semibold' : 'text-ink-secondary hover:text-white'
+                  )}
+                >
+                  Unselected ({tools.length - selectedTools.length})
+                </button>
+              </div>
+            </div>
+
+            {/* Tools Grid */}
+            {filteredTools.length > 0 ? (
+              <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
+                {filteredTools.map((t) => {
+                  const isChecked = selectedTools.includes(t.name);
+                  return (
+                    <label
+                      key={t.name}
+                      className={cn(
+                        'flex items-start gap-2 border p-2 rounded cursor-pointer transition-all',
+                        isChecked
+                          ? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-200 shadow-[0_0_10px_-3px_rgba(6,182,212,0.2)]'
+                          : 'border-white/5 bg-white/[0.02] text-ink-secondary hover:border-white/20 hover:bg-white/5 hover:text-ink-primary'
+                      )}
+                    >
+                      <Checkbox
+                        checked={isChecked}
+                        onCheckedChange={(checked) => {
+                          setSelectedTools((prev) =>
+                            checked ? [...prev, t.name] : prev.filter((name) => name !== t.name)
+                          );
+                        }}
+                        className="mt-0.5 border-white/20 data-[state=checked]:bg-cyan-500 data-[state=checked]:border-cyan-500"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="font-mono text-xs font-semibold text-white flex items-center justify-between">
+                          <span className="truncate">{t.name}</span>
+                        </div>
+                        {t.description && (
+                          <div className="font-mono text-[10px] text-ink-secondary/70 line-clamp-1 mt-0.5">
+                            {t.description}
+                          </div>
+                        )}
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="p-4 text-center font-mono text-xs text-ink-secondary">
+                No tools matching "{toolSearch}"
+              </div>
+            )}
           </div>
         ) : (
           <div className="border border-white/5 bg-white/[0.02] p-4 text-center font-mono text-xs text-ink-secondary rounded">

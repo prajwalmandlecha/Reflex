@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import { Panel } from '@/components/gov/panel';
 import { StatusBadge } from '@/components/gov/status-badge';
@@ -17,14 +17,17 @@ import {
 } from '@/components/ui/select';
 import { formatDateTime, formatRelative } from '@/lib/format';
 import type { Policy, AgentClass, VisualRule, RuleCondition } from '@/lib/types';
+import { api } from '@/lib/api';
 import { Plus, Code2, FileJson, Play, CheckCircle2, XCircle, Pencil, FileText } from 'lucide-react';
 
 export function PoliciesView({
   policies,
   classes,
+  onRefresh,
 }: {
   policies: Policy[];
   classes: AgentClass[];
+  onRefresh?: () => void;
 }) {
   const [selectedPolicy, setSelectedPolicy] = useState<Policy | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -41,7 +44,10 @@ export function PoliciesView({
           </p>
         </div>
         <Button
-          onClick={() => setShowCreate(true)}
+          onClick={() => {
+            setSelectedPolicy(null);
+            setShowCreate(true);
+          }}
           className="border border-accent/30 bg-accent/10 text-accent hover:bg-accent/20"
         >
           <Plus className="mr-1.5 h-4 w-4" />
@@ -56,10 +62,13 @@ export function PoliciesView({
             {policies.map((pol) => (
               <button
                 key={pol.id}
-                onClick={() => setSelectedPolicy(pol)}
+                onClick={() => {
+                  setShowCreate(false);
+                  setSelectedPolicy(pol);
+                }}
                 className={cn(
                   'border-b border-white/5 p-3 text-left transition-colors last:border-0',
-                  selectedPolicy?.id === pol.id
+                  selectedPolicy?.id === pol.id && !showCreate
                     ? 'bg-accent/10'
                     : 'hover:bg-white/5'
                 )}
@@ -73,9 +82,9 @@ export function PoliciesView({
                 <div className="mt-1 flex items-center gap-2 font-mono text-[10px] text-ink-secondary">
                   <span>{pol.type === 'visual' ? 'Visual' : 'Rego'}</span>
                   <span>·</span>
-                  <span>{pol.scope === 'class' ? 'Class' : 'Instance'}</span>
+                  <span>{pol.scope === 'class' ? 'Class' : pol.scope === 'instance' ? 'Instance' : 'Global'}</span>
                   <span>·</span>
-                  <span>{pol.targetName}</span>
+                  <span>{pol.targetName || pol.targetId || pol.scope}</span>
                 </div>
                 <div className="mt-0.5 font-mono text-[10px] text-ink-secondary/60">
                   {formatRelative(pol.lastModified || pol.updated_at || new Date().toISOString())}
@@ -92,6 +101,15 @@ export function PoliciesView({
               policy={selectedPolicy}
               classes={classes}
               isNew={showCreate}
+              onRefresh={onRefresh}
+              onComplete={(savedPolicy) => {
+                setShowCreate(false);
+                if (savedPolicy) setSelectedPolicy(savedPolicy);
+              }}
+              onCancel={() => {
+                setShowCreate(false);
+                setSelectedPolicy(null);
+              }}
             />
           ) : (
             <Panel>
@@ -115,16 +133,25 @@ function PolicyEditor({
   policy,
   classes,
   isNew,
+  onRefresh,
+  onComplete,
+  onCancel,
 }: {
   policy: Policy | null;
   classes: AgentClass[];
   isNew: boolean;
+  onRefresh?: () => void;
+  onComplete?: (savedPolicy?: Policy) => void;
+  onCancel?: () => void;
 }) {
+  const [name, setName] = useState(policy?.name ?? '');
+  const [scope, setScope] = useState<'global' | 'class' | 'instance'>(policy?.scope ?? 'global');
+  const [targetId, setTargetId] = useState<string>(policy?.targetId ?? policy?.target_id ?? '');
   const [mode, setMode] = useState<'visual' | 'rego'>(
     policy?.type ?? 'visual'
   );
   const [regoSource, setRegoSource] = useState(
-    policy?.regoSource ?? `package governance.guard\n\ndefault allow := false\n\nallow if {\n  input.action == ""\n  input.params.amount <= 100000\n}\n\ndeny[msg] if {\n  input.action == ""\n  input.params.amount > 100000\n  msg := "Amount exceeds limit"\n}`
+    policy?.regoSource ?? policy?.rego_source ?? `package agp.authz\n\nimport rego.v1\n\ndefault allow := false\ndefault deny := false\n\nallow if {\n  count(input.allowed_tools) > 0\n  input.action in input.allowed_tools\n  not deny\n}`
   );
   const [validationResult, setValidationResult] = useState<
     { ok: boolean; message: string } | null
@@ -138,21 +165,49 @@ function PolicyEditor({
       conditions: [{ field: 'amount', operator: 'lte', value: 100000 }],
     }
   );
+  const [loading, setLoading] = useState(false);
 
-  const handleValidate = () => {
+  useEffect(() => {
+    if (isNew) {
+      setName('');
+      setScope('global');
+      setTargetId('');
+      setMode('rego');
+      setRegoSource(`package agp.authz\n\nimport rego.v1\n\ndefault allow := false\ndefault deny := false\n\n# Rule 1: Explicit Per-Agent Allowed Tools Whitelist\nallow if {\n\tcount(input.allowed_tools) > 0\n\tinput.action in input.allowed_tools\n\tnot deny\n}`);
+      setRule({
+        action: 'wire_transfer',
+        conditions: [{ field: 'amount', operator: 'lte', value: 100000 }],
+      });
+      setValidationResult(null);
+      setDryRunResult(null);
+    } else if (policy) {
+      setName(policy.name || '');
+      setScope(policy.scope || 'global');
+      setTargetId(policy.targetId || policy.target_id || '');
+      setMode(policy.type === 'rego' ? 'rego' : 'visual');
+      setRegoSource(policy.regoSource || policy.rego_source || '');
+      setValidationResult(null);
+      setDryRunResult(null);
+    }
+  }, [policy, isNew]);
+
+  const handleValidate = async () => {
     if (mode === 'rego') {
-      const hasPackage = regoSource.includes('package ');
-      const hasDefault = regoSource.includes('default allow');
-      if (!hasPackage || !hasDefault) {
-        setValidationResult({
-          ok: false,
-          message: 'Missing required elements: package declaration or default allow rule.',
-        });
-      } else {
-        setValidationResult({
-          ok: true,
-          message: 'Rego syntax valid — 0 errors, 0 warnings.',
-        });
+      try {
+        const res = await api.validatePolicy(regoSource);
+        if (res.valid) {
+          setValidationResult({
+            ok: true,
+            message: 'Rego syntax valid — 0 errors, 0 warnings.',
+          });
+        } else {
+          setValidationResult({
+            ok: false,
+            message: res.errors?.join(', ') || 'Rego validation failed.',
+          });
+        }
+      } catch (err: any) {
+        setValidationResult({ ok: false, message: err.message || 'Validation error' });
       }
     } else {
       if (!rule.action || rule.conditions.length === 0) {
@@ -181,6 +236,35 @@ function PolicyEditor({
     });
   };
 
+  const handleSave = async (status: 'draft' | 'active') => {
+    setLoading(true);
+    setValidationResult(null);
+    try {
+      const payload = {
+        name: name || policy?.name || 'default',
+        scope: scope,
+        target_id: scope === 'global' ? null : (targetId || null),
+        type: mode,
+        rego_source: mode === 'rego' ? regoSource : '',
+        visual_rules: mode === 'visual' ? [rule] : [],
+        status: status,
+      };
+
+      let savedPolicy: Policy | undefined;
+      if (policy && policy.id) {
+        savedPolicy = await api.updatePolicy(policy.id.toString(), payload as any);
+      } else {
+        savedPolicy = await api.createPolicy(payload as any);
+      }
+      if (onRefresh) onRefresh();
+      if (onComplete) onComplete(savedPolicy);
+    } catch (err: any) {
+      setValidationResult({ ok: false, message: err.message || 'Failed to save policy' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <Panel
       title={isNew ? 'New Policy' : policy?.name ?? 'Policy'}
@@ -197,6 +281,8 @@ function PolicyEditor({
               Policy Name
             </Label>
             <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
               placeholder="e.g. Treasury Wire Cap Guard"
               className="mt-1 border-border bg-white/5 font-mono text-sm"
             />
@@ -208,27 +294,30 @@ function PolicyEditor({
             Scope
           </Label>
           <div className="mt-1 flex gap-2">
-            <Select defaultValue={policy?.scope ?? 'class'}>
-              <SelectTrigger className="w-[120px] border-border bg-white/5 font-mono text-xs">
+            <Select value={scope} onValueChange={(v) => setScope(v as any)}>
+              <SelectTrigger className="w-[140px] border-border bg-white/5 font-mono text-xs">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent className="border-border bg-white/5">
+              <SelectContent className="border-border bg-slate-900 text-white">
+                <SelectItem value="global">Global</SelectItem>
                 <SelectItem value="class">Class</SelectItem>
                 <SelectItem value="instance">Instance</SelectItem>
               </SelectContent>
             </Select>
-            <Select defaultValue={policy?.targetId ?? classes[0]?.id ?? ''}>
-              <SelectTrigger className="flex-1 border-border bg-white/5 font-mono text-xs">
-                <SelectValue placeholder="Target" />
-              </SelectTrigger>
-              <SelectContent className="border-border bg-white/5">
-                {classes.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {scope !== 'global' && (
+              <Select value={targetId} onValueChange={setTargetId}>
+                <SelectTrigger className="flex-1 border-border bg-white/5 font-mono text-xs">
+                  <SelectValue placeholder="Target" />
+                </SelectTrigger>
+                <SelectContent className="border-border bg-slate-900 text-white">
+                  {classes.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
         </div>
 
@@ -333,10 +422,28 @@ function PolicyEditor({
 
         {/* Save / Activate */}
         <div className="mt-4 flex justify-end gap-2">
-          <Button variant="outline" className="border-border text-ink-secondary">
+          {onCancel && (
+            <Button
+              onClick={onCancel}
+              variant="ghost"
+              className="border-border text-ink-secondary hover:bg-white/5"
+            >
+              Cancel
+            </Button>
+          )}
+          <Button
+            onClick={() => handleSave('draft')}
+            disabled={loading}
+            variant="outline"
+            className="border-border text-ink-secondary"
+          >
             Save draft
           </Button>
-          <Button className="bg-signal-healthy text-black hover:bg-signal-healthy/90">
+          <Button
+            onClick={() => handleSave('active')}
+            disabled={loading}
+            className="bg-signal-healthy text-black hover:bg-signal-healthy/90"
+          >
             Activate policy
           </Button>
         </div>

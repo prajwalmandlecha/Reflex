@@ -1,6 +1,7 @@
 """Pydantic models for Bank Connections."""
 
 from datetime import datetime
+from typing import Any
 from pydantic import BaseModel, Field
 
 
@@ -33,3 +34,4 @@ class BankConnectionResponse(BankConnectionBase):
     created_at: datetime
     updated_at: datetime
     tool_count: int = 0
+    tools: list[dict[str, Any]] = Field(default_factory=list)
