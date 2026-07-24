@@ -31,6 +31,8 @@ import {
   Bell,
 } from 'lucide-react';
 
+import { useWebSocket } from '@/hooks/useWebSocket';
+
 import { CommandCenterView } from '@/components/views/command-center';
 import { AgentsView } from '@/components/views/agents';
 import { AgentClassesView } from '@/components/views/agent-classes';
@@ -85,6 +87,30 @@ export function AppShell() {
   const [agentsFilter, setAgentsFilter] = useState<{ classId?: string; status?: string } | null>(null);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
 
+  const { isConnected: isFleetWsConnected } = useWebSocket('/ws/fleet');
+  const { history: wsAlerts } = useWebSocket<AlertItem>('/ws/alerts');
+  const { history: wsActivities } = useWebSocket<ActivityEvent>('/ws/activity');
+
+  useEffect(() => {
+    if (wsAlerts.length > 0) {
+      setAlertItems((prev) => {
+        const ids = new Set(prev.map((a) => a.id));
+        const newItems = wsAlerts.filter((a) => !ids.has(a.id));
+        return [...newItems, ...prev];
+      });
+    }
+  }, [wsAlerts]);
+
+  useEffect(() => {
+    if (wsActivities.length > 0) {
+      setActivityFeed((prev) => {
+        const ids = new Set(prev.map((a) => a.id));
+        const newItems = wsActivities.filter((a) => !ids.has(a.id));
+        return [...newItems, ...prev];
+      });
+    }
+  }, [wsActivities]);
+
   // Global Keyboard Shortcuts Listener
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -130,6 +156,21 @@ export function AppShell() {
     api.getAuditLog().then(setAuditEntries).catch(() => {});
     api.getFleetStatus().then((res) => {
       if (res && res.status) setFleetStatus(res.status);
+    }).catch(() => {});
+    api.getDashboardActivity().then((act) => {
+      if (Array.isArray(act)) setActivityFeed(act);
+    }).catch(() => {});
+    api.getDashboardSummary().then((sum) => {
+      if (sum) {
+        setFleetSpend({
+          spent: sum.spend_today_usd ?? sum.spend_today ?? 0,
+          cap: sum.total_cap_usd ?? 100000,
+        });
+        setDenialsLastHour(sum.denials_last_hour ?? 0);
+      }
+    }).catch(() => {});
+    api.getStopEvents().then((evs) => {
+      if (Array.isArray(evs)) setStopEvents(evs);
     }).catch(() => {});
   }, []);
 
@@ -226,9 +267,21 @@ export function AppShell() {
             </div>
             <div className="h-4 w-[1px] bg-[#232B35]" />
             {/* Live Stream Heartbeat Indicator */}
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#3DDC84]/10 border border-[#3DDC84]/20 text-[10px] font-mono text-[#3DDC84]">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#3DDC84] animate-pulse" />
-              <span>STREAM ACTIVE</span>
+            <div
+              className={cn(
+                'flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-mono border transition-colors',
+                isFleetWsConnected
+                  ? 'bg-[#3DDC84]/10 border-[#3DDC84]/20 text-[#3DDC84]'
+                  : 'bg-amber-500/10 border-amber-500/20 text-amber-400'
+              )}
+            >
+              <span
+                className={cn(
+                  'w-1.5 h-1.5 rounded-full animate-pulse',
+                  isFleetWsConnected ? 'bg-[#3DDC84]' : 'bg-amber-400'
+                )}
+              />
+              <span>{isFleetWsConnected ? 'STREAM ACTIVE' : 'STREAM POLLING'}</span>
             </div>
           </div>
 
@@ -243,6 +296,7 @@ export function AppShell() {
             </button>
 
             <EmergencyStopControl
+              isStopped={fleetStatus === 'stopped'}
               onConfirm={() => handleFleetAction(fleetStatus === 'stopped' ? 'resume' : 'stop')}
             />
           </div>
@@ -276,7 +330,7 @@ export function AppShell() {
             />
           )}
           {view === 'classes' && <AgentClassesView classes={classes} instances={instances} onRefresh={reloadData} />}
-          {view === 'policies' && <PoliciesView policies={policies} classes={classes} />}
+          {view === 'policies' && <PoliciesView policies={policies} classes={classes} onRefresh={reloadData} />}
           {view === 'bank' && <BankConnectionsView connections={connections} onRefresh={reloadData} />}
           {view === 'activity' && <ActivityView activityFeed={activityFeed} classes={classes} />}
           {view === 'performance' && <PerformanceView />}
@@ -287,9 +341,11 @@ export function AppShell() {
               classes={classes}
               stopEvents={stopEvents}
               operator={operator}
+              fleetStatus={fleetStatus}
               onStopInstance={handleRevokeAgent}
               onStopClass={(classId) => api.revokeAgentClass(classId).then(reloadData)}
               onStopFleet={() => handleFleetAction('stop')}
+              onResumeFleet={() => handleFleetAction('resume')}
               onResumeInstance={handleReviveAgent}
             />
           )}

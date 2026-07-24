@@ -24,7 +24,7 @@ import {
 import type { BankConnection } from '@/lib/types';
 import { formatRelative } from '@/lib/format';
 import { api } from '@/lib/api';
-import { Plus, Plug, FileUp, Link2, AlertCircle, Loader2 } from 'lucide-react';
+import { Plus, Check, RefreshCw, Server, AlertCircle, FileUp, Link2, Plug, Loader2 } from 'lucide-react';
 
 const sourceTypeLabel: Record<string, string> = {
   native_mcp: 'Native MCP',
@@ -49,12 +49,12 @@ export function BankConnectionsView({
             Bank Connections & MCP Servers
           </h2>
           <p className="font-sans text-xs text-ink-secondary">
-            Connect existing native MCP servers or virtualize OpenAPI REST services into governed MCP tools.
+            Manage connected financial APIs and Model Context Protocol tool servers.
           </p>
         </div>
         <Button
           onClick={() => setShowWizard(true)}
-          className="border border-accent/30 bg-accent/10 text-accent hover:bg-accent/20 font-mono text-xs"
+          className="border border-accent/30 bg-accent/10 text-accent hover:bg-accent/20"
         >
           <Plus className="mr-1.5 h-4 w-4" />
           Add connection
@@ -66,13 +66,15 @@ export function BankConnectionsView({
           <Panel key={conn.id}>
             <div className="flex items-start justify-between border-b border-white/5 p-4">
               <div className="flex items-start gap-3">
-                <div className="flex h-8 w-8 items-center justify-center border border-border bg-white/5">
-                  <Plug className="h-4 w-4 text-accent" />
+                <div className="mt-0.5 flex h-8 w-8 items-center justify-center rounded border border-white/10 bg-white/5 font-mono text-xs font-bold text-accent">
+                  <Server className="h-4 w-4" />
                 </div>
                 <div>
-                  <div className="font-mono text-sm text-ink-primary">{conn.name}</div>
-                  <div className="mt-0.5 flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
-                    <span className="text-accent">{sourceTypeLabel[conn.sourceType] || conn.sourceType}</span>
+                  <div className="font-mono text-sm font-semibold text-ink-primary">
+                    {conn.name}
+                  </div>
+                  <div className="mt-0.5 flex items-center gap-2 font-mono text-[10px] text-ink-secondary">
+                    <span>{conn.sourceType === 'native_mcp' ? 'Native MCP' : 'OpenAPI Proxy'}</span>
                     <span>·</span>
                     <span>{conn.toolCount || (conn.tools ? conn.tools.length : 0)} tools</span>
                     {conn.lastSync && (
@@ -100,16 +102,31 @@ export function BankConnectionsView({
             {(conn.tools?.length ?? 0) > 0 ? (
               <div className="p-3">
                 <div className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary mb-2">
-                  Exposed MCP Tools ({conn.tools?.filter((t) => t.exposed).length})
+                  Exposed MCP Tools ({conn.tools?.filter((t) => t.exposed).length} / {conn.tools?.length})
                 </div>
                 <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-                  {conn.tools?.filter((t) => t.exposed).map((tool) => (
+                  {conn.tools?.map((tool) => (
                     <div key={tool.id} className="flex items-center gap-2 border border-white/5 bg-white/[0.02] p-1.5 rounded">
                       <span className={cn('rounded px-1.5 py-0.5 font-mono text-[9px] font-semibold', methodColor(tool.method || 'GET'))}>
                         {tool.method || 'MCP'}
                       </span>
                       <span className="font-mono text-xs text-ink-primary font-medium">{tool.name}</span>
                       <span className="truncate font-mono text-[10px] text-ink-secondary flex-1">{tool.path || tool.description}</span>
+                      <button
+                        onClick={async () => {
+                          await api.updateTool(Number(tool.id), { exposed: !tool.exposed });
+                          if (onRefresh) onRefresh();
+                        }}
+                        className={cn(
+                          'px-2 py-0.5 rounded font-mono text-[9px] uppercase tracking-wider transition-colors cursor-pointer',
+                          tool.exposed
+                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-rose-500/20 hover:text-rose-400'
+                            : 'bg-rose-500/20 text-rose-400 border border-rose-500/30 hover:bg-emerald-500/20 hover:text-emerald-400'
+                        )}
+                        title={tool.exposed ? 'Click to disable tool' : 'Click to expose tool'}
+                      >
+                        {tool.exposed ? 'EXPOSED' : 'DISABLED'}
+                      </button>
                     </div>
                   ))}
                 </div>

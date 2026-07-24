@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { cn } from '@/lib/utils';
-import { ShieldAlert, Octagon } from 'lucide-react';
+import { ShieldAlert, Octagon, Play } from 'lucide-react';
 
 /**
  * Emergency Stop control — a deliberately weighty, two-stage control.
@@ -13,9 +13,11 @@ import { ShieldAlert, Octagon } from 'lucide-react';
 export function EmergencyStopControl({
   onConfirm,
   compact = false,
+  isStopped = false,
 }: {
   onConfirm: () => void;
   compact?: boolean;
+  isStopped?: boolean;
 }) {
   const [armed, setArmed] = useState(false);
   const [holding, setHolding] = useState(false);
@@ -51,6 +53,23 @@ export function EmergencyStopControl({
       if (holdTimer.current) clearInterval(holdTimer.current);
     };
   }, []);
+
+  if (isStopped) {
+    return (
+      <button
+        onClick={onConfirm}
+        className={cn(
+          'flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/20 px-4 py-2',
+          'font-mono text-xs font-bold uppercase tracking-widest text-emerald-400',
+          'backdrop-blur-md transition-all hover:bg-emerald-500 hover:text-black shadow-[0_0_20px_-4px_rgba(52,211,153,0.4)] cursor-pointer',
+          compact && 'px-3 py-1.5 text-[10px]'
+        )}
+      >
+        <Play className={cn(compact ? 'h-3.5 w-3.5' : 'h-4 w-4')} />
+        Start / Resume Fleet
+      </button>
+    );
+  }
 
   if (armed) {
     return (

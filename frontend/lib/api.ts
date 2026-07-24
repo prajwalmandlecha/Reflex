@@ -284,6 +284,17 @@ export const api = {
   async getDashboardActivity(limit = 50): Promise<any[]> {
     return request<any[]>(`/api/v1/dashboard/activity?limit=${limit}`);
   },
+
+  async getStopEvents(limit = 50): Promise<any[]> {
+    return request<any[]>(`/api/v1/fleet/events?limit=${limit}`);
+  },
+
+  async updateTool(toolId: number, data: Partial<BankTool>): Promise<BankTool> {
+    return request<BankTool>(`/api/v1/tools/${toolId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
 };
 
 function strId(id: any): string {

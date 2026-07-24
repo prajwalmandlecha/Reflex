@@ -41,7 +41,7 @@ import { Button } from '@/components/ui/button';
 import { formatCurrency, formatTimestamp, formatDateTime } from '@/lib/format';
 import type { AgentInstance, AgentClass, ActivityEvent } from '@/lib/types';
 import { api } from '@/lib/api';
-import { Search, Ban, Shield, Clock, Wrench, Plus, Key, Copy, Check, RefreshCw } from 'lucide-react';
+import { Search, Ban, Shield, Clock, Wrench, Plus, Key, Copy, Check, RefreshCw, Play, Terminal } from 'lucide-react';
 
 export function AgentsView({
   instances,
@@ -68,6 +68,7 @@ export function AgentsView({
     initialFilter?.status ?? 'all'
   );
   const [showCreate, setShowCreate] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
 
   useEffect(() => {
     if (initialFilter?.classId) setClassFilter(initialFilter.classId);
@@ -130,13 +131,23 @@ export function AgentsView({
           </Select>
         </div>
 
-        <Button
-          onClick={() => setShowCreate(true)}
-          className="border border-cyan-500/30 bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 font-mono text-xs"
-        >
-          <Plus className="mr-1.5 h-4 w-4" />
-          Register Instance
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            onClick={() => setShowGuide(true)}
+            className="border border-white/10 bg-white/5 text-ink-primary hover:bg-white/10 font-mono text-xs"
+          >
+            <Terminal className="mr-1.5 h-4 w-4 text-cyan-400" />
+            Connection Guide
+          </Button>
+
+          <Button
+            onClick={() => setShowCreate(true)}
+            className="border border-cyan-500/30 bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 font-mono text-xs"
+          >
+            <Plus className="mr-1.5 h-4 w-4" />
+            Register Instance
+          </Button>
+        </div>
       </div>
 
       {/* Grid */}
@@ -183,6 +194,11 @@ export function AgentsView({
                 onSelectAgent(null);
                 if (onRefresh) onRefresh();
               }}
+              onRevive={async () => {
+                await api.reviveAgent(selectedAgent.id);
+                onSelectAgent(null);
+                if (onRefresh) onRefresh();
+              }}
             />
           )}
         </SheetContent>
@@ -205,6 +221,9 @@ export function AgentsView({
           />
         </DialogContent>
       </Dialog>
+
+      {/* Agent Connection Guide Dialog */}
+      <AgentConnectionGuideModal open={showGuide} onOpenChange={setShowGuide} />
     </div>
   );
 }
@@ -267,7 +286,7 @@ function CreateInstanceForm({ classes, onComplete }: { classes: AgentClass[]; on
           <textarea
             readOnly
             value={mintedToken}
-            className="h-28 w-full border border-white/10 bg-white/5 p-2 font-mono text-[10px] leading-relaxed rounded text-cyan-300 select-all focus:outline-none"
+            className="h-28 w-full border border-white/10 bg-white/5 p-2 font-mono text-[10px] leading-relaxed rounded text-cyan-300 select-text focus:outline-none"
           />
         </div>
 
@@ -354,11 +373,13 @@ function AgentDetail({
   cls,
   activityFeed,
   onRevoke,
+  onRevive,
 }: {
   agent: AgentInstance;
   cls?: AgentClass;
   activityFeed: ActivityEvent[];
   onRevoke: () => void;
+  onRevive?: () => void;
 }) {
   const [jwtToken, setJwtToken] = useState('');
   const [copied, setCopied] = useState(false);
@@ -424,7 +445,7 @@ function AgentDetail({
             <textarea
               readOnly
               value={jwtToken}
-              className="h-20 w-full border border-white/10 bg-white/5 p-1.5 font-mono text-[10px] leading-relaxed rounded text-cyan-300 select-all focus:outline-none"
+              className="h-20 w-full border border-white/10 bg-white/5 p-1.5 font-mono text-[10px] leading-relaxed rounded text-cyan-300 select-text focus:outline-none"
             />
             <Button
               size="sm"
@@ -441,6 +462,9 @@ function AgentDetail({
           </p>
         )}
       </div>
+
+      {/* Connection Info & Snippets */}
+      <AgentConnectionSnippet agentId={agent.id} token={jwtToken} />
 
       {/* Recent actions */}
       <div className="border-b border-white/5 pb-4">
@@ -484,17 +508,220 @@ function AgentDetail({
         )}
       </div>
 
-      {/* Revoke control */}
-      {agent.status !== 'killed' && agent.status !== 'revoked' && (
+      {/* Instance Lifecycle controls */}
+      {agent.status !== 'killed' && agent.status !== 'revoked' ? (
         <Button
           variant="outline"
           onClick={onRevoke}
-          className="w-full border-rose-500/30 text-rose-400 hover:bg-rose-500/10 font-mono text-xs"
+          className="w-full border-rose-500/30 text-rose-400 hover:bg-rose-500/10 font-mono text-xs cursor-pointer"
         >
           <Ban className="mr-2 h-4 w-4" />
           Revoke this instance
         </Button>
+      ) : (
+        <Button
+          onClick={onRevive}
+          className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-xs font-bold uppercase tracking-wider cursor-pointer flex items-center justify-center gap-2 py-2.5 shadow-[0_0_15px_-3px_rgba(52,211,153,0.4)]"
+        >
+          <Play className="h-4 w-4" />
+          Start / Reactivate Instance
+        </Button>
       )}
     </div>
+  );
+}
+
+function AgentConnectionSnippet({ agentId, token }: { agentId: string; token?: string }) {
+  const [activeTab, setActiveTab] = useState<'mcp.json' | 'curl'>('mcp.json');
+  const [copied, setCopied] = useState(false);
+  const bearer = token || '<YOUR_JWT_TOKEN>';
+
+  const mcpJsonSnippet = `{
+  "mcpServers": {
+    "agp-governance": {
+      "url": "http://localhost:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer ${bearer}",
+        "X-Agent-ID": "${agentId}"
+      }
+    }
+  }
+}`;
+
+  const curlSnippet = `curl -X POST http://localhost:8080/mcp \\
+  -H "Authorization: Bearer ${bearer}" \\
+  -H "X-Agent-ID: ${agentId}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "get_balance",
+      "arguments": {"account_id": "acc-101"}
+    },
+    "id": 1
+  }'`;
+
+  const activeSnippet = activeTab === 'mcp.json' ? mcpJsonSnippet : curlSnippet;
+
+  const copySnippet = () => {
+    navigator.clipboard.writeText(activeSnippet);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="border border-white/10 bg-white/[0.02] p-3 rounded space-y-2 font-mono text-xs">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] uppercase tracking-widest text-cyan-400 font-semibold flex items-center gap-1.5">
+          <Terminal className="h-3.5 w-3.5" /> MCP Server Config & Connection
+        </span>
+        <div className="flex items-center gap-1 bg-white/5 p-0.5 rounded border border-white/10">
+          {(['mcp.json', 'curl'] as const).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={cn(
+                'px-2 py-0.5 rounded text-[10px] font-mono uppercase transition-colors cursor-pointer',
+                activeTab === tab ? 'bg-cyan-500/20 text-cyan-400 font-semibold border border-cyan-500/30' : 'text-ink-secondary hover:text-white'
+              )}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="relative">
+        <pre className="min-h-[180px] max-h-[320px] overflow-auto bg-slate-950/80 border border-white/10 p-3.5 rounded-lg text-xs font-mono leading-relaxed select-text">
+          {activeTab === 'mcp.json' ? renderHighlightedJson(activeSnippet) : activeSnippet}
+        </pre>
+        <button
+          onClick={copySnippet}
+          className="absolute top-2.5 right-2.5 bg-white/10 hover:bg-white/20 text-white px-2 py-1 rounded transition-colors text-xs cursor-pointer flex items-center gap-1 font-mono border border-white/10 shadow-sm"
+          title="Copy Code Snippet"
+        >
+          {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+          <span>{copied ? 'Copied!' : 'Copy'}</span>
+        </button>
+      </div>
+
+      <div className="text-[10px] text-ink-secondary space-y-0.5 pt-1 font-mono">
+        <div>• <strong className="text-white">AGP Gateway Endpoint</strong>: <code className="text-cyan-300">http://localhost:8080/mcp</code></div>
+        <div>• <strong className="text-white">Auth Header</strong>: <code className="text-cyan-300">Authorization: Bearer &lt;JWT_TOKEN&gt;</code></div>
+      </div>
+    </div>
+  );
+}
+
+function renderHighlightedJson(jsonStr: string) {
+  const bracketColors = ['text-amber-400', 'text-cyan-400', 'text-purple-400', 'text-emerald-400'];
+  let depth = 0;
+
+  return jsonStr.split('\n').map((line, lIdx) => {
+    // Regex matches strings, brackets, colons, commas
+    const tokens = line.split(/("(?:\\.|[^"\\])*"|[{}[\]:,])/g);
+
+    return (
+      <div key={lIdx} className="leading-relaxed">
+        {tokens.map((token, tIdx) => {
+          if (!token) return null;
+
+          if (token === '{' || token === '[') {
+            const color = bracketColors[depth % bracketColors.length];
+            depth++;
+            return (
+              <span key={tIdx} className={cn('font-bold text-sm', color)}>
+                {token}
+              </span>
+            );
+          }
+
+          if (token === '}' || token === ']') {
+            depth = Math.max(0, depth - 1);
+            const color = bracketColors[depth % bracketColors.length];
+            return (
+              <span key={tIdx} className={cn('font-bold text-sm', color)}>
+                {token}
+              </span>
+            );
+          }
+
+          if (token.startsWith('"') && token.endsWith('"')) {
+            const isKey = line.indexOf(token) < line.indexOf(':') && line.includes(':');
+            return (
+              <span key={tIdx} className={isKey ? 'text-sky-300 font-semibold' : 'text-emerald-300'}>
+                {token}
+              </span>
+            );
+          }
+
+          if (token === ':' || token === ',') {
+            return <span key={tIdx} className="text-slate-500 font-bold">{token}</span>;
+          }
+
+          return <span key={tIdx} className="text-slate-300">{token}</span>;
+        })}
+      </div>
+    );
+  });
+}
+
+function AgentConnectionGuideModal({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl border-white/10 bg-slate-950 text-white">
+        <DialogHeader>
+          <DialogTitle className="font-mono text-sm uppercase tracking-widest text-ink-primary flex items-center gap-2">
+            <Terminal className="h-4 w-4 text-cyan-400" />
+            Agent Connection & Governance Gateway Guide
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4 font-mono text-xs pt-2">
+          <div className="border border-cyan-500/20 bg-cyan-500/5 p-3 rounded space-y-1.5 font-sans text-xs text-ink-secondary">
+            <p className="font-semibold font-mono text-cyan-300 uppercase tracking-wider text-[11px]">
+              How Agent Governance Works:
+            </p>
+            <p>
+              Agents (LangChain, AutoGen, CrewAI, or custom scripts) do NOT connect directly to bank APIs or downstream tools.
+              Instead, agents route all tool execution requests through the <strong className="text-white">AGP Governance Proxy</strong>.
+            </p>
+            <p>
+              Every call is authenticated via Bearer JWT token, checked against OPA Rego policies, daily/hourly spend caps,
+              and tool parameter constraints before forwarding.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <span className="text-[10px] uppercase tracking-widest text-cyan-400 font-semibold">
+              Complete 3-Step Setup Flow:
+            </span>
+            <div className="grid grid-cols-3 gap-3 text-center">
+              <div className="border border-white/10 bg-white/[0.02] p-3 rounded">
+                <div className="text-cyan-400 font-bold text-xs mb-1 font-mono">1. Bank Connections</div>
+                <div className="text-[10px] text-ink-secondary font-sans">Connect native MCP servers or virtualize OpenAPI REST services.</div>
+              </div>
+              <div className="border border-white/10 bg-white/[0.02] p-3 rounded">
+                <div className="text-cyan-400 font-bold text-xs mb-1 font-mono">2. Classes & Policies</div>
+                <div className="text-[10px] text-ink-secondary font-sans">Set allowed tools, spend caps, and author OPA Rego governance rules.</div>
+              </div>
+              <div className="border border-white/10 bg-white/[0.02] p-3 rounded">
+                <div className="text-cyan-400 font-bold text-xs mb-1 font-mono">3. Register & Connect</div>
+                <div className="text-[10px] text-ink-secondary font-sans">Register agent instance ID, mint JWT token, and point agent to AGP.</div>
+              </div>
+            </div>
+          </div>
+
+          <AgentConnectionSnippet agentId="custom-agent-alpha" />
+
+          <div className="flex justify-end pt-2">
+            <Button onClick={() => onOpenChange(false)} className="bg-cyan-600 hover:bg-cyan-500 text-white font-mono text-xs px-5">
+              Got it
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

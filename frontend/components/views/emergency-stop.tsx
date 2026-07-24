@@ -25,45 +25,65 @@ export function EmergencyStopView({
   classes,
   stopEvents,
   operator,
+  fleetStatus,
   onStopInstance,
   onStopClass,
   onStopFleet,
+  onResumeFleet,
   onResumeInstance,
 }: {
   instances: AgentInstance[];
   classes: AgentClass[];
   stopEvents: StopEvent[];
   operator: string;
+  fleetStatus?: string;
   onStopInstance: (id: string) => void;
   onStopClass: (classId: string) => void;
   onStopFleet: () => void;
+  onResumeFleet?: () => void;
   onResumeInstance: (id: string) => void;
 }) {
   const activeCount = instances.filter((i) => i.status === 'active').length;
   const killedCount = instances.filter((i) => i.status === 'killed').length;
   const revokedCount = instances.filter((i) => i.status === 'revoked').length;
+  const isFleetStopped = fleetStatus === 'stopped';
 
   return (
     <div className="flex flex-col gap-4 p-4">
-      {/* Fleet-wide stop */}
+      {/* Fleet-wide stop / resume */}
       <Panel
-        title="Fleet-Wide Emergency Stop"
-        className="border-signal-stopped/30"
+        title="Fleet-Wide Control"
+        className={isFleetStopped ? "border-emerald-500/30 bg-emerald-500/[0.02]" : "border-signal-stopped/30"}
       >
         <div className="flex items-center justify-between p-6">
           <div>
             <div className="flex items-center gap-2">
-              <Octagon className="h-5 w-5 text-signal-stopped" />
+              {isFleetStopped ? (
+                <Play className="h-5 w-5 text-emerald-400" />
+              ) : (
+                <Octagon className="h-5 w-5 text-signal-stopped" />
+              )}
               <span className="font-mono text-sm uppercase tracking-widest text-ink-primary">
-                Stop Entire Fleet
+                {isFleetStopped ? "Start / Resume Entire Fleet" : "Stop Entire Fleet"}
               </span>
             </div>
             <p className="mt-1 max-w-md font-sans text-xs text-ink-secondary">
-              Immediately kills all {activeCount} active agents across every class. All pending
-              actions will be denied. Requires press-and-hold + confirm — no accidental triggers.
+              {isFleetStopped
+                ? "Fleet is currently stopped. Starting the fleet will reactivate killed instances and resume normal operations."
+                : `Immediately kills all ${activeCount} active agents across every class. All pending actions will be denied.`}
             </p>
           </div>
-          <EmergencyStopControl onConfirm={onStopFleet} />
+          {isFleetStopped ? (
+            <Button
+              onClick={onResumeFleet || onStopFleet}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-xs font-bold uppercase tracking-wider px-5 py-2 flex items-center gap-2 cursor-pointer shadow-[0_0_20px_-4px_rgba(52,211,153,0.4)]"
+            >
+              <Play className="h-4 w-4" />
+              Start / Resume Fleet
+            </Button>
+          ) : (
+            <EmergencyStopControl onConfirm={onStopFleet} />
+          )}
         </div>
       </Panel>
 
