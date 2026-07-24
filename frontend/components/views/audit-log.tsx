@@ -69,10 +69,53 @@ export function AuditLogView({ entries }: { entries: AuditLogEntry[] }) {
             <Lock className="h-3 w-3" />
             Immutable / Append-only
           </div>
-          <Button variant="outline" className="border-border text-ink-secondary hover:bg-white/5">
-            <Download className="mr-1.5 h-4 w-4" />
-            Export CSV
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              onClick={() => {
+                const headers = ['Timestamp', 'Type', 'Agent', 'Action', 'Outcome', 'Reason', 'Operator'];
+                const rows = filtered.map((e) => [
+                  e.timestamp,
+                  e.entryType || 'action',
+                  e.agentId,
+                  `"${(e.action || '').replace(/"/g, '""')}"`,
+                  e.decision,
+                  `"${(e.reason || '').replace(/"/g, '""')}"`,
+                  e.operator || '-',
+                ]);
+                const csvStr = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+                const blob = new Blob([csvStr], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.setAttribute('download', `audit_log_${new Date().toISOString().slice(0, 10)}.csv`);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+              }}
+              variant="outline"
+              className="border-border text-ink-secondary hover:bg-white/5"
+            >
+              <Download className="mr-1.5 h-4 w-4" />
+              Export CSV
+            </Button>
+            <Button
+              onClick={() => {
+                const blob = new Blob([JSON.stringify(filtered, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.setAttribute('download', `audit_log_${new Date().toISOString().slice(0, 10)}.json`);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+              }}
+              variant="outline"
+              className="border-border text-ink-secondary hover:bg-white/5"
+            >
+              <Download className="mr-1.5 h-4 w-4" />
+              Export JSON
+            </Button>
+          </div>
         </div>
       </div>
 

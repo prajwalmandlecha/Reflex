@@ -61,9 +61,11 @@
   * {
     border-color: var(--border);
   }
+
   html {
     color-scheme: dark;
   }
+
   body {
     background-color: var(--bg-deep);
     color: var(--text-primary);
@@ -73,6 +75,7 @@
     position: relative;
     min-height: 100vh;
   }
+
   /* Ambient gradient field — the "liquid" backdrop */
   body::before {
     content: '';
@@ -85,10 +88,12 @@
     pointer-events: none;
     z-index: 0;
   }
-  body > * {
+
+  body>* {
     position: relative;
     z-index: 1;
   }
+
   .font-mono,
   .tabular {
     font-variant-numeric: tabular-nums;
@@ -97,6 +102,7 @@
 }
 
 @layer components {
+
   /* Liquid glass surface */
   .glass {
     background: var(--surface-glass);
@@ -107,6 +113,7 @@
       0 1px 0 0 rgba(255, 255, 255, 0.05) inset,
       0 8px 32px -8px rgba(0, 0, 0, 0.4);
   }
+
   .glass-strong {
     background: rgba(18, 26, 36, 0.7);
     backdrop-filter: blur(24px) saturate(160%);
@@ -116,13 +123,16 @@
       0 1px 0 0 rgba(255, 255, 255, 0.06) inset,
       0 12px 40px -12px rgba(0, 0, 0, 0.5);
   }
+
   .glass-hover {
     transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
   }
+
   .glass-hover:hover {
     background: var(--surface-glass-hover);
     border-color: var(--border-strong);
   }
+
   /* Subtle top-edge highlight for glass cards */
   .glass-edge::before {
     content: '';
@@ -141,19 +151,23 @@
   width: 8px;
   height: 8px;
 }
+
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
 ::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.08);
   border-radius: 100px;
 }
+
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.15);
 }
 
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
+
   *,
   *::before,
   *::after {
@@ -168,6 +182,7 @@
     opacity: 0;
     transform: translateY(-8px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -175,10 +190,13 @@
 }
 
 @keyframes pulse-dot {
-  0%, 100% {
+
+  0%,
+  100% {
     opacity: 1;
     transform: scale(1);
   }
+
   50% {
     opacity: 0.5;
     transform: scale(0.85);
@@ -186,8 +204,13 @@
 }
 
 @keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
+  0% {
+    background-position: -200% 0;
+  }
+
+  100% {
+    background-position: 200% 0;
+  }
 }
 
 .animate-feed-slide {

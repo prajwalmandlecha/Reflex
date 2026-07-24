@@ -153,6 +153,10 @@ async def update_agent_class(class_id: str, cls: AgentClassUpdate):
 async def revoke_agent_class(class_id: str):
     redis = get_redis()
     await redis.set(f"agp:kill:class:{class_id}", "1")
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("INSERT INTO stop_events (scope, target_id, action, reason) VALUES ('class', $1, 'stop', 'Class stop triggered by operator')", class_id)
+        await conn.execute("UPDATE agent_instances SET status = 'killed', updated_at = NOW() WHERE class_id = $1 AND status = 'active'", class_id)
     await publish_config_update("kill_class", class_id)
     return {"status": "revoked", "class_id": class_id}
 
@@ -161,5 +165,9 @@ async def revoke_agent_class(class_id: str):
 async def revive_agent_class(class_id: str):
     redis = get_redis()
     await redis.delete(f"agp:kill:class:{class_id}")
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("INSERT INTO stop_events (scope, target_id, action, reason) VALUES ('class', $1, 'resume', 'Class resumed by operator')", class_id)
+        await conn.execute("UPDATE agent_instances SET status = 'active', updated_at = NOW() WHERE class_id = $1 AND status = 'killed'", class_id)
     await publish_config_update("revive_class", class_id)
     return {"status": "active", "class_id": class_id}

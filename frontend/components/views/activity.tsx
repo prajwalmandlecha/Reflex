@@ -66,9 +66,9 @@ export function ActivityView({
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-signal-healthy">
+          <span className="flex items-center gap-1.5 rounded border border-signal-healthy/20 bg-signal-healthy/10 px-2.5 py-1 font-mono text-[10px] uppercase tracking-widest text-signal-healthy">
             <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-signal-healthy" />
-            Live
+            Live Pulse · Stream Active
           </span>
         </div>
       </div>

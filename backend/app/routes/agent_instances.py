@@ -14,6 +14,9 @@ router = APIRouter(prefix="/api/v1/agents", tags=["Agent Instances"])
 @router.get("", response_model=list[AgentInstanceResponse])
 async def list_agent_instances():
     pool = get_pool()
+    redis = get_redis()
+    fleet_halted = bool(await redis.get("agp:kill:fleet"))
+
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
@@ -29,15 +32,28 @@ async def list_agent_instances():
     for r in rows:
         constraints = json.loads(r["constraint_overrides"]) if isinstance(r["constraint_overrides"], str) else (r["constraint_overrides"] or {})
         caps = json.loads(r["cap_overrides"]) if isinstance(r["cap_overrides"], str) else (r["cap_overrides"] or {})
+        updated_dt = r["updated_at"] or r["created_at"]
+        last_seen_val = updated_dt.isoformat() if updated_dt else ""
+
+        status_val = r["status"] or "active"
+        if fleet_halted and status_val != "revoked":
+            status_val = "killed"
+        else:
+            class_killed = bool(await redis.get(f"agp:kill:class:{r['class_id']}"))
+            agent_killed = bool(await redis.get(f"agp:kill:agent:{r['id']}"))
+            if (class_killed or agent_killed) and status_val == "active":
+                status_val = "killed"
+
         res.append(AgentInstanceResponse(
             id=r["id"],
             class_id=r["class_id"],
-            status=r["status"] or "active",
+            status=status_val,
             constraint_overrides=constraints,
             cap_overrides=caps,
             tool_overrides=r["tool_overrides"],
             created_at=r["created_at"],
             updated_at=r["updated_at"],
+            last_seen=last_seen_val,
             class_name=r["class_name"] or r["class_id"],
         ))
     return res
@@ -103,10 +119,12 @@ async def get_agent_instance(agent_id: str):
 
     constraints = json.loads(row["constraint_overrides"]) if isinstance(row["constraint_overrides"], str) else (row["constraint_overrides"] or {})
     caps = json.loads(row["cap_overrides"]) if isinstance(row["cap_overrides"], str) else (row["cap_overrides"] or {})
+    last_seen_val = (row["updated_at"] or row["created_at"]).isoformat() if (row["updated_at"] or row["created_at"]) else ""
     return AgentInstanceResponse(
         id=row["id"], class_id=row["class_id"], status=row["status"],
         constraint_overrides=constraints, cap_overrides=caps, tool_overrides=row["tool_overrides"],
-        created_at=row["created_at"], updated_at=row["updated_at"], class_name=row["class_name"] or row["class_id"],
+        created_at=row["created_at"], updated_at=row["updated_at"], last_seen=last_seen_val,
+        class_name=row["class_name"] or row["class_id"],
     )
 
 

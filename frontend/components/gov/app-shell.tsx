@@ -83,6 +83,44 @@ export function AppShell() {
   const [denialsLastHour, setDenialsLastHour] = useState(0);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [agentsFilter, setAgentsFilter] = useState<{ classId?: string; status?: string } | null>(null);
+  const [showShortcutsModal, setShowShortcutsModal] = useState(false);
+
+  // Global Keyboard Shortcuts Listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger if user is typing in an input, textarea, or select
+      const activeTag = document.activeElement?.tagName.toLowerCase();
+      if (activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select') {
+        return;
+      }
+
+      if (e.key === '?') {
+        e.preventDefault();
+        setShowShortcutsModal((prev) => !prev);
+      } else if (e.key === 'Escape') {
+        setSelectedAgentId(null);
+        setShowShortcutsModal(false);
+      } else if (e.shiftKey && e.key.toUpperCase() === 'E') {
+        e.preventDefault();
+        setView('estop');
+      } else if (e.shiftKey && e.key.toUpperCase() === 'C') {
+        e.preventDefault();
+        setView('command');
+      } else if (e.shiftKey && e.key.toUpperCase() === 'A') {
+        e.preventDefault();
+        setView('activity');
+      } else if (e.shiftKey && e.key.toUpperCase() === 'L') {
+        e.preventDefault();
+        setView('audit');
+      } else if (e.shiftKey && e.key.toUpperCase() === 'P') {
+        e.preventDefault();
+        setView('policies');
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const reloadData = useCallback(() => {
     api.getAgentInstances().then(setInstances).catch(() => {});
@@ -186,9 +224,24 @@ export function AppShell() {
             <div className="text-xs font-mono text-[#8B96A3]">
               Active Fleet: <span className="text-[#E4E9EE] font-semibold">{instances.filter(i => i.status === 'active').length}</span> / {instances.length}
             </div>
+            <div className="h-4 w-[1px] bg-[#232B35]" />
+            {/* Live Stream Heartbeat Indicator */}
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#3DDC84]/10 border border-[#3DDC84]/20 text-[10px] font-mono text-[#3DDC84]">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#3DDC84] animate-pulse" />
+              <span>STREAM ACTIVE</span>
+            </div>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setShowShortcutsModal(true)}
+              className="px-2.5 py-1 rounded border border-[#232B35] bg-[#131A22] text-[#8B96A3] hover:text-[#E4E9EE] hover:bg-[#232B35]/50 font-mono text-xs transition-colors flex items-center gap-1"
+              title="Keyboard Shortcuts (?)"
+            >
+              <span className="text-[10px] text-[#4C8DFF]">?</span>
+              <span>Shortcuts</span>
+            </button>
+
             <EmergencyStopControl
               onConfirm={() => handleFleetAction(fleetStatus === 'stopped' ? 'resume' : 'stop')}
             />
@@ -243,6 +296,51 @@ export function AppShell() {
           {view === 'settings' && <SettingsView operator={operator} />}
         </main>
       </div>
+
+      {/* Keyboard Shortcuts Modal */}
+      {showShortcutsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md border border-[#232B35] bg-[#131A22] p-5 shadow-2xl rounded-lg">
+            <div className="flex items-center justify-between border-b border-[#232B35] pb-3 mb-4">
+              <h3 className="font-mono text-sm font-semibold uppercase tracking-wider text-[#E4E9EE]">
+                Operator Keyboard Shortcuts
+              </h3>
+              <button
+                onClick={() => setShowShortcutsModal(false)}
+                className="font-mono text-xs text-[#8B96A3] hover:text-[#E4E9EE]"
+              >
+                ✕ Esc
+              </button>
+            </div>
+            <div className="space-y-2.5 font-mono text-xs">
+              {[
+                { key: 'Shift + C', desc: 'Command Center' },
+                { key: 'Shift + A', desc: 'Activity Feed' },
+                { key: 'Shift + L', desc: 'Audit Log' },
+                { key: 'Shift + P', desc: 'Policies' },
+                { key: 'Shift + E', desc: 'Emergency Stop' },
+                { key: 'Esc', desc: 'Clear Selection / Close Modal' },
+                { key: '?', desc: 'Toggle Shortcuts Help' },
+              ].map((sc) => (
+                <div key={sc.key} className="flex items-center justify-between py-1 border-b border-white/5 last:border-0">
+                  <span className="px-2 py-0.5 rounded bg-[#0B0F14] border border-[#232B35] text-[#4C8DFF] font-semibold">
+                    {sc.key}
+                  </span>
+                  <span className="text-[#8B96A3]">{sc.desc}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-5 pt-3 border-t border-[#232B35] text-right">
+              <button
+                onClick={() => setShowShortcutsModal(false)}
+                className="px-3 py-1.5 rounded bg-[#4C8DFF] text-white font-mono text-xs hover:bg-[#4C8DFF]/90 transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

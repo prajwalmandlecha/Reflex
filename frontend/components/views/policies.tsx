@@ -472,20 +472,83 @@ function RegoEditor({
   source: string;
   setSource: (s: string) => void;
 }) {
+  const [tab, setTab] = useState<'editor' | 'preview'>('editor');
+
+  const renderHighlightedCode = (code: string) => {
+    const lines = code.split('\n');
+    const keywords = ['package', 'import', 'default', 'allow', 'deny', 'if', 'else', 'some', 'every', 'not', 'in'];
+    return lines.map((line, i) => {
+      if (line.trim().startsWith('#')) {
+        return (
+          <div key={i} className="text-ink-secondary/50 italic">
+            {line}
+          </div>
+        );
+      }
+      const parts = line.split(/(\bpackage\b|\bimport\b|\bdefault\b|\ballow\b|\bdeny\b|\bif\b|\belse\b|\bsome\b|\bevery\b|\bnot\b|\bin\b|"[^"]*"|\b\d+\b)/g);
+      return (
+        <div key={i} className="whitespace-pre">
+          {parts.map((part, j) => {
+            if (keywords.includes(part)) {
+              return <span key={j} className="font-semibold text-accent">{part}</span>;
+            }
+            if (part.startsWith('"') && part.endsWith('"')) {
+              return <span key={j} className="text-signal-healthy">{part}</span>;
+            }
+            if (/^\d+$/.test(part)) {
+              return <span key={j} className="text-signal-caution">{part}</span>;
+            }
+            return <span key={j}>{part}</span>;
+          })}
+        </div>
+      );
+    });
+  };
+
   return (
     <div className="border border-border bg-bg-deep">
-      <div className="flex items-center gap-2 border-b border-white/5 bg-white/5 px-3 py-1.5">
-        <FileJson className="h-3.5 w-3.5 text-ink-secondary" />
-        <span className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
-          policy.rego
-        </span>
+      <div className="flex items-center justify-between border-b border-white/5 bg-white/5 px-3 py-1.5">
+        <div className="flex items-center gap-2">
+          <FileJson className="h-3.5 w-3.5 text-ink-secondary" />
+          <span className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
+            policy.rego
+          </span>
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setTab('editor')}
+            className={cn(
+              'px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider transition-colors',
+              tab === 'editor' ? 'bg-accent/20 text-accent' : 'text-ink-secondary hover:text-ink-primary'
+            )}
+          >
+            Edit
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab('preview')}
+            className={cn(
+              'px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider transition-colors',
+              tab === 'preview' ? 'bg-accent/20 text-accent' : 'text-ink-secondary hover:text-ink-primary'
+            )}
+          >
+            Highlight Preview
+          </button>
+        </div>
       </div>
-      <textarea
-        value={source}
-        onChange={(e) => setSource(e.target.value)}
-        spellCheck={false}
-        className="h-[280px] w-full resize-none bg-bg-deep p-3 font-mono text-xs leading-relaxed text-ink-primary outline-none"
-      />
+      {tab === 'editor' ? (
+        <textarea
+          value={source}
+          onChange={(e) => setSource(e.target.value)}
+          spellCheck={false}
+          className="h-[280px] w-full resize-none bg-bg-deep p-3 font-mono text-xs leading-relaxed text-ink-primary outline-none"
+        />
+      ) : (
+        <div className="h-[280px] overflow-auto bg-bg-deep p-3 font-mono text-xs leading-relaxed text-ink-primary">
+          {renderHighlightedCode(source)}
+        </div>
+      )}
     </div>
   );
 }

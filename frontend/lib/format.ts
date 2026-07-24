@@ -20,8 +20,10 @@ export function formatNumber(n: number): string {
   return new Intl.NumberFormat('en-US').format(n);
 }
 
-export function formatTimestamp(iso: string): string {
+export function formatTimestamp(iso?: string | null): string {
+  if (!iso) return '—';
   const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
   return d.toLocaleTimeString('en-US', {
     hour12: false,
     hour: '2-digit',
@@ -30,8 +32,10 @@ export function formatTimestamp(iso: string): string {
   });
 }
 
-export function formatDateTime(iso: string): string {
+export function formatDateTime(iso?: string | null): string {
+  if (!iso) return '—';
   const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
   return d.toLocaleString('en-US', {
     month: 'short',
     day: '2-digit',
@@ -41,8 +45,12 @@ export function formatDateTime(iso: string): string {
   });
 }
 
-export function formatRelative(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
+export function formatRelative(iso?: string | null): string {
+  if (!iso) return 'Never';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return 'Never';
+  const diff = Date.now() - d.getTime();
+  if (diff < 0) return 'Just now';
   const sec = Math.floor(diff / 1000);
   if (sec < 60) return `${sec}s ago`;
   const min = Math.floor(sec / 60);

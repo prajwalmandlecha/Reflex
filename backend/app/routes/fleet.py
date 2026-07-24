@@ -36,6 +36,7 @@ async def halt_fleet():
     pool = get_pool()
     async with pool.acquire() as conn:
         await conn.execute("INSERT INTO stop_events (scope, action, reason) VALUES ('fleet', 'stop', 'Fleet emergency stop triggered by operator')")
+        await conn.execute("UPDATE agent_instances SET status = 'killed', updated_at = NOW() WHERE status = 'active'")
     await publish_config_update("halt_fleet", "fleet")
     return {"fleet": "halted"}
 
@@ -47,5 +48,6 @@ async def resume_fleet():
     pool = get_pool()
     async with pool.acquire() as conn:
         await conn.execute("INSERT INTO stop_events (scope, action, reason) VALUES ('fleet', 'resume', 'Fleet resumed by operator')")
+        await conn.execute("UPDATE agent_instances SET status = 'active', updated_at = NOW() WHERE status = 'killed'")
     await publish_config_update("resume_fleet", "fleet")
     return {"fleet": "resumed"}

@@ -83,17 +83,17 @@ reason := sprintf("agent kind ''%s'' is not allowed to perform action ''%s''", [
 	not deny
 }
 
-# Rule 6: Parameter Bounds Enforcement (Single-Transaction Transfer Cap of $1,000.00)
+# Rule 6: Parameter Bounds - uses constraints from input if available
 deny if {
 	input.action == "transfer_money"
-	input.amount > 1000.00
+	input.amount > object.get(input, "max_amount", 1000.00)
 }
 
-reason := sprintf("transfer amount $%.2f exceeds maximum allowed single-transaction parameter bound of $1000.00", [input.amount]) if {
+reason := sprintf("transfer amount $%.2f exceeds maximum allowed $%.2f", [input.amount, object.get(input, "max_amount", 1000.00)]) if {
 	deny
 }
 ', 'active')
-ON CONFLICT (name) DO UPDATE SET rego_source = EXCLUDED.rego_source, version = policies.version + 1;
+ON CONFLICT DO NOTHING;
 
 -- ============================================================
 -- Agent Classes
