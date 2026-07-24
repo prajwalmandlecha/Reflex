@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS tools (
 -- ============================================================
 CREATE TABLE IF NOT EXISTS policies (
     id                      SERIAL PRIMARY KEY,
-    name                    VARCHAR(128) NOT NULL,
+    name                    VARCHAR(128) NOT NULL UNIQUE,
     scope                   VARCHAR(32) NOT NULL DEFAULT 'global',   -- global / class / instance
     target_id               VARCHAR(64),            -- class_id or instance_id (NULL for global)
     type                    VARCHAR(32) NOT NULL DEFAULT 'rego',     -- rego / visual
@@ -99,7 +99,6 @@ CREATE TABLE IF NOT EXISTS policies (
     created_at              TIMESTAMPTZ DEFAULT NOW(),
     updated_at              TIMESTAMPTZ DEFAULT NOW()
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_policies_unique_target ON policies(name, scope, (COALESCE(target_id, '__global__')));
 
 -- ============================================================
 -- Policy Change Log (PRD §6.4: config changes versioned)
