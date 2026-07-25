@@ -81,7 +81,11 @@ async def create_bank_connection(b: BankConnectionCreate):
 
         # Auto-discover tools if native_mcp or openapi
         discovered_tools = []
+        if (b.source_type == "native_mcp" and b.mcp_url) or (b.source_type == "openapi" and b.openapi_spec):
+            await conn.execute("DELETE FROM tools WHERE bank_connection_id = $1", b.id)
+
         if b.source_type == "native_mcp" and b.mcp_url:
+
             mcp_tools = fetch_mcp_tools(b.mcp_url)
             for t in mcp_tools:
                 t_row = await conn.fetchrow(

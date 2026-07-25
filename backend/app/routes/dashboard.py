@@ -61,7 +61,7 @@ async def get_recent_activity(limit: int = 50):
         rows = await conn.fetch(
             """
             SELECT id, ts, agent_id, agent_class_id, action, params, decision, deny_stage, reason,
-                   spend_delta, total_latency_ms, governance_overhead_ms
+                   spend_delta, total_latency_ms, governance_overhead_ms, bank_connection_id
             FROM audit_log
             ORDER BY id DESC
             LIMIT $1
@@ -76,14 +76,21 @@ async def get_recent_activity(limit: int = 50):
             "id": str(r["id"]),
             "timestamp": r["ts"].isoformat(),
             "agent_id": r["agent_id"],
+            "agentId": r["agent_id"],
             "agent_class_id": r["agent_class_id"],
+            "agentClass": r["agent_class_id"],
             "action": r["action"],
+            "tool": r["action"],
+            "bank_connection_id": r["bank_connection_id"] or "",
+            "bankConnectionId": r["bank_connection_id"] or "",
             "params": p,
             "decision": r["decision"],
-            "deny_stage": r["deny_stage"],
-            "reason": r["reason"],
-            "spend_delta_cents": r["spend_delta"],
-            "total_latency_ms": r["total_latency_ms"],
-            "governance_overhead_ms": r["governance_overhead_ms"],
+            "deny_stage": r["deny_stage"] or "",
+            "reason": r["reason"] or "",
+            "spend_delta_cents": r["spend_delta"] or 0,
+            "total_latency_ms": r["total_latency_ms"] or 0.0,
+            "latencyMs": r["total_latency_ms"] or 0.0,
+            "governance_overhead_ms": r["governance_overhead_ms"] or 0.0,
         })
     return res
+
