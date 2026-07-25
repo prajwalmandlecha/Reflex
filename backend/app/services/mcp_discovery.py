@@ -2,7 +2,7 @@
 
 import json
 import logging
-import urllib.request
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -13,47 +13,42 @@ def fetch_mcp_tools(mcp_url: str) -> list[dict]:
         return []
 
     try:
-        # 1. Send initialize
-        init_payload = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "agp-backend-discovery", "version": "1.0"},
-            },
-        }
-        req = urllib.request.Request(
-            mcp_url,
-            data=json.dumps(init_payload).encode(),
-            headers={
-                "Content-Type": "application/json",
-                "Accept": "application/json, text/event-stream",
-            },
-        )
-        session_id = ""
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            session_id = resp.headers.get("Mcp-Session-Id", "")
-
-        # 2. Send tools/list
-        list_payload = {
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "tools/list",
-            "params": {},
-        }
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         }
-        if session_id:
-            headers["Mcp-Session-Id"] = session_id
-
-        req2 = urllib.request.Request(mcp_url, data=json.dumps(list_payload).encode(), headers=headers)
-        with urllib.request.urlopen(req2, timeout=5) as resp:
-            raw_body = resp.read().decode()
-            # Handle potential SSE formatting (event: message\ndata: {...})
+        
+        with httpx.Client(timeout=10.0) as client:
+            # 1. Send initialize
+            init_payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "agp-backend-discovery", "version": "1.0"},
+                },
+            }
+            resp1 = client.post(mcp_url, json=init_payload, headers=headers)
+            resp1.raise_for_status()
+            
+            session_id = resp1.headers.get("Mcp-Session-Id", "")
+            
+            # 2. Send tools/list
+            list_payload = {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/list",
+                "params": {},
+            }
+            if session_id:
+                headers["Mcp-Session-Id"] = session_id
+                
+            resp2 = client.post(mcp_url, json=list_payload, headers=headers)
+            resp2.raise_for_status()
+            
+            raw_body = resp2.text
             if "data:" in raw_body:
                 for line in raw_body.split("\n"):
                     if line.startswith("data:"):
