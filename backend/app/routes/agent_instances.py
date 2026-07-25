@@ -197,11 +197,21 @@ async def revoke_agent_instance(agent_id: str):
 async def revive_agent_instance(agent_id: str):
     pool = get_pool()
     async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT class_id FROM agent_instances WHERE id = $1", agent_id)
+        class_id = row["class_id"] if row else None
+
         await conn.execute("UPDATE agent_instances SET status = 'active', updated_at = NOW() WHERE id = $1", agent_id)
+        if class_id:
+            await conn.execute("UPDATE agent_classes SET status = 'active', updated_at = NOW() WHERE id = $1", class_id)
 
     redis = get_redis()
     await redis.delete(f"agp:kill:agent:{agent_id}")
+    if class_id:
+        await redis.delete(f"agp:kill:class:{class_id}")
+        await publish_config_update("revive_class", class_id)
+
     await cache_agent_instance(agent_id)
     await publish_config_update("revive_agent", agent_id)
     return {"status": "active", "agent_id": agent_id}
+
 
