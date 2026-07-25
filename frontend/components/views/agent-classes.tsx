@@ -150,41 +150,55 @@ export function AgentClassesView({
                 >
                   <Settings2 className="mr-1 h-3 w-3" /> Edit class
                 </Button>
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      className="font-mono text-[10px] uppercase tracking-widest text-signal-stopped hover:bg-signal-stopped/10"
-                    >
-                      <Ban className="mr-1 h-3 w-3" />
-                      Revoke all instances
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent className="border-white/10 bg-slate-950 text-white">
-                    <AlertDialogHeader>
-                      <AlertDialogTitle className="font-mono text-sm uppercase tracking-widest">
-                        Revoke all instances of {cls.name}?
-                      </AlertDialogTitle>
-                      <AlertDialogDescription className="font-sans text-xs text-ink-secondary">
-                        Every active instance in this class will be immediately revoked. All pending actions will be blocked by the gateway.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel className="border-white/10 bg-transparent text-ink-secondary font-mono text-xs">
-                        Cancel
-                      </AlertDialogCancel>
-                      <AlertDialogAction
-                        onClick={async () => {
-                          await api.revokeAgentClass(cls.id);
-                          if (onRefresh) onRefresh();
-                        }}
-                        className="bg-rose-600 text-white hover:bg-rose-500 font-mono text-xs"
+                {cls.status === 'revoked' ? (
+                  <Button
+                    variant="ghost"
+                    onClick={async () => {
+                      await api.reviveAgentClass(cls.id);
+                      if (onRefresh) onRefresh();
+                    }}
+                    className="font-mono text-[10px] uppercase tracking-widest text-signal-healthy hover:bg-signal-healthy/10"
+                  >
+                    <CheckCircle2 className="mr-1 h-3 w-3" />
+                    Reactivate Class
+                  </Button>
+                ) : (
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        className="font-mono text-[10px] uppercase tracking-widest text-signal-stopped hover:bg-signal-stopped/10"
                       >
+                        <Ban className="mr-1 h-3 w-3" />
                         Revoke all instances
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent className="border-white/10 bg-slate-950 text-white">
+                      <AlertDialogHeader>
+                        <AlertDialogTitle className="font-mono text-sm uppercase tracking-widest">
+                          Revoke all instances of {cls.name}?
+                        </AlertDialogTitle>
+                        <AlertDialogDescription className="font-sans text-xs text-ink-secondary">
+                          Every active instance in this class will be immediately revoked. All pending actions will be blocked by the gateway.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel className="border-white/10 bg-transparent text-ink-secondary font-mono text-xs">
+                          Cancel
+                        </AlertDialogCancel>
+                        <AlertDialogAction
+                          onClick={async () => {
+                            await api.revokeAgentClass(cls.id);
+                            if (onRefresh) onRefresh();
+                          }}
+                          className="bg-rose-600 text-white hover:bg-rose-500 font-mono text-xs"
+                        >
+                          Revoke all instances
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                )}
               </div>
             </Panel>
           );

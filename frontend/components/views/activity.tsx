@@ -115,6 +115,13 @@ export function ActivityView({
         <div className="max-h-[calc(100vh-260px)] overflow-auto">
           {filtered.map((evt) => {
             const isExpanded = expanded.has(evt.id);
+            const agentId = evt.agentId || (evt as any).agent_id || '—';
+            const agentClass = evt.agentClass || (evt as any).agent_class_id || '—';
+            const bankConn = evt.bankConnectionId || (evt as any).bank_connection_id || (evt as any).service || '—';
+            const latency = evt.latencyMs ?? (evt as any).total_latency_ms ?? 0;
+            const action = evt.action || (evt as any).tool || '—';
+            const isDeny = evt.decision === 'deny';
+
             return (
               <div
                 key={evt.id}
@@ -138,9 +145,9 @@ export function ActivityView({
                       evt.decision === 'allow' ? 'bg-signal-healthy' : 'bg-signal-stopped'
                     )}
                   />
-                  <span className="shrink-0 font-mono text-[10px] text-accent">{evt.agentId}</span>
+                  <span className="shrink-0 font-mono text-[10px] text-accent">{agentId}</span>
                   <span className="flex-1 truncate font-mono text-xs text-ink-primary">
-                    {evt.action}
+                    {action}
                   </span>
                   <span
                     className={cn(
@@ -151,7 +158,7 @@ export function ActivityView({
                     {evt.decision}
                   </span>
                   <span className="shrink-0 font-mono text-[10px] text-ink-secondary tabular">
-                    {evt.latencyMs}ms
+                    {latency}ms
                   </span>
                 </div>
 
@@ -160,19 +167,19 @@ export function ActivityView({
                     <div className="grid grid-cols-2 gap-x-6 gap-y-1 font-mono text-[11px]">
                       <div>
                         <span className="text-ink-secondary">Agent: </span>
-                        <span className="text-ink-primary">{evt.agentId}</span>
+                        <span className="text-ink-primary">{agentId}</span>
                       </div>
                       <div>
                         <span className="text-ink-secondary">Class: </span>
-                        <span className="text-ink-primary">{evt.agentClass}</span>
+                        <span className="text-ink-primary">{agentClass}</span>
                       </div>
                       <div>
                         <span className="text-ink-secondary">Bank Connection: </span>
-                        <span className="text-ink-primary">{evt.bankConnectionId ?? '—'}</span>
+                        <span className="text-ink-primary">{bankConn}</span>
                       </div>
                       <div>
                         <span className="text-ink-secondary">Latency: </span>
-                        <span className="text-ink-primary">{evt.latencyMs}ms</span>
+                        <span className="text-ink-primary">{latency}ms</span>
                       </div>
                     </div>
                     <div className="mt-2">
@@ -184,9 +191,21 @@ export function ActivityView({
                       </pre>
                     </div>
                     {evt.reason && (
-                      <div className="mt-2 border border-signal-stopped/30 bg-signal-stopped/5 p-2">
-                        <span className="font-mono text-[10px] uppercase tracking-widest text-signal-stopped">
-                          Deny Reason
+                      <div
+                        className={cn(
+                          'mt-2 border p-2',
+                          isDeny
+                            ? 'border-signal-stopped/30 bg-signal-stopped/5'
+                            : 'border-signal-healthy/30 bg-signal-healthy/5'
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            'font-mono text-[10px] uppercase tracking-widest',
+                            isDeny ? 'text-signal-stopped' : 'text-signal-healthy'
+                          )}
+                        >
+                          {isDeny ? 'Deny Reason' : 'Policy Decision Note'}
                         </span>
                         <p className="mt-0.5 font-mono text-[11px] text-ink-primary">{evt.reason}</p>
                       </div>
@@ -196,6 +215,7 @@ export function ActivityView({
               </div>
             );
           })}
+
           {filtered.length === 0 && (
             <div className="p-8 text-center font-mono text-xs text-ink-secondary">
               No activity matches the current filters.
