@@ -74,7 +74,7 @@ func (l *Limiter) Check(ctx context.Context, amount int64, scopes []Scope) (*Che
 		return nil, fmt.Errorf("marshaling scopes: %w", err)
 	}
 
-	// All scope keys passed for Redis cluster compat (unused in single-node hackathon mode)
+	// All scope keys passed for Redis cluster compat (unused in single-node mode)
 	keys := make([]string, len(scopes))
 	for i, s := range scopes {
 		keys[i] = s.Key

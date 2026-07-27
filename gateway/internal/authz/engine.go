@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -118,7 +119,7 @@ func (e *Engine) loadAndCompile(ctx context.Context, force bool) error {
 		regoSource = redisVal
 	} else {
 		// Read from Postgres
-		rows, err := e.db.Query(ctx, "SELECT rego_source, version FROM policies WHERE status = 'active' AND type = 'rego' ORDER BY id ASC")
+		rows, err := e.db.Query(ctx, "SELECT rego_source, version FROM policies WHERE status = 'active' ORDER BY id ASC")
 		if err == nil {
 			defer rows.Close()
 			var sources []string
@@ -133,7 +134,7 @@ func (e *Engine) loadAndCompile(ctx context.Context, force bool) error {
 				}
 			}
 			if len(sources) > 0 {
-				regoSource = sources[0]
+				regoSource = strings.Join(sources, "\n\n")
 			}
 		}
 	}
