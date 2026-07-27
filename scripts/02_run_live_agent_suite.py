@@ -19,12 +19,7 @@ import subprocess
 
 GATEWAY_URL = os.getenv("GATEWAY_URL", "http://localhost:8080")
 
-# Clear Redis cache before running live suite
-try:
-    subprocess.run(["docker", "exec", "ai-governance-platform-redis-1", "redis-cli", "FLUSHALL"], check=True, stdout=subprocess.DEVNULL)
-    print("[+] Flushed Redis cache for clean execution.")
-except Exception:
-    pass
+
 
 # Load Agent Tokens
 tokens_filepath = os.path.join(os.path.dirname(__file__), "agent_tokens.json")

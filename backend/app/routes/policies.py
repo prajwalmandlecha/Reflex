@@ -48,6 +48,13 @@ async def create_policy(p: PolicyCreate):
             """
             INSERT INTO policies (name, scope, target_id, type, version, rego_source, visual_rules, status)
             VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+            ON CONFLICT (name, scope, COALESCE(target_id, '__global__')) DO UPDATE SET
+                type = EXCLUDED.type,
+                version = policies.version + 1,
+                rego_source = EXCLUDED.rego_source,
+                visual_rules = EXCLUDED.visual_rules,
+                status = EXCLUDED.status,
+                updated_at = NOW()
             RETURNING *
             """,
             p.name, p.scope, p.target_id, p.type, p.version, p.rego_source,

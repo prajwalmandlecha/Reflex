@@ -78,13 +78,13 @@ def visual_rules_to_rego(visual_rules: list[dict[str, Any]], target_id: str | No
                     else:
                         lines.append(f'\tparam_val != "{val}"')
                 elif op == "gt":
-                    lines.append(f"\tparam_val > {val}")
+                    lines.append(f"\tto_number(param_val) > {val}")
                 elif op == "gte":
-                    lines.append(f"\tparam_val >= {val}")
+                    lines.append(f"\tto_number(param_val) >= {val}")
                 elif op == "lt":
-                    lines.append(f"\tparam_val < {val}")
+                    lines.append(f"\tto_number(param_val) < {val}")
                 elif op == "lte":
-                    lines.append(f"\tparam_val <= {val}")
+                    lines.append(f"\tto_number(param_val) <= {val}")
                 elif op == "contains":
                     lines.append(f'\tcontains(sprintf("%v", [param_val]), "{val}")')
                 elif op == "regex_deny":

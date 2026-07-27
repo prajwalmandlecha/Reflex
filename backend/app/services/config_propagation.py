@@ -108,7 +108,7 @@ async def cache_active_policies():
     redis = get_redis()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT name, rego_source FROM policies WHERE status = 'active' AND type = 'rego' ORDER BY id ASC"
+            "SELECT name, rego_source FROM policies WHERE status = 'active' ORDER BY id ASC"
         )
         sources = [r["rego_source"] for r in rows if r["rego_source"]]
         combined = "\n\n".join(sources) if sources else ""
