@@ -56,8 +56,8 @@ Reflex is organized into modular, decoupled microservices:
 | ⚡ [**`gateway/`**](./gateway) | Go 1.26, OPA, Redis, PostgreSQL, Goose, sqlc | High-throughput transparent reverse proxy, MCP interceptor, embedded OPA engine, atomic spend cap limiter, and cryptographic audit logger. | [Gateway Docs](./gateway/README.md) |
 | ⚙️ [**`backend/`**](./backend) | Python 3.12, FastAPI, Pydantic, SQLAlchemy, Redis Pub/Sub | Control Plane API, Rego policy compiler, agent lifecycle manager, OpenAPI virtualizer, and event publisher. | [Backend Docs](./backend/README.md) |
 | 🌐 [**`frontend/`**](./frontend) | Next.js 14, React 18, Tailwind CSS, Lucide Icons | Operator dashboard featuring live fleet monitor, visual rule builder, audit verification, and performance instrumentation. | [Frontend Docs](./frontend/README.md) |
-| 📜 [**`scripts/`**](./scripts) | Python 3.12, Asyncio, HTTPX | Seed scripts and real-time multi-agent load simulation suite testing all governance gauntlet features. | [Scripts Docs](./scripts/README.md) |
-| 📁 [**`docs/`**](./docs) | Diagrams, HTML specs, PRD, PDF | System architecture diagram, comprehensive PRD, and technical governance papers. | [Docs Index](./docs/README.md) |
+| 📜 [**`scripts/`**](./scripts) | Python 3.12, Asyncio, HTTPX | Seed scripts and real-time multi-agent load simulation suite testing all governance gauntlet features. | — |
+| 📁 [**`docs/`**](./docs) | System architecture diagram | — | — |
 | 🗄️ [**`db/`**](./db) | PostgreSQL 16, Goose Migrations | Database schema migrations (`001_schema.sql`, `002_seed.sql`) for agent entities, policies, and audit logs. | — |
 
 ---
