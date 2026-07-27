@@ -215,3 +215,17 @@ async def revive_agent_instance(agent_id: str):
     return {"status": "active", "agent_id": agent_id}
 
 
+@router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_agent_instance(agent_id: str):
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        res = await conn.execute("DELETE FROM agent_instances WHERE id = $1", agent_id)
+        if res == "DELETE 0":
+            raise HTTPException(status_code=404, detail=f"Agent instance '{agent_id}' not found")
+    redis = get_redis()
+    await redis.delete(f"agp:agent:{agent_id}")
+    await redis.delete(f"agp:kill:agent:{agent_id}")
+    await publish_config_update("instance", agent_id)
+    return None
+
+
