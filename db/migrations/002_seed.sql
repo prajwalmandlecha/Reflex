@@ -40,5 +40,7 @@ reason := sprintf("agent kind ''%s'' is not allowed to perform action ''%s''", [
 ', 'active')
 ON CONFLICT DO NOTHING;
 
+/*
 -- +goose Down
 TRUNCATE TABLE policies CASCADE;
+*/
