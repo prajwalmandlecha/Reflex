@@ -173,7 +173,7 @@ async def get_agent_spend(agent_id: str):
         if not row:
             raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
         spend_today_cents = await conn.fetchval(
-            "SELECT COALESCE(SUM(spend_delta), 0) FROM audit_log WHERE agent_id = $1 AND ts >= CURRENT_DATE",
+            "SELECT COALESCE(SUM(spend_delta), 0) FROM audit_log WHERE agent_id = $1 AND ts >= CURRENT_DATE AND decision = 'allow'",
             agent_id,
         )
     spend_dollars = (float(spend_today_cents) if spend_today_cents else 0.0) / 100.0
@@ -195,20 +195,19 @@ async def revoke_agent_instance(agent_id: str):
 
 @router.delete("/{agent_id}/revoke")
 async def revive_agent_instance(agent_id: str):
+    """Revive a single agent instance.
+
+    Only clears THIS agent's kill key and status. It must NOT touch the
+    class-level kill switch or class status — reviving one agent should never
+    silently un-kill the other agents in its class (G14). Class revival is a
+    separate, explicit operation.
+    """
     pool = get_pool()
     async with pool.acquire() as conn:
-        row = await conn.fetchrow("SELECT class_id FROM agent_instances WHERE id = $1", agent_id)
-        class_id = row["class_id"] if row else None
-
         await conn.execute("UPDATE agent_instances SET status = 'active', updated_at = NOW() WHERE id = $1", agent_id)
-        if class_id:
-            await conn.execute("UPDATE agent_classes SET status = 'active', updated_at = NOW() WHERE id = $1", class_id)
 
     redis = get_redis()
     await redis.delete(f"agp:kill:agent:{agent_id}")
-    if class_id:
-        await redis.delete(f"agp:kill:class:{class_id}")
-        await publish_config_update("revive_class", class_id)
 
     await cache_agent_instance(agent_id)
     await publish_config_update("revive_agent", agent_id)

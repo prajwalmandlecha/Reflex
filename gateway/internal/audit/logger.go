@@ -11,7 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/agp/gateway/internal/db"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -24,7 +25,7 @@ type Entry struct {
 	Action               string         `json:"action"`
 	BankConnectionID     string         `json:"bank_connection_id"`
 	Params               map[string]any `json:"params"`
-	Decision             string         `json:"decision"` // "allow" or "deny"
+	Decision             string         `json:"decision"`   // "allow" or "deny"
 	DenyStage            string         `json:"deny_stage"` // "killswitch", "constraint", "policy", "spend"
 	SpendDelta           int64          `json:"spend_delta"`
 	Reason               string         `json:"reason"`
@@ -64,9 +65,8 @@ func NewLogger(ctx context.Context, dbPool *pgxpool.Pool, logger *slog.Logger, b
 		done:       make(chan struct{}),
 	}
 
-	// Fetch last entry hash from audit_log
-	var lastHash string
-	err := dbPool.QueryRow(ctx, "SELECT entry_hash FROM audit_log ORDER BY id DESC LIMIT 1").Scan(&lastHash)
+	// Fetch last entry hash from audit_log (via sqlc-generated query).
+	lastHash, err := db.New(dbPool).GetLastAuditEntryHash(ctx)
 	if err == nil {
 		l.prevHash = lastHash
 	}
@@ -77,19 +77,30 @@ func NewLogger(ctx context.Context, dbPool *pgxpool.Pool, logger *slog.Logger, b
 }
 
 // Log enqueues an audit entry for batch writing.
+//
+// Hash-chain integrity: the prevHash pointer is advanced ONLY if the entry is
+// successfully enqueued. If the channel is full, the entry is dropped and
+// prevHash is left unchanged, so the next written entry still chains to the
+// last *persisted* entry — a dropped entry never creates a gap in the chain.
+// (A drop is data loss under overload, but it must not also corrupt the chain.)
 func (l *Logger) Log(entry *Entry) {
 	entry.Timestamp = time.Now()
 
 	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// Tentatively chain onto the current head.
 	entry.PrevHash = l.prevHash
 	entry.EntryHash = computeHash(l.prevHash, entry)
-	l.prevHash = entry.EntryHash
-	l.mu.Unlock()
 
 	select {
 	case l.ch <- entry:
+		// Enqueued: commit the new head.
+		l.prevHash = entry.EntryHash
 	default:
-		l.logger.Error("audit log channel full, dropping entry", "agent_id", entry.AgentID, "action", entry.Action)
+		// Channel full: drop WITHOUT advancing prevHash. entry is discarded and
+		// the chain remains unbroken for the next successfully-enqueued entry.
+		l.logger.Error("audit log channel full, dropping entry (chain preserved)", "agent_id", entry.AgentID, "action", entry.Action)
 	}
 }
 
@@ -144,28 +155,45 @@ func (l *Logger) flushLoop(ctx context.Context) {
 }
 
 func (l *Logger) writeBatch(ctx context.Context, entries []*Entry) error {
-	b := &pgx.Batch{}
-	for _, e := range entries {
-		paramsJSON, _ := json.Marshal(e.Params)
-		b.Queue(
-			`INSERT INTO audit_log (
-				ts, agent_id, agent_class_id, action, bank_connection_id, params, decision, deny_stage, reason, spend_delta,
-				total_latency_ms, killswitch_latency_ms, policy_latency_ms, spend_check_latency_ms, constraint_latency_ms,
-				downstream_latency_ms, governance_overhead_ms, prev_hash, entry_hash
-			) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
-			e.Timestamp, e.AgentID, e.AgentClassID, e.Action, e.BankConnectionID, string(paramsJSON), e.Decision, e.DenyStage, e.Reason, e.SpendDelta,
-			e.TotalLatencyMs, e.KillswitchLatencyMs, e.PolicyLatencyMs, e.SpendCheckLatencyMs, e.ConstraintLatencyMs,
-			e.DownstreamLatencyMs, e.GovernanceOverheadMs, e.PrevHash, e.EntryHash,
-		)
+	// Insert the batch via the sqlc-generated query inside a single transaction,
+	// preserving the all-or-nothing semantics the previous pgx.Batch provided.
+	tx, err := l.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("beginning audit batch tx: %w", err)
 	}
+	defer tx.Rollback(ctx)
 
-	br := l.db.SendBatch(ctx, b)
-	defer br.Close()
-
-	for i := range entries {
-		if _, err := br.Exec(); err != nil {
+	q := db.New(tx)
+	for i, e := range entries {
+		paramsJSON, _ := json.Marshal(e.Params)
+		err := q.InsertAuditEntry(ctx, db.InsertAuditEntryParams{
+			Ts:                   e.Timestamp,
+			AgentID:              e.AgentID,
+			AgentClassID:         pgtype.Text{String: e.AgentClassID, Valid: e.AgentClassID != ""},
+			Action:               e.Action,
+			BankConnectionID:     pgtype.Text{String: e.BankConnectionID, Valid: e.BankConnectionID != ""},
+			Params:               paramsJSON,
+			Decision:             e.Decision,
+			DenyStage:            pgtype.Text{String: e.DenyStage, Valid: e.DenyStage != ""},
+			Reason:               pgtype.Text{String: e.Reason, Valid: e.Reason != ""},
+			SpendDelta:           pgtype.Int8{Int64: e.SpendDelta, Valid: true},
+			TotalLatencyMs:       pgtype.Float8{Float64: e.TotalLatencyMs, Valid: true},
+			KillswitchLatencyMs:  pgtype.Float8{Float64: e.KillswitchLatencyMs, Valid: true},
+			PolicyLatencyMs:      pgtype.Float8{Float64: e.PolicyLatencyMs, Valid: true},
+			SpendCheckLatencyMs:  pgtype.Float8{Float64: e.SpendCheckLatencyMs, Valid: true},
+			ConstraintLatencyMs:  pgtype.Float8{Float64: e.ConstraintLatencyMs, Valid: true},
+			DownstreamLatencyMs:  pgtype.Float8{Float64: e.DownstreamLatencyMs, Valid: true},
+			GovernanceOverheadMs: pgtype.Float8{Float64: e.GovernanceOverheadMs, Valid: true},
+			PrevHash:             pgtype.Text{String: e.PrevHash, Valid: e.PrevHash != ""},
+			EntryHash:            e.EntryHash,
+		})
+		if err != nil {
 			return fmt.Errorf("inserting audit entry %d: %w", i, err)
 		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("committing audit batch: %w", err)
 	}
 
 	l.logger.Debug("flushed audit batch", "count", len(entries))

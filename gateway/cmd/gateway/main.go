@@ -104,6 +104,11 @@ func main() {
 	)
 	logger.Info("MCP Security Interceptor Proxy initialized", "targets", cfg.MCPTargets)
 
+	// Load OpenAPI virtual targets from the bank-connection cache and keep them
+	// hot-reloaded on connection config changes (G7).
+	mcpInterceptor.LoadOpenAPISpecs(ctx)
+	go mcpInterceptor.SubscribeConnectionUpdates(ctx)
+
 	// --- Chi Router ---
 	r := chi.NewRouter()
 	r.Use(chimw.RequestID)

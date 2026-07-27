@@ -7,96 +7,127 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const getLastAuditLog = `-- name: GetLastAuditLog :one
-SELECT id, ts, agent_id, action, resource, decision, spend_delta, latency_ms, reason, prev_hash, entry_hash
-FROM audit_log
-ORDER BY id DESC
-LIMIT 1
+const getLastAuditEntryHash = `-- name: GetLastAuditEntryHash :one
+SELECT entry_hash FROM audit_log ORDER BY id DESC LIMIT 1
 `
 
-func (q *Queries) GetLastAuditLog(ctx context.Context) (AuditLog, error) {
-	row := q.db.QueryRow(ctx, getLastAuditLog)
-	var i AuditLog
-	err := row.Scan(
-		&i.ID,
-		&i.Ts,
-		&i.AgentID,
-		&i.Action,
-		&i.Resource,
-		&i.Decision,
-		&i.SpendDelta,
-		&i.LatencyMs,
-		&i.Reason,
-		&i.PrevHash,
-		&i.EntryHash,
-	)
-	return i, err
+func (q *Queries) GetLastAuditEntryHash(ctx context.Context) (string, error) {
+	row := q.db.QueryRow(ctx, getLastAuditEntryHash)
+	var entry_hash string
+	err := row.Scan(&entry_hash)
+	return entry_hash, err
 }
 
-const insertAuditLog = `-- name: InsertAuditLog :exec
+const insertAuditEntry = `-- name: InsertAuditEntry :exec
 INSERT INTO audit_log (
-    ts, agent_id, action, resource, decision, spend_delta, latency_ms, reason, prev_hash, entry_hash
+    ts, agent_id, agent_class_id, action, bank_connection_id, params,
+    decision, deny_stage, reason, spend_delta,
+    total_latency_ms, killswitch_latency_ms, policy_latency_ms, spend_check_latency_ms,
+    constraint_latency_ms, downstream_latency_ms, governance_overhead_ms,
+    prev_hash, entry_hash
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+    $1, $2, $3, $4, $5, $6::jsonb,
+    $7, $8, $9, $10,
+    $11, $12, $13, $14,
+    $15, $16, $17,
+    $18, $19
 )
 `
 
-type InsertAuditLogParams struct {
-	Ts         time.Time `json:"ts"`
-	AgentID    string    `json:"agent_id"`
-	Action     string    `json:"action"`
-	Resource   string    `json:"resource"`
-	Decision   string    `json:"decision"`
-	SpendDelta int64     `json:"spend_delta"`
-	LatencyMs  float64   `json:"latency_ms"`
-	Reason     string    `json:"reason"`
-	PrevHash   string    `json:"prev_hash"`
-	EntryHash  string    `json:"entry_hash"`
+type InsertAuditEntryParams struct {
+	Ts                   time.Time       `json:"ts"`
+	AgentID              string          `json:"agent_id"`
+	AgentClassID         pgtype.Text     `json:"agent_class_id"`
+	Action               string          `json:"action"`
+	BankConnectionID     pgtype.Text     `json:"bank_connection_id"`
+	Params               json.RawMessage `json:"params"`
+	Decision             string          `json:"decision"`
+	DenyStage            pgtype.Text     `json:"deny_stage"`
+	Reason               pgtype.Text     `json:"reason"`
+	SpendDelta           pgtype.Int8     `json:"spend_delta"`
+	TotalLatencyMs       pgtype.Float8   `json:"total_latency_ms"`
+	KillswitchLatencyMs  pgtype.Float8   `json:"killswitch_latency_ms"`
+	PolicyLatencyMs      pgtype.Float8   `json:"policy_latency_ms"`
+	SpendCheckLatencyMs  pgtype.Float8   `json:"spend_check_latency_ms"`
+	ConstraintLatencyMs  pgtype.Float8   `json:"constraint_latency_ms"`
+	DownstreamLatencyMs  pgtype.Float8   `json:"downstream_latency_ms"`
+	GovernanceOverheadMs pgtype.Float8   `json:"governance_overhead_ms"`
+	PrevHash             pgtype.Text     `json:"prev_hash"`
+	EntryHash            string          `json:"entry_hash"`
 }
 
-func (q *Queries) InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) error {
-	_, err := q.db.Exec(ctx, insertAuditLog,
+func (q *Queries) InsertAuditEntry(ctx context.Context, arg InsertAuditEntryParams) error {
+	_, err := q.db.Exec(ctx, insertAuditEntry,
 		arg.Ts,
 		arg.AgentID,
+		arg.AgentClassID,
 		arg.Action,
-		arg.Resource,
+		arg.BankConnectionID,
+		arg.Params,
 		arg.Decision,
-		arg.SpendDelta,
-		arg.LatencyMs,
+		arg.DenyStage,
 		arg.Reason,
+		arg.SpendDelta,
+		arg.TotalLatencyMs,
+		arg.KillswitchLatencyMs,
+		arg.PolicyLatencyMs,
+		arg.SpendCheckLatencyMs,
+		arg.ConstraintLatencyMs,
+		arg.DownstreamLatencyMs,
+		arg.GovernanceOverheadMs,
 		arg.PrevHash,
 		arg.EntryHash,
 	)
 	return err
 }
 
-const listAuditLogs = `-- name: ListAuditLogs :many
-SELECT id, ts, agent_id, action, resource, decision, spend_delta, latency_ms, reason, prev_hash, entry_hash
+const listAuditLogForVerify = `-- name: ListAuditLogForVerify :many
+SELECT id, ts, agent_id, agent_class_id, action, decision, deny_stage,
+       spend_delta, governance_overhead_ms, reason, prev_hash, entry_hash
 FROM audit_log
 ORDER BY id ASC
 `
 
-func (q *Queries) ListAuditLogs(ctx context.Context) ([]AuditLog, error) {
-	rows, err := q.db.Query(ctx, listAuditLogs)
+type ListAuditLogForVerifyRow struct {
+	ID                   int64         `json:"id"`
+	Ts                   time.Time     `json:"ts"`
+	AgentID              string        `json:"agent_id"`
+	AgentClassID         pgtype.Text   `json:"agent_class_id"`
+	Action               string        `json:"action"`
+	Decision             string        `json:"decision"`
+	DenyStage            pgtype.Text   `json:"deny_stage"`
+	SpendDelta           pgtype.Int8   `json:"spend_delta"`
+	GovernanceOverheadMs pgtype.Float8 `json:"governance_overhead_ms"`
+	Reason               pgtype.Text   `json:"reason"`
+	PrevHash             pgtype.Text   `json:"prev_hash"`
+	EntryHash            string        `json:"entry_hash"`
+}
+
+func (q *Queries) ListAuditLogForVerify(ctx context.Context) ([]ListAuditLogForVerifyRow, error) {
+	rows, err := q.db.Query(ctx, listAuditLogForVerify)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []AuditLog
+	items := []ListAuditLogForVerifyRow{}
 	for rows.Next() {
-		var i AuditLog
+		var i ListAuditLogForVerifyRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Ts,
 			&i.AgentID,
+			&i.AgentClassID,
 			&i.Action,
-			&i.Resource,
 			&i.Decision,
+			&i.DenyStage,
 			&i.SpendDelta,
-			&i.LatencyMs,
+			&i.GovernanceOverheadMs,
 			&i.Reason,
 			&i.PrevHash,
 			&i.EntryHash,

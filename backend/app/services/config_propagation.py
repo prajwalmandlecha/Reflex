@@ -121,7 +121,7 @@ async def cache_bank_connections():
     redis = get_redis()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id, name, source_type, mcp_url, base_url, status FROM bank_connections WHERE status = 'connected'"
+            "SELECT id, name, source_type, mcp_url, base_url, openapi_spec, status FROM bank_connections WHERE status = 'connected'"
         )
         mapping = {}
         for r in rows:
@@ -131,5 +131,8 @@ async def cache_bank_connections():
                 "source_type": r["source_type"],
                 "mcp_url": r["mcp_url"],
                 "base_url": r["base_url"],
+                # Include the raw spec so the gateway can virtualize OpenAPI
+                # connections into MCP tools (G7).
+                "openapi_spec": r["openapi_spec"],
             }
         await redis.set("agp:connections", json.dumps(mapping))

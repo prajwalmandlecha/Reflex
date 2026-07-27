@@ -10,41 +10,113 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type AgentInstance struct {
-	AgentID   string      `json:"agent_id"`
-	ProfileID pgtype.Text `json:"profile_id"`
-	Status    string      `json:"status"`
-	CreatedAt time.Time   `json:"created_at"`
+type AgentClass struct {
+	ID                  string             `json:"id"`
+	Name                string             `json:"name"`
+	Description         pgtype.Text        `json:"description"`
+	DefaultAllowedTools []string           `json:"default_allowed_tools"`
+	DefaultConstraints  []byte             `json:"default_constraints"`
+	DefaultCaps         []byte             `json:"default_caps"`
+	Status              pgtype.Text        `json:"status"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 }
 
-type AgentProfile struct {
-	ProfileID           string      `json:"profile_id"`
-	ProfileName         string      `json:"profile_name"`
-	Description         pgtype.Text `json:"description"`
-	AllowedTools        []string    `json:"allowed_tools"`
-	HourlySpendCapCents pgtype.Int8 `json:"hourly_spend_cap_cents"`
-	CreatedAt           time.Time   `json:"created_at"`
+type AgentInstance struct {
+	ID                  string             `json:"id"`
+	ClassID             string             `json:"class_id"`
+	Status              pgtype.Text        `json:"status"`
+	ConstraintOverrides []byte             `json:"constraint_overrides"`
+	CapOverrides        []byte             `json:"cap_overrides"`
+	ToolOverrides       []string           `json:"tool_overrides"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 }
 
 type AuditLog struct {
-	ID         int64     `json:"id"`
-	Ts         time.Time `json:"ts"`
-	AgentID    string    `json:"agent_id"`
-	Action     string    `json:"action"`
-	Resource   string    `json:"resource"`
-	Decision   string    `json:"decision"`
-	SpendDelta int64     `json:"spend_delta"`
-	LatencyMs  float64   `json:"latency_ms"`
-	Reason     string    `json:"reason"`
-	PrevHash   string    `json:"prev_hash"`
-	EntryHash  string    `json:"entry_hash"`
+	ID                   int64         `json:"id"`
+	Ts                   time.Time     `json:"ts"`
+	AgentID              string        `json:"agent_id"`
+	AgentClassID         pgtype.Text   `json:"agent_class_id"`
+	Action               string        `json:"action"`
+	BankConnectionID     pgtype.Text   `json:"bank_connection_id"`
+	Params               []byte        `json:"params"`
+	Decision             string        `json:"decision"`
+	DenyStage            pgtype.Text   `json:"deny_stage"`
+	Reason               pgtype.Text   `json:"reason"`
+	SpendDelta           pgtype.Int8   `json:"spend_delta"`
+	TotalLatencyMs       pgtype.Float8 `json:"total_latency_ms"`
+	KillswitchLatencyMs  pgtype.Float8 `json:"killswitch_latency_ms"`
+	PolicyLatencyMs      pgtype.Float8 `json:"policy_latency_ms"`
+	SpendCheckLatencyMs  pgtype.Float8 `json:"spend_check_latency_ms"`
+	ConstraintLatencyMs  pgtype.Float8 `json:"constraint_latency_ms"`
+	DownstreamLatencyMs  pgtype.Float8 `json:"downstream_latency_ms"`
+	GovernanceOverheadMs pgtype.Float8 `json:"governance_overhead_ms"`
+	PrevHash             pgtype.Text   `json:"prev_hash"`
+	EntryHash            string        `json:"entry_hash"`
+}
+
+type BankConnection struct {
+	ID             string             `json:"id"`
+	Name           string             `json:"name"`
+	SourceType     string             `json:"source_type"`
+	McpUrl         pgtype.Text        `json:"mcp_url"`
+	BaseUrl        pgtype.Text        `json:"base_url"`
+	OpenapiSpec    pgtype.Text        `json:"openapi_spec"`
+	CredentialType pgtype.Text        `json:"credential_type"`
+	EncryptedCreds pgtype.Text        `json:"encrypted_creds"`
+	Status         pgtype.Text        `json:"status"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ConfigVersion struct {
+	ID        int32              `json:"id"`
+	Version   int64              `json:"version"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Policy struct {
-	ID        int32     `json:"id"`
-	Name      string    `json:"name"`
-	Version   int32     `json:"version"`
-	Source    string    `json:"source"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID          int32              `json:"id"`
+	Name        string             `json:"name"`
+	Scope       string             `json:"scope"`
+	TargetID    pgtype.Text        `json:"target_id"`
+	Type        string             `json:"type"`
+	Version     int32              `json:"version"`
+	RegoSource  pgtype.Text        `json:"rego_source"`
+	VisualRules []byte             `json:"visual_rules"`
+	Status      pgtype.Text        `json:"status"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PolicyChangelog struct {
+	ID         int32              `json:"id"`
+	PolicyID   pgtype.Int4        `json:"policy_id"`
+	ChangedBy  pgtype.Text        `json:"changed_by"`
+	ChangeType string             `json:"change_type"`
+	OldValue   []byte             `json:"old_value"`
+	NewValue   []byte             `json:"new_value"`
+	ChangedAt  pgtype.Timestamptz `json:"changed_at"`
+}
+
+type StopEvent struct {
+	ID          int32              `json:"id"`
+	Scope       string             `json:"scope"`
+	TargetID    pgtype.Text        `json:"target_id"`
+	Action      string             `json:"action"`
+	TriggeredBy pgtype.Text        `json:"triggered_by"`
+	Reason      pgtype.Text        `json:"reason"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type Tool struct {
+	ID               int32              `json:"id"`
+	BankConnectionID string             `json:"bank_connection_id"`
+	Name             string             `json:"name"`
+	Description      pgtype.Text        `json:"description"`
+	InputSchema      []byte             `json:"input_schema"`
+	UnderlyingOps    []byte             `json:"underlying_ops"`
+	Exposed          pgtype.Bool        `json:"exposed"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 }

@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/agp/gateway/internal/db"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-policy-agent/opa/v1/rego"
 	"github.com/redis/go-redis/v9"
@@ -109,50 +110,49 @@ func (e *Engine) Evaluate(ctx context.Context, input *Input) (*Decision, error) 
 }
 
 // loadAndCompile fetches active policies from Postgres/Redis and compiles them.
+// Each policy is compiled as its OWN module under a unique package path
+// (data.agp.policies.p<i>), preserving its original source verbatim — no string
+// stripping. A small aggregator module (data.agp.authz) merges the per-policy
+// results: any explicit deny wins; otherwise allow if any policy allows;
+// otherwise default-deny. This eliminates both the default-allow inversion and
+// the ReplaceAll source-mangling bugs.
 func (e *Engine) loadAndCompile(ctx context.Context, force bool) error {
-	var regoSource string
 	var version int32 = 1
 
 	// Read from Postgres or Redis
 	var rawSources []string
 	redisVal, err := e.rdb.Get(ctx, "agp:policy:active").Result()
 	if err == nil && redisVal != "" {
-		rawSources = append(rawSources, redisVal)
+		// Redis stores the concatenation of full policy sources; split them back
+		// into individual modules on their package declarations.
+		rawSources = append(rawSources, splitPolicySources(redisVal)...)
 	} else {
-		rows, err := e.db.Query(ctx, "SELECT rego_source, version FROM policies WHERE status = 'active' ORDER BY id ASC")
+		q := db.New(e.db)
+		rows, err := q.ListActivePolicies(ctx)
 		if err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var src string
-				var ver int
-				if err := rows.Scan(&src, &ver); err == nil && src != "" {
-					rawSources = append(rawSources, src)
-					if int32(ver) > version {
-						version = int32(ver)
+			for _, row := range rows {
+				src := row.RegoSource.String
+				if src != "" {
+					rawSources = append(rawSources, splitPolicySources(src)...)
+					if row.Version > version {
+						version = row.Version
 					}
 				}
 			}
 		}
 	}
 
-	if len(rawSources) > 0 {
-		var combined []string
-		combined = append(combined, "package agp.authz\n\nimport rego.v1\n\ndefault allow := true\ndefault deny := false\n")
-		for _, src := range rawSources {
-			cleaned := src
-			cleaned = strings.ReplaceAll(cleaned, "package agp.authz", "")
-			cleaned = strings.ReplaceAll(cleaned, "import rego.v1", "")
-			cleaned = strings.ReplaceAll(cleaned, "default allow := true", "")
-			cleaned = strings.ReplaceAll(cleaned, "default allow := false", "")
-			cleaned = strings.ReplaceAll(cleaned, "default deny := false", "")
-			combined = append(combined, strings.TrimSpace(cleaned))
-		}
-		regoSource = strings.Join(combined, "\n\n")
-	}
-
 	var modules []func(*rego.Rego)
-	if regoSource != "" {
-		modules = append(modules, rego.Module("active_policy.rego", regoSource))
+	if len(rawSources) > 0 {
+		for i, src := range rawSources {
+			// Rewrite ONLY the leading package declaration to a unique path so
+			// multiple policies can coexist in one OPA store. Rule bodies are
+			// untouched.
+			rewritten := rewritePackage(src, fmt.Sprintf("agp.policies.p%d", i))
+			modules = append(modules, rego.Module(fmt.Sprintf("policy_%d.rego", i), rewritten))
+		}
+		// Aggregator: merge per-policy decisions.
+		modules = append(modules, rego.Module("aggregator.rego", aggregatorModule(len(rawSources))))
 	} else {
 		e.logger.Warn("no active policies found in DB or Redis, using default-deny rule")
 		modules = append(modules, rego.Module("default.rego", `
@@ -216,6 +216,88 @@ reason := sprintf("action '%s' is not permitted by policy for agent kind '%s'", 
 	e.currentVersion.Store(version)
 	e.logger.Info("policy compiled and loaded into OPA engine", "version", version)
 	return nil
+}
+
+// splitPolicySources splits a blob that may contain several concatenated Rego
+// policies (each beginning with a `package` declaration) into individual module
+// sources. A single-policy input is returned unchanged (as a one-element slice).
+func splitPolicySources(blob string) []string {
+	// Split on lines that start a new package declaration.
+	lines := strings.Split(blob, "\n")
+	var modules []string
+	var cur []string
+	for _, ln := range lines {
+		if strings.HasPrefix(strings.TrimSpace(ln), "package ") && len(cur) > 0 {
+			modules = append(modules, strings.TrimSpace(strings.Join(cur, "\n")))
+			cur = cur[:0]
+		}
+		cur = append(cur, ln)
+	}
+	if len(cur) > 0 {
+		if s := strings.TrimSpace(strings.Join(cur, "\n")); s != "" {
+			modules = append(modules, s)
+		}
+	}
+	// Filter out empties.
+	out := modules[:0]
+	for _, m := range modules {
+		if m != "" {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// rewritePackage replaces ONLY the first `package <path>` line with
+// `package <newPath>`, leaving the rest of the source byte-for-byte intact.
+func rewritePackage(src, newPath string) string {
+	lines := strings.SplitN(src, "\n", -1)
+	for i, ln := range lines {
+		t := strings.TrimSpace(ln)
+		if strings.HasPrefix(t, "package ") {
+			lines[i] = "package " + newPath
+			return strings.Join(lines, "\n")
+		}
+		// Skip blank lines and comments before the package clause.
+		if t == "" || strings.HasPrefix(t, "#") {
+			continue
+		}
+		// First non-comment, non-blank line is not a package clause; bail.
+		break
+	}
+	// No package clause found — prepend one so the module is valid.
+	return "package " + newPath + "\n\n" + src
+}
+
+// aggregatorModule builds the data.agp.authz module that merges N per-policy
+// modules. Decision semantics:
+//   - deny  := true if ANY policy's deny is true
+//   - allow := true if ANY policy's allow is true AND no policy denied
+//   - default allow := false (default-deny when nothing matches)
+func aggregatorModule(n int) string {
+	var b strings.Builder
+	b.WriteString("package agp.authz\n\nimport rego.v1\n\n")
+	b.WriteString("default allow := false\ndefault deny := false\n\n")
+
+	// deny if any policy denies.
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&b, "deny if {\n\tdata.agp.policies.p%d.deny\n}\n\n", i)
+	}
+
+	// allow if any policy allows and none deny.
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&b, "allow if {\n\tdata.agp.policies.p%d.allow\n\tnot deny\n}\n\n", i)
+	}
+
+	// Reason: reflect the merged decision. Sub-policy `reason` rules are partial
+	// and vary widely, so rather than fragile else-chains we surface a clear,
+	// decision-accurate reason. (Per-policy reasons remain available under
+	// data.agp.policies.p<i>.reason for debugging.)
+	b.WriteString("reason := \"denied by policy\" if {\n\tdeny\n}\n\n")
+	b.WriteString("reason := \"allowed by policy\" if {\n\tallow\n\tnot deny\n}\n\n")
+	b.WriteString("reason := \"denied by policy (no rule matched)\" if {\n\tnot allow\n\tnot deny\n}\n")
+
+	return b.String()
 }
 
 // subscribePolicyUpdates listens on Redis "config:updates" and "policy:updates" channels.

@@ -42,32 +42,32 @@ type GovernanceTimings struct {
 }
 
 type GovernanceEvent struct {
-	Type            string            `json:"type"`
-	AgentID         string            `json:"agent_id"`
-	AgentClassID    string            `json:"agent_class_id"`
-	Tool            string            `json:"tool"`
-	Decision        string            `json:"decision"`
-	DenyStage       string            `json:"deny_stage"`
-	Reason          string            `json:"reason"`
-	SpendDeltaCents int64             `json:"spend_delta_cents"`
+	Type            string             `json:"type"`
+	AgentID         string             `json:"agent_id"`
+	AgentClassID    string             `json:"agent_class_id"`
+	Tool            string             `json:"tool"`
+	Decision        string             `json:"decision"`
+	DenyStage       string             `json:"deny_stage"`
+	Reason          string             `json:"reason"`
+	SpendDeltaCents int64              `json:"spend_delta_cents"`
 	Latency         map[string]float64 `json:"latency"`
-	Timestamp       string            `json:"timestamp"`
+	Timestamp       string             `json:"timestamp"`
 }
 
 type MCPProxy struct {
-	targets          map[string]string
-	openAPITargets   map[string]*OpenAPISpecTarget
-	openAPIMux       sync.RWMutex
-	ks               *killswitch.Switch
-	policyEngine     *authz.Engine
-	spendLimiter     *spend.Limiter
-	constraintCheck  *constraints.Checker
-	configCache      *configcache.ConfigCache
-	auditor          *audit.Logger
-	jwtMgr           *authn.JWTManager
-	rdb              *redis.Client
-	logger           *slog.Logger
-	client           *http.Client
+	targets         map[string]string
+	openAPITargets  map[string]*OpenAPISpecTarget
+	openAPIMux      sync.RWMutex
+	ks              *killswitch.Switch
+	policyEngine    *authz.Engine
+	spendLimiter    *spend.Limiter
+	constraintCheck *constraints.Checker
+	configCache     *configcache.ConfigCache
+	auditor         *audit.Logger
+	jwtMgr          *authn.JWTManager
+	rdb             *redis.Client
+	logger          *slog.Logger
+	client          *http.Client
 }
 
 func NewMCPProxy(
@@ -112,6 +112,85 @@ func (p *MCPProxy) RegisterOpenAPISpec(serviceName string, baseURL string, specD
 	}
 	p.logger.Info("registered openapi target endpoint", "service", serviceName, "base_url", baseURL)
 	return nil
+}
+
+// connectionEntry mirrors a single bank_connections row as cached in Redis
+// under agp:connections by the backend.
+type connectionEntry struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	SourceType  string `json:"source_type"`
+	MCPURL      string `json:"mcp_url"`
+	BaseURL     string `json:"base_url"`
+	OpenAPISpec string `json:"openapi_spec"`
+}
+
+// LoadOpenAPISpecs reads the bank-connection cache from Redis and registers an
+// OpenAPI virtual target for every connection of source_type "openapi" that has
+// a spec. It replaces the entire OpenAPI target set atomically. Called once at
+// startup and again whenever a connection/openapi config-update arrives (G7).
+func (p *MCPProxy) LoadOpenAPISpecs(ctx context.Context) {
+	if p.rdb == nil {
+		return
+	}
+	raw, err := p.rdb.Get(ctx, "agp:connections").Result()
+	if err != nil || raw == "" {
+		return
+	}
+	var mapping map[string]connectionEntry
+	if err := json.Unmarshal([]byte(raw), &mapping); err != nil {
+		p.logger.Warn("failed to parse agp:connections for openapi specs", "error", err)
+		return
+	}
+
+	newTargets := make(map[string]*OpenAPISpecTarget)
+	for id, conn := range mapping {
+		if conn.SourceType != "openapi" || conn.OpenAPISpec == "" {
+			continue
+		}
+		doc, err := adapter.LoadSpec([]byte(conn.OpenAPISpec))
+		if err != nil {
+			p.logger.Warn("skipping unparsable openapi spec", "connection", id, "error", err)
+			continue
+		}
+		baseURL := conn.BaseURL
+		if baseURL == "" {
+			baseURL = "http://localhost:8080"
+		}
+		newTargets[id] = &OpenAPISpecTarget{BaseURL: baseURL, Doc: doc}
+	}
+
+	p.openAPIMux.Lock()
+	p.openAPITargets = newTargets
+	p.openAPIMux.Unlock()
+	p.logger.Info("loaded openapi virtual targets", "count", len(newTargets))
+}
+
+// SubscribeConnectionUpdates listens for connection/openapi config changes and
+// reloads OpenAPI virtual targets so newly-registered specs take effect without
+// a restart. Runs until ctx is cancelled.
+func (p *MCPProxy) SubscribeConnectionUpdates(ctx context.Context) {
+	if p.rdb == nil {
+		return
+	}
+	sub := p.rdb.Subscribe(ctx, "config:updates")
+	defer sub.Close()
+	ch := sub.Channel()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg, ok := <-ch:
+			if !ok {
+				return
+			}
+			// Reload on any connection/openapi change.
+			if msg == nil {
+				continue
+			}
+			p.LoadOpenAPISpecs(ctx)
+		}
+	}
 }
 
 func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -198,6 +277,12 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		decisionStr := map[bool]string{true: "allow", false: "deny"}[allowed]
 
+		// Denied requests must not contribute to spend totals
+		spendDeltaCents := int64(0)
+		if allowed {
+			spendDeltaCents = int64(amount * 100)
+		}
+
 		// Record Prometheus Metrics
 		metrics.RequestDuration.WithLabelValues(toolName, classID, decisionStr).Observe(totalMs / 1000.0)
 		metrics.GovernanceOverhead.WithLabelValues(toolName, decisionStr).Observe(govOverheadMs / 1000.0)
@@ -216,7 +301,7 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Decision:        decisionStr,
 			DenyStage:       denyStage,
 			Reason:          reason,
-			SpendDeltaCents: int64(amount * 100),
+			SpendDeltaCents: spendDeltaCents,
 			Latency: map[string]float64{
 				"total_ms":               totalMs,
 				"killswitch_ms":          timings.KillswitchMs,
@@ -239,7 +324,7 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Decision:             decisionStr,
 			DenyStage:            denyStage,
 			Reason:               reason,
-			SpendDelta:           int64(amount * 100),
+			SpendDelta:           spendDeltaCents,
 			TotalLatencyMs:       totalMs,
 			KillswitchLatencyMs:  timings.KillswitchMs,
 			PolicyLatencyMs:      timings.PolicyMs,
@@ -280,9 +365,10 @@ func (p *MCPProxy) governCall(
 		return false, "killswitch", ksRes.Reason, t
 	}
 
-	// Stage 2: Dynamic Per-Tool Constraints
+	// Stage 2: Dynamic Per-Tool Constraints (DRY-RUN — read-only, no counter
+	// increments yet, so a deny at a later stage never consumes budget; G4)
 	cStart := time.Now()
-	cOk, cReason := p.constraintCheck.Check(ctx, cfg, toolName, args)
+	cOk, cReason := p.constraintCheck.Check(ctx, cfg, toolName, args, false)
 	t.ConstraintMs = ms(time.Since(cStart))
 	metrics.ConstraintCheckDuration.WithLabelValues(toolName).Observe(t.ConstraintMs / 1000.0)
 
@@ -332,6 +418,16 @@ func (p *MCPProxy) governCall(
 		}
 	} else {
 		t.SpendCheckMs = ms(time.Since(spendStart))
+	}
+
+	// Stage 5: Commit stateful constraint counters (rate limit, cumulative spend)
+	// now that ALL governance stages have passed. This is the only place these
+	// counters are incremented, so denied calls never consume budget (G4). If the
+	// commit itself reports a breach (lost a race against a concurrent call), deny.
+	commitOk, commitReason := p.constraintCheck.Check(ctx, cfg, toolName, args, true)
+	if !commitOk {
+		t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs + t.PolicyMs + t.SpendCheckMs
+		return false, "constraint", commitReason, t
 	}
 
 	t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs + t.PolicyMs + t.SpendCheckMs
@@ -453,12 +549,10 @@ func (p *MCPProxy) handleOpenAPIRequest(
 		toolName, _ := params["name"].(string)
 		args, _ := params["arguments"].(map[string]any)
 
-		var amount float64
-		if amt, ok := args["amount"].(float64); ok {
-			amount = amt
-		} else if amtCents, ok := args["amount_cents"].(float64); ok {
-			amount = amtCents / 100.0
-		}
+		// Use the shared extractor (handles float/int/string for amount and
+		// amount_cents) so caps and the $1000 bound aren't bypassed by
+		// non-float64 JSON number encodings (G12).
+		amount := extractAmount(args)
 
 		allowed, denyStage, reason, timings := p.governCall(r.Context(), agentID, classID, agentKind, toolName, amount, allowedTools, agentCfg, args)
 
@@ -467,17 +561,24 @@ func (p *MCPProxy) handleOpenAPIRequest(
 		if allowed {
 			restReq, err := adapter.BuildRESTRequest(target.BaseURL, target.Doc, toolName, args)
 			if err != nil {
-				p.sendErrorResponse(w, r, reqID, fmt.Sprintf("invalid tool arguments: %v", err))
-				return
+				// Downstream request construction failed after governance allowed:
+				// record as a downstream-stage failure and STILL audit/emit below.
+				allowed = false
+				denyStage = "downstream"
+				reason = fmt.Sprintf("invalid tool arguments: %v", err)
+				p.sendErrorResponse(w, r, reqID, reason)
+			} else {
+				restReq = restReq.WithContext(r.Context())
+				resp, err := p.client.Do(restReq)
+				if err != nil {
+					allowed = false
+					denyStage = "downstream"
+					reason = "downstream bank REST API unreachable"
+					p.sendErrorResponse(w, r, reqID, reason)
+				} else {
+					mcpResult = adapter.RESTResponseToMCPResult(resp)
+				}
 			}
-			restReq = restReq.WithContext(r.Context())
-
-			resp, err := p.client.Do(restReq)
-			if err != nil {
-				p.sendErrorResponse(w, r, reqID, "downstream bank REST API unreachable")
-				return
-			}
-			mcpResult = adapter.RESTResponseToMCPResult(resp)
 		} else {
 			p.sendErrorResponse(w, r, reqID, reason)
 		}
@@ -489,6 +590,22 @@ func (p *MCPProxy) handleOpenAPIRequest(
 		totalMs := ms(time.Since(reqStart))
 		govOverheadMs := timings.GovernanceTotal
 		decisionStr := map[bool]string{true: "allow", false: "deny"}[allowed]
+
+		// Denied requests must not contribute to spend totals
+		spendDeltaCents := int64(0)
+		if allowed {
+			spendDeltaCents = int64(amount * 100)
+		}
+
+		// Record Prometheus Metrics (parity with the MCP tools/call path)
+		serviceName := p.extractServiceName(r.URL.Path)
+		metrics.RequestDuration.WithLabelValues(toolName, classID, decisionStr).Observe(totalMs / 1000.0)
+		metrics.GovernanceOverhead.WithLabelValues(toolName, decisionStr).Observe(govOverheadMs / 1000.0)
+		if allowed {
+			metrics.DownstreamDuration.WithLabelValues(serviceName, toolName).Observe(downstreamMs / 1000.0)
+			metrics.SpendProcessed.WithLabelValues(agentID, classID).Add(amount * 100)
+		}
+		metrics.DecisionsTotal.WithLabelValues(toolName, classID, decisionStr, denyStage).Inc()
 
 		if allowed {
 			res := map[string]any{"jsonrpc": "2.0", "id": reqID, "result": mcpResult}
@@ -503,7 +620,7 @@ func (p *MCPProxy) handleOpenAPIRequest(
 			Decision:        decisionStr,
 			DenyStage:       denyStage,
 			Reason:          reason,
-			SpendDeltaCents: int64(amount * 100),
+			SpendDeltaCents: spendDeltaCents,
 			Latency: map[string]float64{
 				"total_ms":               totalMs,
 				"killswitch_ms":          timings.KillswitchMs,
@@ -525,7 +642,7 @@ func (p *MCPProxy) handleOpenAPIRequest(
 			Decision:             decisionStr,
 			DenyStage:            denyStage,
 			Reason:               reason,
-			SpendDelta:           int64(amount * 100),
+			SpendDelta:           spendDeltaCents,
 			TotalLatencyMs:       totalMs,
 			KillswitchLatencyMs:  timings.KillswitchMs,
 			PolicyLatencyMs:      timings.PolicyMs,
@@ -561,6 +678,9 @@ func (p *MCPProxy) sendJSONRPCResponse(w http.ResponseWriter, r *http.Request, r
 }
 
 func (p *MCPProxy) sendErrorResponse(w http.ResponseWriter, r *http.Request, reqID any, reason string) {
+	// Marshal the inner payload so a reason containing quotes/backslashes can't
+	// produce invalid JSON (G20).
+	innerJSON, _ := json.Marshal(map[string]any{"allow": false, "reason": reason})
 	errResp := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      reqID,
@@ -568,7 +688,7 @@ func (p *MCPProxy) sendErrorResponse(w http.ResponseWriter, r *http.Request, req
 			"content": []map[string]any{
 				{
 					"type": "text",
-					"text": fmt.Sprintf(`{"allow":false,"reason":"%s"}`, reason),
+					"text": string(innerJSON),
 				},
 			},
 			"isError": true,
@@ -790,26 +910,30 @@ func (p *MCPProxy) resolveTargetURL(path string) string {
 	return "http://localhost:9000"
 }
 
+// extractIdentity authenticates the caller. A valid Bearer JWT is REQUIRED;
+// identity is derived solely from the validated token claims. The X-Agent-ID
+// header is accepted only as an optional consistency cross-check — if present
+// and it disagrees with the token's agent_id, the request is rejected. The
+// header alone is never sufficient to establish identity.
 func (p *MCPProxy) extractIdentity(r *http.Request) (string, string, error) {
-	agentID := r.Header.Get("X-Agent-ID")
-	agentKind := r.Header.Get("X-Agent-Kind")
-	if agentID != "" {
-		if agentKind == "" {
-			agentKind = "custom"
-		}
-		return agentID, agentKind, nil
-	}
-
 	authHeader := r.Header.Get("Authorization")
-	if authHeader != "" {
-		token := strings.TrimPrefix(authHeader, "Bearer ")
-		claims, err := p.jwtMgr.Validate(token)
-		if err == nil {
-			return claims.AgentID, claims.AgentKind, nil
-		}
+	if authHeader == "" {
+		return "", "", fmt.Errorf("missing Authorization header (Bearer JWT required)")
 	}
 
-	return "", "", fmt.Errorf("missing X-Agent-ID or Authorization header")
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	claims, err := p.jwtMgr.Validate(token)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid or expired token: %v", err)
+	}
+
+	// Optional cross-check: if the caller also asserts an agent id via header,
+	// it must match the token's identity (prevents confused-deputy mistakes).
+	if headerAgentID := r.Header.Get("X-Agent-ID"); headerAgentID != "" && headerAgentID != claims.AgentID {
+		return "", "", fmt.Errorf("X-Agent-ID header does not match authenticated token identity")
+	}
+
+	return claims.AgentID, claims.AgentKind, nil
 }
 
 func (p *MCPProxy) trackSession(ctx context.Context, sessionID, agentID, agentKind, service string) {

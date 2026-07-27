@@ -7,44 +7,35 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const getPolicyByName = `-- name: GetPolicyByName :one
-SELECT id, name, version, source, created_at, updated_at
-FROM policies
-WHERE name = $1
+const listActivePolicies = `-- name: ListActivePolicies :many
+SELECT rego_source, version FROM policies WHERE status = 'active' ORDER BY id ASC
 `
 
-func (q *Queries) GetPolicyByName(ctx context.Context, name string) (Policy, error) {
-	row := q.db.QueryRow(ctx, getPolicyByName, name)
-	var i Policy
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Version,
-		&i.Source,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
+type ListActivePoliciesRow struct {
+	RegoSource pgtype.Text `json:"rego_source"`
+	Version    int32       `json:"version"`
 }
 
-const upsertPolicy = `-- name: UpsertPolicy :exec
-INSERT INTO policies (name, version, source, updated_at)
-VALUES ($1, $2, $3, NOW())
-ON CONFLICT (name) DO UPDATE SET
-    version = EXCLUDED.version,
-    source = EXCLUDED.source,
-    updated_at = NOW()
-`
-
-type UpsertPolicyParams struct {
-	Name    string `json:"name"`
-	Version int32  `json:"version"`
-	Source  string `json:"source"`
-}
-
-func (q *Queries) UpsertPolicy(ctx context.Context, arg UpsertPolicyParams) error {
-	_, err := q.db.Exec(ctx, upsertPolicy, arg.Name, arg.Version, arg.Source)
-	return err
+func (q *Queries) ListActivePolicies(ctx context.Context) ([]ListActivePoliciesRow, error) {
+	rows, err := q.db.Query(ctx, listActivePolicies)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListActivePoliciesRow{}
+	for rows.Next() {
+		var i ListActivePoliciesRow
+		if err := rows.Scan(&i.RegoSource, &i.Version); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

@@ -79,14 +79,17 @@ async def create_bank_connection(b: BankConnectionCreate):
             b.id, b.name, b.source_type, b.mcp_url, b.base_url, b.openapi_spec, b.credential_type, enc_creds, b.status,
         )
 
-        # Auto-discover tools if native_mcp or openapi
+        # Auto-discover tools if native_mcp or openapi.
+        # Discover FIRST; only wipe existing tools after we have a non-empty
+        # replacement set, so a failed discovery doesn't silently delete the
+        # previously-discovered tools (G16).
         discovered_tools = []
-        if (b.source_type == "native_mcp" and b.mcp_url) or (b.source_type == "openapi" and b.openapi_spec):
-            await conn.execute("DELETE FROM tools WHERE bank_connection_id = $1", b.id)
 
         if b.source_type == "native_mcp" and b.mcp_url:
 
-            mcp_tools = fetch_mcp_tools(b.mcp_url)
+            mcp_tools = await fetch_mcp_tools(b.mcp_url)
+            if mcp_tools:
+                await conn.execute("DELETE FROM tools WHERE bank_connection_id = $1", b.id)
             for t in mcp_tools:
                 t_row = await conn.fetchrow(
                     """
@@ -107,6 +110,8 @@ async def create_bank_connection(b: BankConnectionCreate):
                     })
         elif b.source_type == "openapi" and b.openapi_spec:
             _, openapi_tools = parse_openapi_spec(b.openapi_spec)
+            if openapi_tools:
+                await conn.execute("DELETE FROM tools WHERE bank_connection_id = $1", b.id)
             for t in openapi_tools:
                 t_row = await conn.fetchrow(
                     """
