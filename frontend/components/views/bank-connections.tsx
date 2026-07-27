@@ -21,10 +21,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import type { BankConnection } from '@/lib/types';
 import { formatRelative } from '@/lib/format';
 import { api } from '@/lib/api';
-import { Plus, Check, RefreshCw, Server, AlertCircle, FileUp, Link2, Plug, Loader2 } from 'lucide-react';
+import { Plus, Check, RefreshCw, Server, AlertCircle, FileUp, Link2, Plug, Loader2, Trash2 } from 'lucide-react';
 
 const sourceTypeLabel: Record<string, string> = {
   native_mcp: 'Native MCP',
@@ -138,6 +149,44 @@ export function BankConnectionsView({
                   : 'No tools registered for this server.'}
               </div>
             )}
+
+            <div className="flex items-center justify-end border-t border-white/5 p-2 bg-white/[0.01]">
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 font-mono text-[10px] uppercase tracking-widest text-rose-400 hover:bg-rose-500/10 cursor-pointer"
+                  >
+                    <Trash2 className="mr-1 h-3 w-3" /> Remove Server Connection
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent className="border-white/10 bg-slate-950 text-white">
+                  <AlertDialogHeader>
+                    <AlertDialogTitle className="font-mono text-sm uppercase tracking-widest text-rose-400">
+                      Remove Connection '{conn.name}'?
+                    </AlertDialogTitle>
+                    <AlertDialogDescription className="font-sans text-xs text-ink-secondary">
+                      This will permanently remove this MCP connection registration and unregister all associated tools from the gateway proxy.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel className="border-white/10 bg-transparent text-ink-secondary font-mono text-xs">
+                      Cancel
+                    </AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={async () => {
+                        await api.deleteBankConnection(conn.id);
+                        if (onRefresh) onRefresh();
+                      }}
+                      className="bg-rose-600 text-white hover:bg-rose-500 font-mono text-xs"
+                    >
+                      Remove Connection
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
           </Panel>
         ))}
       </div>

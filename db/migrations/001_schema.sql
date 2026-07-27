@@ -171,6 +171,7 @@ CREATE TABLE IF NOT EXISTS stop_events (
     created_at              TIMESTAMPTZ DEFAULT NOW()
 );
 
+/*
 -- +goose Down
 DROP TABLE IF EXISTS stop_events;
 DROP TABLE IF EXISTS audit_log;
@@ -181,3 +182,4 @@ DROP TABLE IF EXISTS tools;
 DROP TABLE IF EXISTS bank_connections;
 DROP TABLE IF EXISTS agent_instances;
 DROP TABLE IF EXISTS agent_classes;
+*/

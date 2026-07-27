@@ -149,6 +149,18 @@ async def delete_all_connections():
     return {"status": "cleared", "message": "All bank connections and tools deleted successfully"}
 
 
+@router.delete("/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_bank_connection(connection_id: str):
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        res = await conn.execute("DELETE FROM bank_connections WHERE id = $1", connection_id)
+        if res == "DELETE 0":
+            raise HTTPException(status_code=404, detail=f"Bank connection '{connection_id}' not found")
+    await cache_bank_connections()
+    await publish_config_update("connection", connection_id)
+    return None
+
+
 @router.post("/{connection_id}/openapi")
 async def register_openapi_spec(connection_id: str, payload: dict):
     spec_text = payload.get("spec", "")

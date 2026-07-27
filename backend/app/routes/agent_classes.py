@@ -171,3 +171,17 @@ async def revive_agent_class(class_id: str):
         await conn.execute("UPDATE agent_instances SET status = 'active', updated_at = NOW() WHERE class_id = $1 AND status = 'killed'", class_id)
     await publish_config_update("revive_class", class_id)
     return {"status": "active", "class_id": class_id}
+
+
+@router.delete("/{class_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_agent_class(class_id: str):
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        res = await conn.execute("DELETE FROM agent_classes WHERE id = $1", class_id)
+        if res == "DELETE 0":
+            raise HTTPException(status_code=404, detail=f"Agent class '{class_id}' not found")
+    redis = get_redis()
+    await redis.delete(f"agp:class:{class_id}")
+    await redis.delete(f"agp:kill:class:{class_id}")
+    await publish_config_update("class", class_id)
+    return None

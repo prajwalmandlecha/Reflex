@@ -48,6 +48,13 @@ async def create_policy(p: PolicyCreate):
             """
             INSERT INTO policies (name, scope, target_id, type, version, rego_source, visual_rules, status)
             VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+            ON CONFLICT (name, scope, COALESCE(target_id, '__global__')) DO UPDATE SET
+                type = EXCLUDED.type,
+                version = policies.version + 1,
+                rego_source = EXCLUDED.rego_source,
+                visual_rules = EXCLUDED.visual_rules,
+                status = EXCLUDED.status,
+                updated_at = NOW()
             RETURNING *
             """,
             p.name, p.scope, p.target_id, p.type, p.version, p.rego_source,
@@ -152,8 +159,11 @@ async def validate_policy(req: PolicyValidateRequest):
 
 
 @router.post("/compile-visual")
-async def compile_visual_rules(rules: list[dict[str, Any]]):
-    rego_code = visual_rules_to_rego(rules)
+async def compile_visual_rules(payload: dict[str, Any]):
+    rules = payload.get("rules", []) if isinstance(payload, dict) and "rules" in payload else (payload if isinstance(payload, list) else [])
+    target_id = payload.get("target_id") if isinstance(payload, dict) else None
+    scope = payload.get("scope", "global") if isinstance(payload, dict) else "global"
+    rego_code = visual_rules_to_rego(rules, target_id=target_id, scope=scope)
     return {"rego_source": rego_code}
 
 

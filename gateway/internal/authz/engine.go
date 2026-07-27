@@ -113,30 +113,41 @@ func (e *Engine) loadAndCompile(ctx context.Context, force bool) error {
 	var regoSource string
 	var version int32 = 1
 
-	// Try reading active policies from Redis first
+	// Read from Postgres or Redis
+	var rawSources []string
 	redisVal, err := e.rdb.Get(ctx, "agp:policy:active").Result()
 	if err == nil && redisVal != "" {
-		regoSource = redisVal
+		rawSources = append(rawSources, redisVal)
 	} else {
-		// Read from Postgres
 		rows, err := e.db.Query(ctx, "SELECT rego_source, version FROM policies WHERE status = 'active' ORDER BY id ASC")
 		if err == nil {
 			defer rows.Close()
-			var sources []string
 			for rows.Next() {
 				var src string
 				var ver int
 				if err := rows.Scan(&src, &ver); err == nil && src != "" {
-					sources = append(sources, src)
+					rawSources = append(rawSources, src)
 					if int32(ver) > version {
 						version = int32(ver)
 					}
 				}
 			}
-			if len(sources) > 0 {
-				regoSource = strings.Join(sources, "\n\n")
-			}
 		}
+	}
+
+	if len(rawSources) > 0 {
+		var combined []string
+		combined = append(combined, "package agp.authz\n\nimport rego.v1\n\ndefault allow := true\ndefault deny := false\n")
+		for _, src := range rawSources {
+			cleaned := src
+			cleaned = strings.ReplaceAll(cleaned, "package agp.authz", "")
+			cleaned = strings.ReplaceAll(cleaned, "import rego.v1", "")
+			cleaned = strings.ReplaceAll(cleaned, "default allow := true", "")
+			cleaned = strings.ReplaceAll(cleaned, "default allow := false", "")
+			cleaned = strings.ReplaceAll(cleaned, "default deny := false", "")
+			combined = append(combined, strings.TrimSpace(cleaned))
+		}
+		regoSource = strings.Join(combined, "\n\n")
 	}
 
 	var modules []func(*rego.Rego)

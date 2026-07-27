@@ -28,7 +28,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { formatCurrency } from '@/lib/format';
 import type { AgentClass, AgentInstance, BankTool } from '@/lib/types';
 import { api } from '@/lib/api';
-import { Plus, Ban, Wrench, DollarSign, Clock, Settings2, Search, X, CheckCircle2 } from 'lucide-react';
+import { Plus, Ban, Wrench, DollarSign, Clock, Settings2, Search, X, CheckCircle2, Trash2 } from 'lucide-react';
 
 export function AgentClassesView({
   classes,
@@ -143,13 +143,49 @@ export function AgentClassesView({
               </div>
 
               <div className="flex items-center justify-between border-t border-white/5 p-3">
-                <Button
-                  variant="ghost"
-                  onClick={() => setEditClass(cls)}
-                  className="font-mono text-[10px] uppercase tracking-widest text-accent hover:bg-accent/10"
-                >
-                  <Settings2 className="mr-1 h-3 w-3" /> Edit class
-                </Button>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    onClick={() => setEditClass(cls)}
+                    className="font-mono text-[10px] uppercase tracking-widest text-accent hover:bg-accent/10"
+                  >
+                    <Settings2 className="mr-1 h-3 w-3" /> Edit class
+                  </Button>
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        className="font-mono text-[10px] uppercase tracking-widest text-rose-400 hover:bg-rose-500/10"
+                      >
+                        <Trash2 className="mr-1 h-3 w-3" /> Delete
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent className="border-white/10 bg-slate-950 text-white">
+                      <AlertDialogHeader>
+                        <AlertDialogTitle className="font-mono text-sm uppercase tracking-widest text-rose-400">
+                          Delete Agent Class '{cls.name}'?
+                        </AlertDialogTitle>
+                        <AlertDialogDescription className="font-sans text-xs text-ink-secondary">
+                          This will permanently delete the agent class record. All attached instances will be cascade deleted from the governance platform.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel className="border-white/10 bg-transparent text-ink-secondary font-mono text-xs">
+                          Cancel
+                        </AlertDialogCancel>
+                        <AlertDialogAction
+                          onClick={async () => {
+                            await api.deleteAgentClass(cls.id);
+                            if (onRefresh) onRefresh();
+                          }}
+                          className="bg-rose-600 text-white hover:bg-rose-500 font-mono text-xs"
+                        >
+                          Delete Class
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </div>
                 {cls.status === 'revoked' ? (
                   <Button
                     variant="ghost"
