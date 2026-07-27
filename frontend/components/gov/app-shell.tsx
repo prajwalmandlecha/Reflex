@@ -79,7 +79,7 @@ export function AppShell() {
   const [stopEvents, setStopEvents] = useState<StopEvent[]>([]);
   const [alertItems, setAlertItems] = useState<AlertItem[]>([]);
   const [activityFeed, setActivityFeed] = useState<ActivityEvent[]>([]);
-  const [operator, setOperator] = useState('m.chen');
+  const [operator, setOperator] = useState('Mr. P');
   const [fleetStatus, setFleetStatus] = useState<FleetStatus>('healthy');
   const [fleetSpend, setFleetSpend] = useState({ spent: 0, cap: 0 });
   const [denialsLastHour, setDenialsLastHour] = useState(0);

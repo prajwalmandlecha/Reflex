@@ -572,6 +572,7 @@ function AgentConnectionSnippet({ agentId, token }: { agentId: string; token?: s
   -H "Authorization: Bearer ${bearer}" \\
   -H "X-Agent-ID: ${agentId}" \\
   -H "Content-Type: application/json" \\
+  -H "Accept: application/json, text/event-stream" \\
   -d '{
     "jsonrpc": "2.0",
     "method": "tools/call",

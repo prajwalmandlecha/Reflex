@@ -177,12 +177,7 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		toolName, _ := params["name"].(string)
 		args, _ := params["arguments"].(map[string]any)
 
-		var amount float64
-		if amt, ok := args["amount"].(float64); ok {
-			amount = amt
-		} else if amtCents, ok := args["amount_cents"].(float64); ok {
-			amount = amtCents / 100.0
-		}
+		amount := extractAmount(args)
 
 		allowed, denyStage, reason, timings := p.governCall(r.Context(), agentID, classID, agentKind, toolName, amount, allowedTools, agentCfg, args)
 
@@ -607,6 +602,12 @@ func (p *MCPProxy) handleFilteredToolsList(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	if outReq.Header.Get("Mcp-Session-Id") == "" {
+		if sessID := p.getOrCreateDownstreamSession(r.Context(), targetURL); sessID != "" {
+			outReq.Header.Set("Mcp-Session-Id", sessID)
+		}
+	}
+
 	resp, err := p.client.Do(outReq)
 	if err != nil {
 		http.Error(w, "downstream unreachable", http.StatusBadGateway)
@@ -675,6 +676,47 @@ func (p *MCPProxy) handleFilteredToolsList(w http.ResponseWriter, r *http.Reques
 	}
 }
 
+func (p *MCPProxy) getOrCreateDownstreamSession(ctx context.Context, targetURL string) string {
+	if p.rdb != nil {
+		key := fmt.Sprintf("mcp:auto_session:%s", targetURL)
+		if val, err := p.rdb.Get(ctx, key).Result(); err == nil && val != "" {
+			return val
+		}
+	}
+
+	initBody, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": "2024-11-05",
+			"capabilities":    map[string]any{},
+			"clientInfo":      map[string]any{"name": "agp-gateway-auto", "version": "1.0"},
+		},
+	})
+
+	initReq, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(initBody))
+	if err != nil {
+		return ""
+	}
+	initReq.Header.Set("Content-Type", "application/json")
+	initReq.Header.Set("Accept", "application/json, text/event-stream")
+
+	resp, err := p.client.Do(initReq)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+
+	sessID := resp.Header.Get("Mcp-Session-Id")
+	if sessID != "" && p.rdb != nil {
+		key := fmt.Sprintf("mcp:auto_session:%s", targetURL)
+		p.rdb.Set(ctx, key, sessID, 1*time.Hour)
+	}
+
+	return sessID
+}
+
 func (p *MCPProxy) proxyToTarget(w http.ResponseWriter, r *http.Request, targetBaseURL string, bodyBytes []byte) {
 	targetURL := targetBaseURL
 	if !strings.HasSuffix(targetBaseURL, "/mcp") {
@@ -696,6 +738,12 @@ func (p *MCPProxy) proxyToTarget(w http.ResponseWriter, r *http.Request, targetB
 		}
 	}
 	outReq.Header.Set("X-Forwarded-By", "agp-gateway")
+
+	if outReq.Header.Get("Mcp-Session-Id") == "" {
+		if sessID := p.getOrCreateDownstreamSession(r.Context(), targetURL); sessID != "" {
+			outReq.Header.Set("Mcp-Session-Id", sessID)
+		}
+	}
 
 	resp, err := p.client.Do(outReq)
 	if err != nil {
@@ -782,4 +830,45 @@ func (p *MCPProxy) trackSession(ctx context.Context, sessionID, agentID, agentKi
 
 func ms(d time.Duration) float64 {
 	return float64(d.Microseconds()) / 1000.0
+}
+
+func extractAmount(args map[string]any) float64 {
+	if args == nil {
+		return 0.0
+	}
+	if v, ok := args["amount"]; ok {
+		switch val := v.(type) {
+		case float64:
+			return val
+		case float32:
+			return float64(val)
+		case int:
+			return float64(val)
+		case int64:
+			return float64(val)
+		case string:
+			var f float64
+			if _, err := fmt.Sscanf(val, "%f", &f); err == nil {
+				return f
+			}
+		}
+	}
+	if v, ok := args["amount_cents"]; ok {
+		switch val := v.(type) {
+		case float64:
+			return val / 100.0
+		case float32:
+			return float64(val) / 100.0
+		case int:
+			return float64(val) / 100.0
+		case int64:
+			return float64(val) / 100.0
+		case string:
+			var f float64
+			if _, err := fmt.Sscanf(val, "%f", &f); err == nil {
+				return f / 100.0
+			}
+		}
+	}
+	return 0.0
 }

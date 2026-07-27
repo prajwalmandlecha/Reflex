@@ -9,16 +9,20 @@ import { formatCurrency, formatNumber, formatRelative } from '@/lib/format';
 import type { AgentInstance, AgentClass, AlertItem, ActivityEvent, FleetStatus } from '@/lib/types';
 import { ArrowRight, AlertTriangle, ShieldAlert, ScrollText } from 'lucide-react';
 
-const alertIcon = {
+const alertIcon: Record<string, any> = {
   critical: ShieldAlert,
   warning: AlertTriangle,
   info: ScrollText,
+  error: ShieldAlert,
+  deny: AlertTriangle,
 };
 
-const alertColor = {
+const alertColor: Record<string, string> = {
   critical: 'text-signal-stopped',
   warning: 'text-signal-caution',
   info: 'text-accent',
+  error: 'text-signal-stopped',
+  deny: 'text-signal-caution',
 };
 
 export function CommandCenterView({
@@ -103,14 +107,15 @@ export function CommandCenterView({
               </div>
             ) : (
               alerts.map((alert) => {
-                const Icon = alertIcon[alert.severity];
+                const Icon = alertIcon[alert.severity] || AlertTriangle;
+                const color = alertColor[alert.severity] || 'text-signal-caution';
                 return (
                   <div
                     key={alert.id}
                     className="border-b border-white/5 px-4 py-3 last:border-0 transition-colors hover:bg-white/[0.02]"
                   >
                     <div className="flex items-start gap-2.5">
-                      <div className={cn('mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-white/5', alertColor[alert.severity])}>
+                      <div className={cn('mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-white/5', color)}>
                         <Icon className="h-3.5 w-3.5" />
                       </div>
                       <div className="min-w-0 flex-1">
