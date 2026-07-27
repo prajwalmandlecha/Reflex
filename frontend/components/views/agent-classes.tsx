@@ -28,7 +28,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { formatCurrency } from '@/lib/format';
 import type { AgentClass, AgentInstance, BankTool } from '@/lib/types';
 import { api } from '@/lib/api';
-import { Plus, Ban, Wrench, DollarSign, Clock, Settings2, Search, X } from 'lucide-react';
+import { Plus, Ban, Wrench, DollarSign, Clock, Settings2, Search, X, CheckCircle2 } from 'lucide-react';
 
 export function AgentClassesView({
   classes,
@@ -561,17 +561,12 @@ function ClassForm({ classData, onComplete }: { classData: AgentClass | null; on
         )}
       </div>
 
-      <div>
-        <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
-          Dynamic Tool Constraints (JSON format)
-        </Label>
-        <textarea
-          value={constraintsJson}
-          onChange={(e) => setConstraintsJson(e.target.value)}
-          placeholder={`{\n  "db_query": {\n    "numeric_bounds": {"max_rows": {"max": 500}},\n    "regex_deny": {"query": "(?i)(DROP|DELETE)"}\n  }\n}`}
-          className="mt-1 h-32 w-full border border-white/10 bg-white/5 p-2 font-mono text-[11px] leading-relaxed rounded text-white focus:outline-none focus:border-cyan-500"
-        />
-      </div>
+      {/* Visual Dynamic Tool Constraints Configurator */}
+      <VisualConstraintEditor
+        selectedTools={selectedTools}
+        constraintsJson={constraintsJson}
+        setConstraintsJson={setConstraintsJson}
+      />
 
       <div className="flex justify-end gap-2 pt-2">
         <Button
@@ -591,5 +586,245 @@ function ClassForm({ classData, onComplete }: { classData: AgentClass | null; on
         </Button>
       </div>
     </form>
+  );
+}
+
+function VisualConstraintEditor({
+  selectedTools,
+  constraintsJson,
+  setConstraintsJson,
+}: {
+  selectedTools: string[];
+  constraintsJson: string;
+  setConstraintsJson: (s: string) => void;
+}) {
+  const [editorMode, setEditorMode] = useState<'visual' | 'json'>('visual');
+  const [targetTool, setTargetTool] = useState<string>(selectedTools[0] || 'transfer_money');
+  const [maxCalls, setMaxCalls] = useState<string>('60');
+  const [windowSec, setWindowSec] = useState<string>('3600');
+  const [startTime, setStartTime] = useState<string>('09:00');
+  const [endTime, setEndTime] = useState<string>('17:00');
+  const [maxAmount, setMaxAmount] = useState<string>('1000');
+
+  useEffect(() => {
+    if (selectedTools.length > 0 && !selectedTools.includes(targetTool)) {
+      setTargetTool(selectedTools[0]);
+    }
+  }, [selectedTools]);
+
+  const parsedObj = useMemo(() => {
+    try {
+      return JSON.parse(constraintsJson) || {};
+    } catch {
+      return {};
+    }
+  }, [constraintsJson]);
+
+  const handleAddConstraint = () => {
+    if (!targetTool) return;
+    const current = { ...parsedObj };
+
+    const toolRule: Record<string, any> = current[targetTool] || {};
+
+    if (maxCalls.trim() && windowSec.trim()) {
+      toolRule.rate_limit = {
+        max_calls: parseInt(maxCalls) || 60,
+        window_seconds: parseInt(windowSec) || 3600,
+      };
+    }
+
+    if (startTime.trim() && endTime.trim()) {
+      toolRule.time_window = {
+        start: startTime.trim(),
+        end: endTime.trim(),
+        tz: 'UTC',
+      };
+    }
+
+    if (maxAmount.trim()) {
+      toolRule.max_amount = parseFloat(maxAmount) || 1000.0;
+    }
+
+    current[targetTool] = toolRule;
+    setConstraintsJson(JSON.stringify(current, null, 2));
+  };
+
+  const handleRemoveToolConstraint = (tName: string) => {
+    const current = { ...parsedObj };
+    delete current[tName];
+    setConstraintsJson(JSON.stringify(current, null, 2));
+  };
+
+  return (
+    <div className="space-y-2 border border-white/10 bg-white/[0.02] p-3 rounded-lg">
+      <div className="flex items-center justify-between border-b border-white/5 pb-2">
+        <div className="flex items-center gap-2">
+          <Clock className="h-4 w-4 text-cyan-400" />
+          <span className="font-mono text-[10px] uppercase tracking-widest text-ink-primary font-semibold">
+            Dynamic Operational Constraints (Rate Limits & Time Windows)
+          </span>
+        </div>
+        <div className="flex items-center border border-white/10 bg-slate-900 p-0.5 font-mono text-[10px]">
+          <button
+            type="button"
+            onClick={() => setEditorMode('visual')}
+            className={cn(
+              'px-2 py-0.5 rounded uppercase transition-colors',
+              editorMode === 'visual' ? 'bg-cyan-500/20 text-cyan-300 font-semibold' : 'text-ink-secondary hover:text-white'
+            )}
+          >
+            Visual Form
+          </button>
+          <button
+            type="button"
+            onClick={() => setEditorMode('json')}
+            className={cn(
+              'px-2 py-0.5 rounded uppercase transition-colors',
+              editorMode === 'json' ? 'bg-cyan-500/20 text-cyan-300 font-semibold' : 'text-ink-secondary hover:text-white'
+            )}
+          >
+            Raw JSON
+          </button>
+        </div>
+      </div>
+
+      {editorMode === 'visual' ? (
+        <div className="space-y-3 pt-1">
+          {/* Active Configured Constraints Cards */}
+          <div className="space-y-1.5">
+            {Object.keys(parsedObj).length > 0 ? (
+              Object.entries(parsedObj).map(([tName, conf]: [string, any]) => (
+                <div key={tName} className="flex items-center justify-between border border-white/10 bg-slate-900/90 p-2 rounded font-mono text-xs">
+                  <div>
+                    <span className="text-cyan-400 font-bold">{tName}</span>
+                    <div className="flex flex-wrap items-center gap-3 text-[11px] text-ink-secondary mt-0.5">
+                      {conf.rate_limit && (
+                        <span>Rate Limit: <strong className="text-white">{conf.rate_limit.max_calls} calls</strong> / {conf.rate_limit.window_seconds}s</span>
+                      )}
+                      {conf.time_window && (
+                        <span>Hours: <strong className="text-amber-300">{conf.time_window.start} - {conf.time_window.end} UTC</strong></span>
+                      )}
+                      {conf.max_amount != null && (
+                        <span>Max Amount: <strong className="text-emerald-400">${conf.max_amount}</strong></span>
+                      )}
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => handleRemoveToolConstraint(tName)}
+                    className="h-6 px-1.5 text-rose-400 hover:bg-rose-500/10"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ))
+            ) : (
+              <span className="font-mono text-[10px] text-ink-secondary/60 block py-1">
+                No tool rate limits or time windows configured yet. Use form below to add.
+              </span>
+            )}
+          </div>
+
+          {/* Add / Update Tool Constraint Form */}
+          <div className="border border-white/5 bg-slate-950 p-2.5 rounded space-y-2">
+            <span className="font-mono text-[10px] uppercase tracking-widest text-cyan-400 font-semibold block">
+              Configure Constraint for Scoped Tool
+            </span>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label className="font-mono text-[10px] text-ink-secondary">Select Tool</Label>
+                <select
+                  value={targetTool}
+                  onChange={(e) => setTargetTool(e.target.value)}
+                  className="mt-1 h-8 w-full border border-white/10 bg-slate-900 px-2 font-mono text-xs text-white rounded"
+                >
+                  {selectedTools.length > 0 ? (
+                    selectedTools.map((t) => (
+                      <option key={t} value={t}>{t}</option>
+                    ))
+                  ) : (
+                    <option value="transfer_money">transfer_money</option>
+                  )}
+                </select>
+              </div>
+
+              <div>
+                <Label className="font-mono text-[10px] text-ink-secondary">Max Call Amount ($)</Label>
+                <Input
+                  type="number"
+                  value={maxAmount}
+                  onChange={(e) => setMaxAmount(e.target.value)}
+                  placeholder="e.g. 1000"
+                  className="mt-1 h-8 border-white/10 bg-slate-900 font-mono text-xs text-white"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label className="font-mono text-[10px] text-ink-secondary">Rate Limit (Max Calls)</Label>
+                <Input
+                  type="number"
+                  value={maxCalls}
+                  onChange={(e) => setMaxCalls(e.target.value)}
+                  placeholder="e.g. 60"
+                  className="mt-1 h-8 border-white/10 bg-slate-900 font-mono text-xs text-white"
+                />
+              </div>
+              <div>
+                <Label className="font-mono text-[10px] text-ink-secondary">Window (Seconds)</Label>
+                <Input
+                  type="number"
+                  value={windowSec}
+                  onChange={(e) => setWindowSec(e.target.value)}
+                  placeholder="e.g. 3600"
+                  className="mt-1 h-8 border-white/10 bg-slate-900 font-mono text-xs text-white"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label className="font-mono text-[10px] text-ink-secondary">Business Hours Start (UTC)</Label>
+                <Input
+                  type="text"
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                  placeholder="09:00"
+                  className="mt-1 h-8 border-white/10 bg-slate-900 font-mono text-xs text-white"
+                />
+              </div>
+              <div>
+                <Label className="font-mono text-[10px] text-ink-secondary">Business Hours End (UTC)</Label>
+                <Input
+                  type="text"
+                  value={endTime}
+                  onChange={(e) => setEndTime(e.target.value)}
+                  placeholder="17:00"
+                  className="mt-1 h-8 border-white/10 bg-slate-900 font-mono text-xs text-white"
+                />
+              </div>
+            </div>
+
+            <Button
+              type="button"
+              onClick={handleAddConstraint}
+              className="mt-1 w-full h-7 border border-cyan-500/30 bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20 font-mono text-xs"
+            >
+              <Plus className="h-3 w-3 mr-1" /> Add / Update Tool Constraint
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <textarea
+          value={constraintsJson}
+          onChange={(e) => setConstraintsJson(e.target.value)}
+          placeholder={`{\n  "transfer_money": {\n    "rate_limit": {"max_calls": 60, "window_seconds": 3600},\n    "time_window": {"start": "09:00", "end": "17:00", "tz": "UTC"}\n  }\n}`}
+          className="mt-1 h-36 w-full border border-white/10 bg-slate-900 p-2 font-mono text-[11px] leading-relaxed rounded text-white focus:outline-none focus:border-cyan-500"
+        />
+      )}
+    </div>
   );
 }

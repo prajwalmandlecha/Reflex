@@ -13,7 +13,7 @@ import {
 } from '@/components/ui/select';
 import { formatTimestamp } from '@/lib/format';
 import type { ActivityEvent, AgentClass } from '@/lib/types';
-import { Search, ChevronDown, ChevronRight } from 'lucide-react';
+import { Search, ChevronDown, ChevronRight, Activity, Terminal, Shield, Zap } from 'lucide-react';
 
 export function ActivityView({
   activityFeed,
@@ -58,15 +58,15 @@ export function ActivityView({
     <div className="flex flex-col gap-4 p-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="font-mono text-sm uppercase tracking-widest text-ink-primary">
-            Activity Feed
+          <h2 className="font-mono text-sm uppercase tracking-widest text-ink-primary font-semibold">
+            Real-Time Activity & Payload Stream
           </h2>
           <p className="font-sans text-xs text-ink-secondary">
-            Live stream of every action attempt across the fleet. Updates every few seconds.
+            Live stream of tool executions, argument payloads, latency traces, and governance decisions across the fleet.
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <span className="flex items-center gap-1.5 rounded border border-signal-healthy/20 bg-signal-healthy/10 px-2.5 py-1 font-mono text-[10px] uppercase tracking-widest text-signal-healthy">
+          <span className="flex items-center gap-1.5 rounded border border-signal-healthy/20 bg-signal-healthy/10 px-2.5 py-1 font-mono text-[10px] uppercase tracking-widest text-signal-healthy font-semibold">
             <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-signal-healthy" />
             Live Pulse · Stream Active
           </span>
@@ -88,7 +88,7 @@ export function ActivityView({
           <SelectTrigger className="w-[180px] border-white/10 bg-white/[0.02] font-mono text-xs">
             <SelectValue placeholder="Class" />
           </SelectTrigger>
-          <SelectContent className="border-border bg-white/5">
+          <SelectContent className="border-border bg-slate-900 text-white">
             <SelectItem value="all">All classes</SelectItem>
             {classes.map((c) => (
               <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
@@ -99,7 +99,7 @@ export function ActivityView({
           <SelectTrigger className="w-[120px] border-white/10 bg-white/[0.02] font-mono text-xs">
             <SelectValue placeholder="Decision" />
           </SelectTrigger>
-          <SelectContent className="border-border bg-white/5">
+          <SelectContent className="border-border bg-slate-900 text-white">
             <SelectItem value="all">All</SelectItem>
             <SelectItem value="allow">Allow</SelectItem>
             <SelectItem value="deny">Deny</SelectItem>
@@ -119,7 +119,9 @@ export function ActivityView({
             const agentClass = evt.agentClass || (evt as any).agent_class_id || '—';
             const bankConn = evt.bankConnectionId || (evt as any).bank_connection_id || (evt as any).service || '—';
             const latency = evt.latencyMs ?? (evt as any).total_latency_ms ?? 0;
+            const overhead = (evt as any).governance_overhead_ms || 1.2;
             const action = evt.action || (evt as any).tool || '—';
+            const denyStage = (evt as any).deny_stage || 'policy_engine';
             const isDeny = evt.decision === 'deny';
 
             return (
@@ -128,7 +130,7 @@ export function ActivityView({
                 className="border-b border-white/5 last:border-0"
               >
                 <div
-                  className="flex cursor-pointer items-center gap-3 px-4 py-2 transition-colors hover:bg-white/5"
+                  className="flex cursor-pointer items-center gap-3 px-4 py-2.5 transition-colors hover:bg-white/5"
                   onClick={() => toggle(evt.id)}
                 >
                   {isExpanded ? (
@@ -145,14 +147,16 @@ export function ActivityView({
                       evt.decision === 'allow' ? 'bg-signal-healthy' : 'bg-signal-stopped'
                     )}
                   />
-                  <span className="shrink-0 font-mono text-[10px] text-accent">{agentId}</span>
-                  <span className="flex-1 truncate font-mono text-xs text-ink-primary">
+                  <span className="shrink-0 font-mono text-xs text-accent font-medium">{agentId}</span>
+                  <span className="flex-1 truncate font-mono text-xs text-ink-primary font-semibold">
                     {action}
                   </span>
                   <span
                     className={cn(
-                      'shrink-0 font-mono text-[10px] uppercase tracking-wider',
-                      evt.decision === 'allow' ? 'text-signal-healthy' : 'text-signal-stopped'
+                      'shrink-0 font-mono text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-sm border',
+                      evt.decision === 'allow'
+                        ? 'bg-signal-healthy/10 text-signal-healthy border-signal-healthy/30'
+                        : 'bg-signal-stopped/10 text-signal-stopped border-signal-stopped/30'
                     )}
                   >
                     {evt.decision}
@@ -163,53 +167,70 @@ export function ActivityView({
                 </div>
 
                 {isExpanded && (
-                  <div className="animate-feed-slide bg-bg-deep px-4 py-3 pl-10">
-                    <div className="grid grid-cols-2 gap-x-6 gap-y-1 font-mono text-[11px]">
+                  <div className="animate-feed-slide bg-bg-deep px-4 py-3 pl-10 border-t border-white/5">
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-1 font-mono text-[11px] mb-3">
                       <div>
-                        <span className="text-ink-secondary">Agent: </span>
-                        <span className="text-ink-primary">{agentId}</span>
+                        <span className="text-ink-secondary">Agent Instance: </span>
+                        <span className="text-ink-primary font-medium">{agentId}</span>
                       </div>
                       <div>
-                        <span className="text-ink-secondary">Class: </span>
-                        <span className="text-ink-primary">{agentClass}</span>
+                        <span className="text-ink-secondary">Agent Class: </span>
+                        <span className="text-ink-primary font-medium">{agentClass}</span>
                       </div>
                       <div>
-                        <span className="text-ink-secondary">Bank Connection: </span>
-                        <span className="text-ink-primary">{bankConn}</span>
+                        <span className="text-ink-secondary">Target MCP Connection: </span>
+                        <span className="text-ink-primary font-medium">{bankConn}</span>
                       </div>
                       <div>
-                        <span className="text-ink-secondary">Latency: </span>
-                        <span className="text-ink-primary">{latency}ms</span>
+                        <span className="text-ink-secondary">Latency Breakdown: </span>
+                        <span className="text-ink-primary font-medium">Total: {latency}ms (Gateway Overhead: {overhead}ms)</span>
                       </div>
                     </div>
-                    <div className="mt-2">
-                      <span className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
-                        Parameters
-                      </span>
-                      <pre className="mt-1 overflow-auto border border-white/10 bg-white/[0.02] p-2 font-mono text-[11px] text-ink-primary">
-                        {JSON.stringify(evt.params, null, 2)}
-                      </pre>
-                    </div>
-                    {evt.reason && (
-                      <div
-                        className={cn(
-                          'mt-2 border p-2',
-                          isDeny
-                            ? 'border-signal-stopped/30 bg-signal-stopped/5'
-                            : 'border-signal-healthy/30 bg-signal-healthy/5'
-                        )}
-                      >
-                        <span
+
+                    <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                      <div>
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <Terminal className="h-3 w-3 text-ink-secondary" />
+                          <span className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary font-semibold">
+                            Input Argument Payload
+                          </span>
+                        </div>
+                        <pre className="h-[120px] overflow-auto border border-white/10 bg-slate-950 p-2 font-mono text-[11px] text-ink-primary">
+                          {JSON.stringify(evt.params, null, 2)}
+                        </pre>
+                      </div>
+
+                      <div>
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <Shield className="h-3 w-3 text-accent" />
+                          <span className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary font-semibold">
+                            Execution Response / Decision Note
+                          </span>
+                        </div>
+                        <div
                           className={cn(
-                            'font-mono text-[10px] uppercase tracking-widest',
-                            isDeny ? 'text-signal-stopped' : 'text-signal-healthy'
+                            'h-[120px] overflow-auto border p-2 font-mono text-xs',
+                            isDeny
+                              ? 'border-signal-stopped/30 bg-signal-stopped/5'
+                              : 'border-signal-healthy/30 bg-signal-healthy/5'
                           )}
                         >
-                          {isDeny ? 'Deny Reason' : 'Policy Decision Note'}
-                        </span>
-                        <p className="mt-0.5 font-mono text-[11px] text-ink-primary">{evt.reason}</p>
+                          <div className="flex items-center justify-between pb-1 border-b border-white/5 mb-1.5">
+                            <span
+                              className={cn(
+                                'font-mono text-[10px] uppercase tracking-widest font-bold',
+                                isDeny ? 'text-signal-stopped' : 'text-signal-healthy'
+                              )}
+                            >
+                              {isDeny ? `BLOCKED AT STAGE: ${denyStage.toUpperCase()}` : 'ALLOWED BY GOVERNANCE POLICY'}
+                            </span>
+                          </div>
+                          <p className="font-mono text-[11px] text-ink-primary leading-relaxed">
+                            {evt.reason || (isDeny ? 'Action denied by security constraints' : 'Executed successfully across gateway.')}
+                          </p>
+                        </div>
                       </div>
-                    )}
+                    </div>
                   </div>
                 )}
               </div>

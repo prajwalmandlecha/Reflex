@@ -14,7 +14,8 @@ import {
 } from '@/components/ui/select';
 import { formatDateTime, formatTimestamp } from '@/lib/format';
 import type { AuditLogEntry } from '@/lib/types';
-import { Search, Download, Lock, ArrowRight } from 'lucide-react';
+import { api } from '@/lib/api';
+import { Search, Download, Lock, ArrowRight, ShieldCheck, AlertTriangle } from 'lucide-react';
 
 const entryTypeLabel: Record<string, string> = {
   action: 'Action',
@@ -34,6 +35,32 @@ export function AuditLogView({ entries }: { entries: AuditLogEntry[] }) {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [outcomeFilter, setOutcomeFilter] = useState('all');
+
+  const [verifying, setVerifying] = useState(false);
+  const [verifyResult, setVerifyResult] = useState<{
+    valid: boolean;
+    total_records: number;
+    verified_until_id: number;
+    error_message?: string;
+  } | null>(null);
+
+  const handleVerifyIntegrity = async () => {
+    setVerifying(true);
+    setVerifyResult(null);
+    try {
+      const res = await api.verifyAuditLog();
+      setVerifyResult(res);
+    } catch (err: any) {
+      setVerifyResult({
+        valid: false,
+        total_records: entries.length,
+        verified_until_id: 0,
+        error_message: err.message || 'Verification call failed',
+      });
+    } finally {
+      setVerifying(false);
+    }
+  };
 
   const filtered = useMemo(() => {
     return entries.filter((e) => {
@@ -57,18 +84,23 @@ export function AuditLogView({ entries }: { entries: AuditLogEntry[] }) {
     <div className="flex flex-col gap-4 p-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="font-mono text-sm uppercase tracking-widest text-ink-primary">
-            Audit Log
+          <h2 className="font-mono text-sm uppercase tracking-widest text-ink-primary font-semibold">
+            Audit Log & Cryptographic Verification
           </h2>
           <p className="font-sans text-xs text-ink-secondary">
-            Complete, append-only history of agent actions, config changes, policy changes, and stop events.
+            Immutable, SHA-256 hash-chained historical record of all tool calls, governance decisions, and system events.
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
-            <Lock className="h-3 w-3" />
-            Immutable / Append-only
-          </div>
+          <Button
+            onClick={handleVerifyIntegrity}
+            disabled={verifying}
+            className="border border-signal-healthy/40 bg-signal-healthy/10 text-signal-healthy hover:bg-signal-healthy/20 font-mono text-xs"
+          >
+            <ShieldCheck className="mr-1.5 h-4 w-4" />
+            {verifying ? 'Verifying Hashes...' : 'Verify Audit Chain Integrity'}
+          </Button>
+
           <div className="flex items-center gap-2">
             <Button
               onClick={() => {
@@ -93,31 +125,46 @@ export function AuditLogView({ entries }: { entries: AuditLogEntry[] }) {
                 document.body.removeChild(link);
               }}
               variant="outline"
-              className="border-border text-ink-secondary hover:bg-white/5"
+              className="border-border text-ink-secondary hover:bg-white/5 font-mono text-xs"
             >
               <Download className="mr-1.5 h-4 w-4" />
               Export CSV
             </Button>
-            <Button
-              onClick={() => {
-                const blob = new Blob([JSON.stringify(filtered, null, 2)], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const link = document.createElement('a');
-                link.href = url;
-                link.setAttribute('download', `audit_log_${new Date().toISOString().slice(0, 10)}.json`);
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-              }}
-              variant="outline"
-              className="border-border text-ink-secondary hover:bg-white/5"
-            >
-              <Download className="mr-1.5 h-4 w-4" />
-              Export JSON
-            </Button>
           </div>
         </div>
       </div>
+
+      {/* Verification Result Banner */}
+      {verifyResult && (
+        <div
+          className={cn(
+            'flex items-center justify-between border p-3 font-mono text-xs',
+            verifyResult.valid
+              ? 'border-signal-healthy/40 bg-signal-healthy/10 text-signal-healthy'
+              : 'border-signal-stopped/40 bg-signal-stopped/10 text-signal-stopped'
+          )}
+        >
+          <div className="flex items-center gap-2">
+            {verifyResult.valid ? (
+              <ShieldCheck className="h-5 w-5 shrink-0 text-signal-healthy" />
+            ) : (
+              <AlertTriangle className="h-5 w-5 shrink-0 text-signal-stopped" />
+            )}
+            <div>
+              <div className="font-bold uppercase tracking-wider">
+                {verifyResult.valid
+                  ? 'Cryptographic Audit Chain Intact — 0 Tampered Records'
+                  : 'AUDIT LOG INTEGRITY FAILURE DETECTED'}
+              </div>
+              <div className="text-[11px] opacity-90">
+                {verifyResult.valid
+                  ? `Successfully validated SHA-256 hash signatures across all ${verifyResult.total_records} database records.`
+                  : verifyResult.error_message || 'Database records have been tampered with or modified.'}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3">
@@ -134,7 +181,7 @@ export function AuditLogView({ entries }: { entries: AuditLogEntry[] }) {
           <SelectTrigger className="w-[160px] border-white/10 bg-white/[0.02] font-mono text-xs">
             <SelectValue placeholder="Type" />
           </SelectTrigger>
-          <SelectContent className="border-border bg-white/5">
+          <SelectContent className="border-border bg-slate-900 text-white">
             <SelectItem value="all">All types</SelectItem>
             <SelectItem value="action">Action</SelectItem>
             <SelectItem value="config_change">Config Change</SelectItem>
@@ -146,7 +193,7 @@ export function AuditLogView({ entries }: { entries: AuditLogEntry[] }) {
           <SelectTrigger className="w-[120px] border-white/10 bg-white/[0.02] font-mono text-xs">
             <SelectValue placeholder="Outcome" />
           </SelectTrigger>
-          <SelectContent className="border-border bg-white/5">
+          <SelectContent className="border-border bg-slate-900 text-white">
             <SelectItem value="all">All outcomes</SelectItem>
             <SelectItem value="allow">Allow</SelectItem>
             <SelectItem value="deny">Deny</SelectItem>
@@ -190,24 +237,26 @@ export function AuditLogView({ entries }: { entries: AuditLogEntry[] }) {
                   <td className="px-4 py-2">
                     <span
                       className={cn(
-                        'font-mono text-[10px] uppercase tracking-wider',
+                        'font-mono text-[10px] uppercase tracking-wider font-semibold',
                         entryTypeColor[entry.entryType || 'action'] || 'text-ink-secondary'
                       )}
                     >
                       {entryTypeLabel[entry.entryType || 'action'] || 'Action'}
                     </span>
                   </td>
-                  <td className="px-4 py-2 font-mono text-[10px] text-accent">
+                  <td className="px-4 py-2 font-mono text-[10px] text-accent font-medium">
                     {entry.agentId === '-' ? '—' : entry.agentId}
                   </td>
-                  <td className="px-4 py-2 font-mono text-xs text-ink-primary">
+                  <td className="px-4 py-2 font-mono text-xs text-ink-primary font-semibold">
                     {entry.action}
                   </td>
                   <td className="px-4 py-2">
                     <span
                       className={cn(
-                        'font-mono text-[10px] uppercase tracking-wider',
-                        entry.decision === 'allow' ? 'text-signal-healthy' : 'text-signal-stopped'
+                        'font-mono text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-sm border',
+                        entry.decision === 'allow'
+                          ? 'bg-signal-healthy/10 text-signal-healthy border-signal-healthy/30'
+                          : 'bg-signal-stopped/10 text-signal-stopped border-signal-stopped/30'
                       )}
                     >
                       {entry.decision}

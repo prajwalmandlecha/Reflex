@@ -424,6 +424,26 @@ function AgentDetail({
         </div>
       </div>
 
+      {/* Instance Governance Overrides Summary Card */}
+      <div className="border border-white/10 bg-slate-900/90 p-3 rounded space-y-1.5 font-mono text-xs">
+        <div className="flex items-center justify-between text-ink-secondary uppercase tracking-widest text-[10px]">
+          <span>Instance Governance Overrides</span>
+          <span className="text-cyan-400 font-semibold">{agent.id}</span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-ink-secondary text-[11px]">Spend Cap Override:</span>
+          <span className="text-emerald-400 font-bold">
+            {agent.instanceOverrides?.capOverride?.amount ? `$${agent.instanceOverrides.capOverride.amount}` : 'Inherited from Class'}
+          </span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-ink-secondary text-[11px]">Tool Overrides:</span>
+          <span className="text-cyan-300">
+            {agent.instanceOverrides?.tools?.length ? `${agent.instanceOverrides.tools.length} custom tools` : 'Inherited from Class'}
+          </span>
+        </div>
+      </div>
+
       {/* JWT Bearer Token Controls */}
       <div className="border border-white/10 bg-white/[0.02] p-3 rounded space-y-2">
         <div className="flex items-center justify-between">

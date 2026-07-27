@@ -330,7 +330,7 @@ export function AppShell() {
             />
           )}
           {view === 'classes' && <AgentClassesView classes={classes} instances={instances} onRefresh={reloadData} />}
-          {view === 'policies' && <PoliciesView policies={policies} classes={classes} onRefresh={reloadData} />}
+          {view === 'policies' && <PoliciesView policies={policies} classes={classes} instances={instances} onRefresh={reloadData} />}
           {view === 'bank' && <BankConnectionsView connections={connections} onRefresh={reloadData} />}
           {view === 'activity' && <ActivityView activityFeed={activityFeed} classes={classes} />}
           {view === 'performance' && <PerformanceView />}

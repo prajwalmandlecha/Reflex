@@ -83,17 +83,19 @@ export type Policy = {
   regoSource?: string;
   rego_source?: string;
   visualRule?: VisualRule;
+  visualRules?: VisualRule[];
   visual_rules?: VisualRule[];
 };
 
 export type VisualRule = {
   action: string;
+  effect?: 'allow' | 'deny';
   conditions: RuleCondition[];
 };
 
 export type RuleCondition = {
   field: string;
-  operator: 'eq' | 'lt' | 'gt' | 'lte' | 'gte' | 'in' | 'contains';
+  operator: 'eq' | 'ne' | 'lt' | 'gt' | 'lte' | 'gte' | 'in' | 'contains' | 'regex_deny' | 'regex_allow' | 'in_list';
   value: string | number;
 };
 

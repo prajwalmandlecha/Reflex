@@ -199,14 +199,30 @@ export const api = {
     });
   },
 
-  async dryRunPolicy(regoSource: string, sampleSize = 50): Promise<any> {
-    return request<any>('/api/v1/policies/dry-run', {
+  async compileVisualRules(rules: any[]): Promise<{ rego_source: string }> {
+    return request<{ rego_source: string }>('/api/v1/policies/compile-visual', {
       method: 'POST',
-      body: JSON.stringify({ rego_source: regoSource, sample_size: sampleSize }),
+      body: JSON.stringify(rules),
+    });
+  },
+
+  async testPolicyInput(payload: { rego_source?: string; visual_rules?: any[]; input_payload: any }): Promise<{
+    allowed: boolean;
+    decision: string;
+    reasons: string[];
+    rego_source: string;
+  }> {
+    return request<any>('/api/v1/policies/test-input', {
+      method: 'POST',
+      body: JSON.stringify(payload),
     });
   },
 
   // --- Audit Log ---
+  async verifyAuditLog(): Promise<{ valid: boolean; total_records: number; verified_until_id: number; error_message?: string }> {
+    return request<any>('/api/v1/audit/verify');
+  },
+
   async getAuditLog(params?: {
     agentId?: string;
     agentClassId?: string;
