@@ -15,6 +15,11 @@ An enterprise-grade **In-Flight Security Interceptor & Transparent Reverse Proxy
 
 Reflex Gateway sits transparently between **AI Agents** (LangChain, CrewAI, AutoGen, VS Code Copilot, Claude Desktop) and **Downstream Target Services** (Core Banking, Payments, Risk Ops):
 
+<p align="center">
+  <img src="../docs/Architecture-Diagram.png" alt="Reflex Gateway Architecture Diagram" width="100%" />
+</p>
+
+### Pipeline Execution Flow
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  AI AGENTS (VS Code Copilot, Claude Desktop, CrewAI, etc.)  │
@@ -24,7 +29,7 @@ Reflex Gateway sits transparently between **AI Agents** (LangChain, CrewAI, Auto
 ┌─────────────────────────────────────────────────────────────┐
 │  REFLEX GATEWAY (:8080)                                     │
 │                                                             │
-│  1. Identify Agent (JWT / Headers)                          │
+│  1. Identify Agent (JWT / X-Agent-ID Headers)               │
 │  2. Dynamic Discovery Schema Filtering (`tools/list`)       │
 │  3. In-Flight Governance Gauntlet (`tools/call`):           │
 │     ├── [A] Sub-ms Redis Killswitch & Fleet Halt Check      │
@@ -160,20 +165,6 @@ curl "http://localhost:8080/v1/audit/verify"
 
 # 7. View Agent Profiles
 curl "http://localhost:8080/v1/profiles"
-```
-
----
-
-## 🛠️ Database Migrations & Code Generation
-
-### Run Goose Database Migrations
-```bash
-goose -dir db/migrations postgres "postgres://agp:agp@localhost:5433/agp?sslmode=disable" up
-```
-
-### Re-Generate Type-Safe `sqlc` Database Code
-```bash
-sqlc generate
 ```
 
 ---

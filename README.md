@@ -16,60 +16,49 @@ It provides real-time governance infrastructure that empowers financial institut
 
 ## 🏛️ System Architecture
 
-Reflex sits transparently between **AI Agents** (VS Code Copilot, Claude Desktop, CrewAI, AutoGen, custom LLMs) and **Downstream MCP Servers** (Core Banking, Payment Rail API, Credit Risk Ops):
+Reflex sits transparently between autonomous AI Agents (LangChain, CrewAI, AutoGen, VS Code Copilot, Claude Desktop) and high-value Downstream Banking APIs (Identity, Payments, Risk Ops):
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│              AI AGENT FLEET (Claude, AutoGen, CrewAI, etc.)             │
-└────────────────────────────────────┬────────────────────────────────────┘
-                                     │ Model Context Protocol (MCP JSON-RPC)
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         REFLEX GATEWAY (:8080)                          │
-│                                                                         │
-│  1. Authenticate & Bind Agent Context (JWT / Headers)                   │
-│  2. Dynamic Discovery Tool Schema Filtering (`tools/list`)              │
-│  3. In-Flight Governance Interception Pipeline (`tools/call`):          │
-│     ├── Stage 1: Sub-ms Redis Killswitch & Fleet Panic Button           │
-│     ├── Stage 2: Rate Limit & Business Hours Time-Window Checker        │
-│     ├── Stage 3: Embedded OPA Rego Engine (Parameter & Schema Bounds)   │
-│     ├── Stage 4: Atomic Redis Lua Spend Cap Enforcement                 │
-│     └── Stage 5: Cryptographic SHA-256 Hash-Chained Audit Ledger        │
-│                                                                         │
-│  4. Transparent Forwarding to Target Downstream Bank MCP Services       │
-└───────────────┬────────────────────┬────────────────────┬───────────────┘
-                │                    │                    │
-                ▼                    ▼                    ▼
-     ┌────────────────────┐┌────────────────────┐┌────────────────────┐
-     │  Bank Identity     ││  Bank Payments     ││  Bank Fraud/Risk   │
-     │  MCP Server        ││  MCP Server        ││  MCP Server        │
-     │  (:31100)          ││  (:31200)          ││  (:31400)          │
-     └────────────────────┘└────────────────────┘└────────────────────┘
-```
+<p align="center">
+  <img src="./docs/Architecture-Diagram.png" alt="Reflex System Architecture Diagram" width="100%" />
+</p>
+
+### End-to-End Governance Flow
+1. **Agent Invocation**: AI agents submit standard **Model Context Protocol (MCP)** JSON-RPC requests (`tools/list` or `tools/call`) to the Gateway (`:8080`).
+2. **In-Flight Security Gauntlet**:
+   - **Revocation & Fleet Halt Check**: Immediate sub-millisecond validation against pipeline-cached Redis revocation keys.
+   - **Embedded OPA Policy Engine**: Lock-free, in-memory Rego policy evaluation enforcing fine-grained ABAC rules.
+   - **Atomic Spend Cap Engine**: Redis Lua scripts execute atomic budget deductions for hourly, daily, and per-transaction limits.
+   - **Cryptographic Audit Ledger**: Computes tamper-evident SHA-256 chained hashes (`entry_hash = SHA-256(prev_hash || row_data)`) stored in PostgreSQL.
+3. **Transparent Forwarding**: Approved requests are forwarded to target downstream Bank MCP servers (`bank-identity`, `bank-payments`, `bank-financial`, `bank-risk`).
+4. **Control Plane & Instrumentation**: FastAPI backend coordinates policy compilation, OpenAPI virtual registration, and streams live telemetry over WebSockets to the Next.js Control Center UI.
 
 ---
 
 ## 🌟 Key Capabilities
 
-- 🛡️ **In-Flight Multi-Stage Governance Gauntlet**: Evaluates every tool execution attempt in real time through 5 safety stages before touching bank backend systems.
-- ⚡ **Sub-Millisecond Killswitch & Fleet Halt**: Instantly revoke individual agent instances or halt the entire agent fleet in <1ms via pipeline-cached Redis keys.
-- 🔍 **Dynamic Discovery Schema Filtering**: Automatically filters `tools/list` discovery output per agent profile to eliminate LLM hallucinations and unauthorized invocation attempts.
-- 💰 **Atomic Spend Cap Engine**: Prevents race conditions and budget overruns using atomic Redis Lua scripts for hourly, daily, and per-transaction limits.
-- 📜 **Embedded OPA Rego Policy Engine**: Lock-free, in-memory Open Policy Agent evaluation with atomic hot-reloading from PostgreSQL.
-- 🔒 **Tamper-Evident SHA-256 Audit Ledger**: Cryptographically chained audit logs (`entry_hash = SHA-256(prev_hash || row_data)`) with web-dashboard verification.
-- 📊 **Real-Time Instrumentation & Control Center**: Next.js 14 dark-mode management console with live WebSocket telemetry streams, visual condition builders, and latency percentiles (P50/P95/P99).
+- 🛡️ **In-Flight Multi-Stage Governance Gauntlet**: Evaluates every tool invocation attempt in real time across 5 safety stages before hitting core banking infrastructure.
+- ⚡ **Sub-Millisecond Killswitch & Fleet Halt**: Instantly revoke individual agent instances or halt the entire agent fleet in `<1ms` via Redis pipelines.
+- 🔍 **Dynamic Discovery Schema Filtering**: Filters `tools/list` output per agent profile to eliminate LLM hallucinations and prevent unauthorized tool access.
+- 💰 **Atomic Spend Cap Engine**: Prevents race conditions and budget overshoots using atomic Redis Lua scripts enforcing hourly, daily, and single-transaction spending caps.
+- 📜 **Embedded OPA Rego Policy Engine**: Lock-free, in-memory Open Policy Agent evaluation with atomic hot-reloading driven by PostgreSQL changes.
+- 🔒 **Tamper-Evident SHA-256 Audit Ledger**: Cryptographically chained audit ledger (`entry_hash = SHA-256(prev_hash || row_data)`) with an online audit verification engine.
+- 📊 **Real-Time Instrumentation & Control Center**: Next.js 14 dark-mode management console with live WebSocket telemetry streams, visual policy builder, and latency percentiles (P50/P95/P99).
+- 🔌 **OpenAPI Virtualization**: Dynamically convert legacy REST/OpenAPI specs into AI-accessible MCP tools on the fly.
 
 ---
 
-## 📂 Platform Architecture & Components
+## 📂 Platform Directory & Documentation Layout
 
-Reflex is organized into modular high-performance services:
+Reflex is organized into modular, decoupled microservices:
 
-| Component | Tech Stack | Description | Documentation |
+| Directory | Tech Stack | Description | Sub-Readme Link |
 |---|---|---|---|
-| **Gateway Proxy** | Go 1.26, OPA, Redis, PostgreSQL, Goose, sqlc | Ultra-low latency transparent reverse proxy, MCP interceptor, embedded OPA engine, Redis spend limiter, and audit logger. | [Gateway Docs](./gateway/README.md) |
-| **Control Plane API** | Python 3.12, FastAPI, Pydantic, SQLAlchemy | Policy compiler, visual rule generator, agent class/instance manager, and OpenAPI spec virtualizer. | [Backend Code](./backend/) |
-| **Control Center** | Next.js 14, React 18, Tailwind CSS, Lucide Icons | Enterprise operator dashboard featuring fleet control, visual policy builder, telemetry, and cryptographic audit verifier. | [Frontend Code](./frontend/) |
+| ⚡ [**`gateway/`**](./gateway) | Go 1.26, OPA, Redis, PostgreSQL, Goose, sqlc | High-throughput transparent reverse proxy, MCP interceptor, embedded OPA engine, atomic spend cap limiter, and cryptographic audit logger. | [Gateway Docs](./gateway/README.md) |
+| ⚙️ [**`backend/`**](./backend) | Python 3.12, FastAPI, Pydantic, SQLAlchemy, Redis Pub/Sub | Control Plane API, Rego policy compiler, agent lifecycle manager, OpenAPI virtualizer, and event publisher. | [Backend Docs](./backend/README.md) |
+| 🌐 [**`frontend/`**](./frontend) | Next.js 14, React 18, Tailwind CSS, Lucide Icons | Operator dashboard featuring live fleet monitor, visual rule builder, audit verification, and performance instrumentation. | [Frontend Docs](./frontend/README.md) |
+| 📜 [**`scripts/`**](./scripts) | Python 3.12, Asyncio, HTTPX | Seed scripts and real-time multi-agent load simulation suite testing all governance gauntlet features. | [Scripts Docs](./scripts/README.md) |
+| 📁 [**`docs/`**](./docs) | Diagrams, HTML specs, PRD, PDF | System architecture diagram, comprehensive PRD, and technical governance papers. | [Docs Index](./docs/README.md) |
+| 🗄️ [**`db/`**](./db) | PostgreSQL 16, Goose Migrations | Database schema migrations (`001_schema.sql`, `002_seed.sql`) for agent entities, policies, and audit logs. | — |
 
 ---
 
@@ -77,7 +66,7 @@ Reflex is organized into modular high-performance services:
 
 ### 1. Prerequisites
 - **Docker** & **Docker Compose**
-- **Go 1.26+** and **Python 3.12+** (optional for local standalone development)
+- **Go 1.26+** and **Python 3.12+** (optional for standalone local development)
 
 ### 2. Launch the Full Reflex Platform Stack
 ```bash
@@ -85,33 +74,32 @@ Reflex is organized into modular high-performance services:
 git clone https://github.com/prajwalmandlecha/Reflex.git
 cd Reflex
 
-# Build and start all services via Docker Compose
+# Build and launch all services via Docker Compose
 docker compose up -d --build
 ```
 
-The stack exposes the following services:
-- 🌐 **Reflex Control Center UI**: `http://localhost:3000`
-- ⚡ **Reflex Gateway Proxy**: `http://localhost:8080`
-- ⚙️ **Backend Control Plane API**: `http://localhost:8000`
-- 📊 **Prometheus Exposition**: `http://localhost:9090/metrics`
-- 🗄️ **PostgreSQL 16**: `localhost:5433`
-- 🔑 **Redis 7.2 Cache**: `localhost:6379`
+### 3. Verify Running Services
+| Component | URL | Port |
+|---|---|---|
+| 🌐 **Reflex Control Center UI** | `http://localhost:3000` | `3000` |
+| ⚡ **Reflex Gateway Proxy** | `http://localhost:8080` | `8080` |
+| ⚙️ **Backend Control Plane API** | `http://localhost:8000` | `8000` |
+| 📊 **Prometheus Metrics Exposition** | `http://localhost:9090/metrics` | `9090` |
+| 🗄️ **PostgreSQL 16 Database** | `localhost:5433` | `5433` |
+| 🔑 **Redis 7.2 Cache & Pub/Sub** | `localhost:6379` | `6379` |
 
 ---
 
-## 🧪 Testing & Verification
+## 🧪 Simulation & Automated Verification Suite
 
-Reflex includes end-to-end automated verification suites for security, performance, and policy enforcement:
+To run the automated agent suite that simulates multi-agent workflows, tool invocations, spend cap violations, and emergency killswitch activations:
 
 ```bash
-# Run real agent MCP tool call test suite ($500 DENIED, $1300 DENIED, $1100 ALLOWED)
-python scripts/test_three_bounds.py
+# Seed initial platform state (Agent Classes, Instances, Bank Connections, Policies)
+python scripts/01_seed_platform.py
 
-# Run policy validation & Rego compiler suite
-python scripts/test_policy_validation.py
-
-# Run Go Gateway multi-feature integration suite
-cd gateway && go run ./cmd/test-all
+# Run the live agent simulation suite
+python scripts/02_run_live_agent_suite.py
 ```
 
 ---
