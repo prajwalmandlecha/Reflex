@@ -187,16 +187,36 @@ export function ActivityView({
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                    <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
                       <div>
                         <div className="flex items-center gap-1.5 mb-1">
-                          <Terminal className="h-3 w-3 text-ink-secondary" />
+                          <Terminal className="h-3 w-3 text-cyan-400" />
                           <span className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary font-semibold">
                             Input Argument Payload
                           </span>
                         </div>
-                        <pre className="h-[120px] overflow-auto border border-white/10 bg-slate-950 p-2 font-mono text-[11px] text-ink-primary">
-                          {JSON.stringify(evt.params, null, 2)}
+                        <pre className="h-[130px] overflow-auto border border-white/10 bg-slate-950 p-2 font-mono text-[11px] text-ink-primary rounded">
+                          {JSON.stringify(evt.params || {}, null, 2)}
+                        </pre>
+                      </div>
+
+                      <div>
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <Zap className="h-3 w-3 text-emerald-400" />
+                          <span className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary font-semibold">
+                            Tool Execution Response Payload
+                          </span>
+                        </div>
+                        <pre className="h-[130px] overflow-auto border border-white/10 bg-slate-950 p-2 font-mono text-[11px] text-emerald-300 rounded">
+                          {(() => {
+                            const respData = evt.responseData || evt.response_data || (evt as any).result;
+                            if (respData) {
+                              return typeof respData === 'string' ? respData : JSON.stringify(respData, null, 2);
+                            }
+                            return isDeny
+                              ? JSON.stringify({ allow: false, reason: evt.reason || 'denied by policy' }, null, 2)
+                              : JSON.stringify({ status: 'completed', info: 'Execution returned success' }, null, 2);
+                          })()}
                         </pre>
                       </div>
 
@@ -204,12 +224,12 @@ export function ActivityView({
                         <div className="flex items-center gap-1.5 mb-1">
                           <Shield className="h-3 w-3 text-accent" />
                           <span className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary font-semibold">
-                            Execution Response / Decision Note
+                            Governance Decision & Reason
                           </span>
                         </div>
                         <div
                           className={cn(
-                            'h-[120px] overflow-auto border p-2 font-mono text-xs',
+                            'h-[130px] overflow-auto border p-2 font-mono text-xs rounded',
                             isDeny
                               ? 'border-signal-stopped/30 bg-signal-stopped/5'
                               : 'border-signal-healthy/30 bg-signal-healthy/5'
@@ -226,7 +246,7 @@ export function ActivityView({
                             </span>
                           </div>
                           <p className="font-mono text-[11px] text-ink-primary leading-relaxed">
-                            {evt.reason || (isDeny ? 'Action denied by security constraints' : 'Executed successfully across gateway.')}
+                            {evt.reason || (isDeny ? 'Action denied by security constraints' : 'Executed successfully across gateway proxy.')}
                           </p>
                         </div>
                       </div>

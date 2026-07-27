@@ -140,6 +140,8 @@ export type ActivityEvent = {
   agentClass: string;
   action: string;
   params: Record<string, unknown>;
+  responseData?: Record<string, unknown> | string;
+  response_data?: Record<string, unknown> | string;
   decision: 'allow' | 'deny';
   denyStage?: string;
   reason?: string;

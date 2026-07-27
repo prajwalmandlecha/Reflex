@@ -247,6 +247,8 @@ export const api = {
       action: a.action,
       bankConnectionId: a.bank_connection_id || a.bankConnectionId || '',
       params: a.params || {},
+      responseData: a.response_data || a.responseData || a.result || null,
+      response_data: a.response_data || a.responseData || a.result || null,
       decision: a.decision,
       denyStage: a.deny_stage || a.denyStage || '',
       reason: a.reason || '',
