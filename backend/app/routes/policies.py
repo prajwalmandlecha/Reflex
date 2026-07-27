@@ -152,8 +152,11 @@ async def validate_policy(req: PolicyValidateRequest):
 
 
 @router.post("/compile-visual")
-async def compile_visual_rules(rules: list[dict[str, Any]]):
-    rego_code = visual_rules_to_rego(rules)
+async def compile_visual_rules(payload: dict[str, Any]):
+    rules = payload.get("rules", []) if isinstance(payload, dict) and "rules" in payload else (payload if isinstance(payload, list) else [])
+    target_id = payload.get("target_id") if isinstance(payload, dict) else None
+    scope = payload.get("scope", "global") if isinstance(payload, dict) else "global"
+    rego_code = visual_rules_to_rego(rules, target_id=target_id, scope=scope)
     return {"rego_source": rego_code}
 
 

@@ -134,7 +134,18 @@ func (e *Engine) loadAndCompile(ctx context.Context, force bool) error {
 				}
 			}
 			if len(sources) > 0 {
-				regoSource = strings.Join(sources, "\n\n")
+				var combined []string
+				combined = append(combined, "package agp.authz\n\nimport rego.v1\n\ndefault allow := true\ndefault deny := false\n")
+				for _, src := range sources {
+					cleaned := src
+					cleaned = strings.ReplaceAll(cleaned, "package agp.authz", "")
+					cleaned = strings.ReplaceAll(cleaned, "import rego.v1", "")
+					cleaned = strings.ReplaceAll(cleaned, "default allow := true", "")
+					cleaned = strings.ReplaceAll(cleaned, "default allow := false", "")
+					cleaned = strings.ReplaceAll(cleaned, "default deny := false", "")
+					combined = append(combined, strings.TrimSpace(cleaned))
+				}
+				regoSource = strings.Join(combined, "\n\n")
 			}
 		}
 	}

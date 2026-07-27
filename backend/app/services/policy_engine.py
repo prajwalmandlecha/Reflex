@@ -11,7 +11,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-def visual_rules_to_rego(visual_rules: list[dict[str, Any]]) -> str:
+def visual_rules_to_rego(visual_rules: list[dict[str, Any]], target_id: str | None = None, scope: str = "global") -> str:
     """Auto-compile visual rule conditions into clean, standard Rego code."""
     if not visual_rules:
         return (
@@ -39,6 +39,10 @@ def visual_rules_to_rego(visual_rules: list[dict[str, Any]]) -> str:
             lines.append(f"{effect} if {{")
             if action and action != "*":
                 lines.append(f'\tinput.action == "{action}"')
+            if target_id and scope == "instance":
+                lines.append(f'\tinput.agent_id == "{target_id}"')
+            elif target_id and scope == "class":
+                lines.append(f'\tinput.agent_kind == "{target_id}"')
             lines.append("}")
             lines.append("")
         else:
@@ -50,6 +54,10 @@ def visual_rules_to_rego(visual_rules: list[dict[str, Any]]) -> str:
                 lines.append(f"{effect} if {{")
                 if action and action != "*":
                     lines.append(f'\tinput.action == "{action}"')
+                if target_id and scope == "instance":
+                    lines.append(f'\tinput.agent_id == "{target_id}"')
+                elif target_id and scope == "class":
+                    lines.append(f'\tinput.agent_kind == "{target_id}"')
 
                 # Check both params (Gateway format) and arguments (Testcase format)
                 lines.append(f'\tparam_val := object.get(object.get(input, "params", {{}}), "{field}", object.get(object.get(input, "arguments", {{}}), "{field}", null))')
