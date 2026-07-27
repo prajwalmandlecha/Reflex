@@ -57,3 +57,17 @@ class PolicyDryRunResult(BaseModel):
     allowed_to_denied: int
     denied_to_allowed: int
     diff_samples: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class PolicyTestInputRequest(BaseModel):
+    rego_source: str | None = None
+    visual_rules: list[dict[str, Any]] | None = None
+    input_payload: dict[str, Any]
+
+
+class PolicyTestInputResponse(BaseModel):
+    allowed: bool
+    decision: str  # 'ALLOW' or 'DENY'
+    reasons: list[str] = Field(default_factory=list)
+    rego_source: str
+

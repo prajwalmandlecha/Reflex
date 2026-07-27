@@ -3,12 +3,14 @@
 import json
 from fastapi import APIRouter, HTTPException, status
 from app.database import get_pool
+from typing import Any
 from app.models.policy import (
-    PolicyCreate, PolicyDryRunRequest, PolicyDryRunResult, PolicyResponse,
+    PolicyCreate, PolicyResponse,
     PolicyUpdate, PolicyValidateRequest, PolicyValidateResponse,
+    PolicyTestInputRequest, PolicyTestInputResponse,
 )
 from app.services.config_propagation import cache_active_policies, publish_config_update
-from app.services.policy_engine import dry_run_policy, validate_rego
+from app.services.policy_engine import validate_rego, evaluate_rego_testcase, visual_rules_to_rego
 
 router = APIRouter(prefix="/api/v1/policies", tags=["Policies"])
 
@@ -149,18 +151,15 @@ async def validate_policy(req: PolicyValidateRequest):
     return PolicyValidateResponse(valid=valid, errors=errors)
 
 
-@router.post("/dry-run", response_model=PolicyDryRunResult)
-async def dry_run_policy_endpoint(req: PolicyDryRunRequest):
-    rego = req.rego_source
-    if not rego and req.policy_id:
-        pool = get_pool()
-        async with pool.acquire() as conn:
-            row = await conn.fetchrow("SELECT rego_source FROM policies WHERE id = $1", req.policy_id)
-            if row:
-                rego = row["rego_source"]
+@router.post("/compile-visual")
+async def compile_visual_rules(rules: list[dict[str, Any]]):
+    rego_code = visual_rules_to_rego(rules)
+    return {"rego_source": rego_code}
 
-    if not rego:
-        raise HTTPException(status_code=400, detail="Missing 'rego_source' or valid 'policy_id'")
 
-    res = await dry_run_policy(rego, req.sample_size)
-    return PolicyDryRunResult(**res)
+@router.post("/test-input", response_model=PolicyTestInputResponse)
+async def test_policy_input(req: PolicyTestInputRequest):
+    res = await evaluate_rego_testcase(req.rego_source, req.visual_rules, req.input_payload)
+    return PolicyTestInputResponse(**res)
+
+
