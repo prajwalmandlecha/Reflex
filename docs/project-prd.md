@@ -136,7 +136,7 @@ See separate Frontend PRD (`frontend-prompt.md`) for full detail. Summary: comma
 - **Auditability**: show a full reconstruction of "why did this get denied" from the audit log for a given action.
 - **Kill switch speed**: demo fleet-wide stop taking effect on the very next action attempt across multiple agents simultaneously.
 
-## 10. Suggested Build Order (Hackathon Timeline)
+## 10. Suggested Build Order & Implementation Phases
 
 1. Core Gateway skeleton (Go): MCP server face, static tool routing, no policy yet.
 2. Redis Lua hot path: kill-switch + revocation + spend cap (instance + class).

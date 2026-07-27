@@ -1,4 +1,4 @@
-# Agent Governance Platform (AGP) — Gateway
+# Reflex Gateway — In-Flight Security Proxy & Policy Engine
 
 [![Go Version](https://img.shields.io/badge/Go-1.26-blue.svg)](https://golang.org)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue.svg)](https://postgresql.org)
@@ -7,13 +7,13 @@
 [![Goose](https://img.shields.io/badge/Goose-v3.27-brightgreen.svg)](https://pressly.github.io/goose)
 [![sqlc](https://img.shields.io/badge/sqlc-v1.31-orange.svg)](https://sqlc.dev)
 
-An enterprise-grade **In-Flight Security Interceptor & Transparent Reverse Proxy** for AI agents operating in financial environments. AGP enforces granular per-agent permission profiles, real-time spend limits, instant killswitches, cryptographic audit trails, and dynamic tool schema filtering over the **Model Context Protocol (MCP)**.
+An enterprise-grade **In-Flight Security Interceptor & Transparent Reverse Proxy** for AI agents operating in financial environments. Reflex Gateway enforces granular per-agent permission profiles, real-time spend limits, instant killswitches, cryptographic audit trails, and dynamic tool schema filtering over the **Model Context Protocol (MCP)**.
 
 ---
 
 ## 🏛️ Architecture Overview
 
-AGP sits transparently between **AI Agents** (LangChain, CrewAI, AutoGen, VS Code Copilot, Claude Desktop) and **Downstream MCP Servers** (Core Banking, Payments, Risk Ops):
+Reflex Gateway sits transparently between **AI Agents** (LangChain, CrewAI, AutoGen, VS Code Copilot, Claude Desktop) and **Downstream Target Services** (Core Banking, Payments, Risk Ops):
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -22,7 +22,7 @@ AGP sits transparently between **AI Agents** (LangChain, CrewAI, AutoGen, VS Cod
                                │ MCP JSON-RPC over HTTP
                                ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  AGP GATEWAY (:8080)                                        │
+│  REFLEX GATEWAY (:8080)                                     │
 │                                                             │
 │  1. Identify Agent (JWT / Headers)                          │
 │  2. Dynamic Discovery Schema Filtering (`tools/list`)       │
@@ -62,20 +62,20 @@ AGP sits transparently between **AI Agents** (LangChain, CrewAI, AutoGen, VS Cod
 5. **Sub-Millisecond Emergency Killswitch & Fleet Halt:**
    Per-agent revocations (`POST /v1/agents/{id}/revoke`) and fleet-wide panic button (`POST /v1/fleet/halt`) backed by Redis pipelines (<1ms latency impact).
 
-5. **Embedded OPA Rego Policy Engine:**
+6. **Embedded OPA Rego Policy Engine:**
    Lock-free, in-memory OPA evaluation engine with atomic hot-reloading from PostgreSQL.
 
-6. **Atomic Real-Time Spend Limit Engine:**
+7. **Atomic Real-Time Spend Limit Engine:**
    Atomic Redis Lua scripts prevent race conditions when enforcing hourly and daily budget ceilings across agent instances.
 
-7. **Cryptographic SHA-256 Audit Ledger:**
+8. **Cryptographic SHA-256 Audit Ledger:**
    Append-only hash-chained audit log stored in PostgreSQL (`entry_hash = SHA-256(prev_hash || row_json)`). Built-in verification endpoint (`GET /v1/audit/verify`).
 
-8. **Goose Migrations & Type-Safe sqlc Data Layer:**
+9. **Goose Migrations & Type-Safe sqlc Data Layer:**
    Version-controlled schema migrations managed via **Goose** (`migrations/001_init.sql`) and compile-time type-safe Go query code generated via **sqlc** (`internal/db/`).
 
-9. **Prometheus Telemetry Stream:**
-   Real-time decision counters and latency histograms exported at `:9090/metrics`.
+10. **Prometheus Telemetry Stream:**
+    Real-time decision counters and latency histograms exported at `:9090/metrics`.
 
 ---
 
@@ -121,15 +121,9 @@ All MCP agents send JSON-RPC HTTP POST requests to these endpoints:
 
 ## 🚀 How to Run & Test
 
-### 1. Prerequisites
-* **Docker** & **Docker Compose**
-* **Go 1.26+** (for running test scripts locally)
+### 1. Start the Gateway Stack
 
----
-
-### 2. Start the Gateway Stack
-
-Run this command to build and launch the entire stack:
+Run this command to build and launch the Gateway container stack:
 
 ```bash
 docker compose up -d --build
@@ -143,42 +137,7 @@ This starts:
 
 ---
 
-### 3. Run Automated All-Feature Test Suite
-
-Execute the automated test suite verifying all 8 platform features:
-
-```bash
-cd gateway
-go run ./cmd/test-all
-```
-
-**Expected Result:** `VERIFICATION SUMMARY: 12 PASSED, 0 FAILED`
-
----
-
-### 4. Test Against Live External Bank of Anthos MCP Servers
-
-Test the Gateway proxy connected directly to the 4 live Bank of Anthos endpoints:
-
-```bash
-cd gateway
-go run ./cmd/test-anthos
-```
-
----
-
-### 5. Test Agent Profiles & Dynamic Schema Filtering
-
-Test per-agent ABAC whitelisting and dynamic `tools/list` schema filtering:
-
-```bash
-cd gateway
-go run ./cmd/test-custom
-```
-
----
-
-### 6. Control Plane API Examples (`curl`)
+### 2. Control Plane API Examples (`curl`)
 
 ```bash
 # 1. Mint a JWT Token
@@ -209,7 +168,7 @@ curl "http://localhost:8080/v1/profiles"
 
 ### Run Goose Database Migrations
 ```bash
-goose -dir migrations postgres "postgres://agp:agp@localhost:5433/agp?sslmode=disable" up
+goose -dir db/migrations postgres "postgres://agp:agp@localhost:5433/agp?sslmode=disable" up
 ```
 
 ### Re-Generate Type-Safe `sqlc` Database Code
@@ -226,13 +185,12 @@ gateway/
 ├── cmd/                        <-- Entry points & CLI test runners
 │   ├── gateway/main.go         <-- Main Gateway Server
 │   ├── test-all/main.go        <-- 8-feature automated verification suite
-│   ├── test-anthos/main.go     <-- Live Bank of Anthos test client
-│   ├── test-custom/main.go     <-- Agent Profile & Schema Filter test client
-│   └── inspect-bank/main.go    <-- Downstream Bank tool inspector
+│   ├── test-anthos/main.go     <-- Downstream MCP test client
+│   └── test-custom/main.go     <-- Agent Profile & Schema Filter test client
 │
 ├── db/                         <-- Standard Database Root Directory
 │   ├── migrations/             <-- Goose versioned SQL migrations (001_init.sql)
-│   └── queries/                <-- SQL query definitions for sqlc (audit.sql, etc.)
+│   └── queries/                <-- SQL query definitions for sqlc
 │
 ├── internal/                   <-- Core application packages
 │   ├── agent/store.go          <-- Agent Profile/Instance Store (Redis <-> Postgres)
