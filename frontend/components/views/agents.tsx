@@ -41,7 +41,7 @@ import { Button } from '@/components/ui/button';
 import { formatCurrency, formatTimestamp, formatDateTime } from '@/lib/format';
 import type { AgentInstance, AgentClass, ActivityEvent } from '@/lib/types';
 import { api } from '@/lib/api';
-import { Search, Ban, Shield, Clock, Wrench, Plus, Key, Copy, Check, RefreshCw, Play, Terminal } from 'lucide-react';
+import { Search, Ban, Shield, Clock, Wrench, Plus, Key, Copy, Check, RefreshCw, Play, Terminal, Trash2 } from 'lucide-react';
 
 export function AgentsView({
   instances,
@@ -185,21 +185,26 @@ export function AgentsView({
       <Sheet open={!!selectedAgent} onOpenChange={(open) => !open && onSelectAgent(null)}>
         <SheetContent className="w-full border-white/10 bg-slate-950 text-white sm:max-w-md overflow-y-auto">
           {selectedAgent && (
-            <AgentDetail
-              agent={selectedAgent}
-              cls={classMap.get(selectedAgent.classId)}
-              activityFeed={activityFeed}
-              onRevoke={async () => {
-                await api.revokeAgent(selectedAgent.id);
-                onSelectAgent(null);
-                if (onRefresh) onRefresh();
-              }}
-              onRevive={async () => {
-                await api.reviveAgent(selectedAgent.id);
-                onSelectAgent(null);
-                if (onRefresh) onRefresh();
-              }}
-            />
+              <AgentDetail
+                agent={selectedAgent}
+                cls={classMap.get(selectedAgent.classId)}
+                activityFeed={activityFeed}
+                onRevoke={async () => {
+                  await api.revokeAgent(selectedAgent.id);
+                  onSelectAgent(null);
+                  if (onRefresh) onRefresh();
+                }}
+                onRevive={async () => {
+                  await api.reviveAgent(selectedAgent.id);
+                  onSelectAgent(null);
+                  if (onRefresh) onRefresh();
+                }}
+                onDelete={async () => {
+                  await api.deleteAgentInstance(selectedAgent.id);
+                  onSelectAgent(null);
+                  if (onRefresh) onRefresh();
+                }}
+              />
           )}
         </SheetContent>
       </Sheet>
@@ -374,12 +379,14 @@ function AgentDetail({
   activityFeed,
   onRevoke,
   onRevive,
+  onDelete,
 }: {
   agent: AgentInstance;
   cls?: AgentClass;
   activityFeed: ActivityEvent[];
   onRevoke: () => void;
   onRevive?: () => void;
+  onDelete?: () => void;
 }) {
   const [jwtToken, setJwtToken] = useState('');
   const [copied, setCopied] = useState(false);
@@ -529,24 +536,61 @@ function AgentDetail({
       </div>
 
       {/* Instance Lifecycle controls */}
-      {agent.status !== 'killed' && agent.status !== 'revoked' ? (
-        <Button
-          variant="outline"
-          onClick={onRevoke}
-          className="w-full border-rose-500/30 text-rose-400 hover:bg-rose-500/10 font-mono text-xs cursor-pointer"
-        >
-          <Ban className="mr-2 h-4 w-4" />
-          Revoke this instance
-        </Button>
-      ) : (
-        <Button
-          onClick={onRevive}
-          className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-xs font-bold uppercase tracking-wider cursor-pointer flex items-center justify-center gap-2 py-2.5 shadow-[0_0_15px_-3px_rgba(52,211,153,0.4)]"
-        >
-          <Play className="h-4 w-4" />
-          Start / Reactivate Instance
-        </Button>
-      )}
+      <div className="space-y-2 pt-2">
+        {agent.status !== 'killed' && agent.status !== 'revoked' ? (
+          <Button
+            variant="outline"
+            onClick={onRevoke}
+            className="w-full border-amber-500/30 text-amber-400 hover:bg-amber-500/10 font-mono text-xs cursor-pointer"
+          >
+            <Ban className="mr-2 h-4 w-4" />
+            Revoke this instance
+          </Button>
+        ) : (
+          <Button
+            onClick={onRevive}
+            className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-xs font-bold uppercase tracking-wider cursor-pointer flex items-center justify-center gap-2 py-2.5 shadow-[0_0_15px_-3px_rgba(52,211,153,0.4)]"
+          >
+            <Play className="h-4 w-4" />
+            Start / Reactivate Instance
+          </Button>
+        )}
+
+        {onDelete && (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                variant="outline"
+                className="w-full border-rose-500/30 text-rose-400 hover:bg-rose-500/10 font-mono text-xs cursor-pointer"
+              >
+                <Trash2 className="mr-2 h-4 w-4" />
+                Delete Agent Instance
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent className="border-white/10 bg-slate-950 text-white">
+              <AlertDialogHeader>
+                <AlertDialogTitle className="font-mono text-sm uppercase tracking-widest text-rose-400">
+                  Delete Agent Instance '{agent.id}'?
+                </AlertDialogTitle>
+                <AlertDialogDescription className="font-sans text-xs text-ink-secondary">
+                  This will permanently delete this agent instance record. All active sessions and spend tracking keys for this instance will be removed.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel className="border-white/10 bg-transparent text-ink-secondary font-mono text-xs">
+                  Cancel
+                </AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={onDelete}
+                  className="bg-rose-600 text-white hover:bg-rose-500 font-mono text-xs"
+                >
+                  Delete Instance
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
+      </div>
     </div>
   );
 }

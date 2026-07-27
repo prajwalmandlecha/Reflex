@@ -70,6 +70,10 @@ export const api = {
     await request(`/api/v1/classes/${id}/revoke`, { method: 'DELETE' });
   },
 
+  async deleteAgentClass(id: string): Promise<void> {
+    await request(`/api/v1/classes/${id}`, { method: 'DELETE' });
+  },
+
   // --- Agent Instances ---
   async getAgentInstances(): Promise<AgentInstance[]> {
     const raw = await request<any[]>('/api/v1/agents');
@@ -103,6 +107,10 @@ export const api = {
 
   async reviveAgent(agentId: string): Promise<void> {
     await request(`/api/v1/agents/${agentId}/revoke`, { method: 'DELETE' });
+  },
+
+  async deleteAgentInstance(agentId: string): Promise<void> {
+    await request(`/api/v1/agents/${agentId}`, { method: 'DELETE' });
   },
 
   async getAgentSpend(agentId: string): Promise<Record<string, number>> {
@@ -146,6 +154,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(conn),
     });
+  },
+
+  async deleteBankConnection(id: string): Promise<void> {
+    await request(`/api/v1/connections/${id}`, { method: 'DELETE' });
   },
 
   async clearAllConnections(): Promise<void> {
