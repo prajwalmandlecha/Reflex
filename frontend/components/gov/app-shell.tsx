@@ -89,12 +89,20 @@ export function AppShell() {
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [hideHelpOnStartup, setHideHelpOnStartup] = useState(false);
+  const [isVisible, setIsVisible] = useState(true);
 
   // Show the getting-started guide on load unless the operator opted out
   useEffect(() => {
     const dismissed = localStorage.getItem('reflex_help_dismissed') === '1';
     setHideHelpOnStartup(dismissed);
     if (!dismissed) setShowHelpModal(true);
+  }, []);
+
+  // Pause polling when browser tab is hidden
+  useEffect(() => {
+    const handler = () => setIsVisible(document.visibilityState === 'visible');
+    document.addEventListener('visibilitychange', handler);
+    return () => document.removeEventListener('visibilitychange', handler);
   }, []);
 
   const toggleHideHelpOnStartup = (hide: boolean) => {
@@ -164,6 +172,63 @@ export function AppShell() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  // Lightweight refresh for header-critical data (fleet status badge + active count)
+  const refreshHeader = useCallback(() => {
+    api.getFleetStatus().then((res) => {
+      if (res && res.status) setFleetStatus(res.status);
+    }).catch(() => {});
+    api.getAgentInstances().then(setInstances).catch(() => {});
+  }, []);
+
+  // Fetch only the data relevant to the currently active view
+  const fetchForView = useCallback((v: ViewId) => {
+    switch (v) {
+      case 'command':
+        api.getAgentClasses().then(setClasses).catch(() => {});
+        api.getDashboardActivity().then((act) => {
+          if (Array.isArray(act)) setActivityFeed(act);
+        }).catch(() => {});
+        api.getDashboardSummary().then((sum) => {
+          if (sum) {
+            setFleetSpend({
+              spent: sum.spend_today_usd ?? sum.spend_today ?? 0,
+              cap: sum.total_cap_usd ?? 100000,
+            });
+            setDenialsLastHour(sum.denials_last_hour ?? 0);
+          }
+        }).catch(() => {});
+        break;
+      case 'agents':
+        api.getAgentClasses().then(setClasses).catch(() => {});
+        break;
+      case 'classes':
+        api.getAgentClasses().then(setClasses).catch(() => {});
+        break;
+      case 'policies':
+        api.getPolicies().then(setPolicies).catch(() => {});
+        break;
+      case 'bank':
+        api.getBankConnections().then(setConnections).catch(() => {});
+        break;
+      case 'activity':
+        // Activity is primarily WebSocket-driven; light poll for catch-up
+        api.getDashboardActivity().then((act) => {
+          if (Array.isArray(act)) setActivityFeed(act);
+        }).catch(() => {});
+        break;
+      case 'audit':
+        api.getAuditLog().then(setAuditEntries).catch(() => {});
+        break;
+      case 'estop':
+        api.getAgentClasses().then(setClasses).catch(() => {});
+        api.getStopEvents().then((evs) => {
+          if (Array.isArray(evs)) setStopEvents(evs);
+        }).catch(() => {});
+        break;
+      // 'performance' and 'settings' don't need polling — performance uses WebSocket
+    }
+  }, []);
+
   const reloadData = useCallback(() => {
     api.getAgentInstances().then(setInstances).catch(() => {});
     api.getAgentClasses().then(setClasses).catch(() => {});
@@ -190,11 +255,28 @@ export function AppShell() {
     }).catch(() => {});
   }, []);
 
+  // ── Smart Polling ──────────────────────────────────────────────────
+  // Initial full load (runs once on mount to populate all views)
   useEffect(() => {
     reloadData();
-    const timer = setInterval(reloadData, 5000);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Header-critical polling: fleet status + agent count (every 30s, pauses when tab is hidden)
+  useEffect(() => {
+    if (!isVisible) return;
+    refreshHeader();
+    const timer = setInterval(refreshHeader, 30_000);
     return () => clearInterval(timer);
-  }, [reloadData]);
+  }, [isVisible, refreshHeader]);
+
+  // View-specific polling: only fetch data the active view needs (every 10s, pauses when hidden)
+  useEffect(() => {
+    if (!isVisible) return;
+    fetchForView(view);
+    const timer = setInterval(() => fetchForView(view), 10_000);
+    return () => clearInterval(timer);
+  }, [view, isVisible, fetchForView]);
 
   const handleFleetAction = async (action: 'stop' | 'resume') => {
     if (action === 'stop') {
