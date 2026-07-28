@@ -25,9 +25,9 @@ async def get_dashboard_summary():
             "SELECT COUNT(*) FROM audit_log WHERE decision = 'deny' AND ts >= NOW() - INTERVAL '1 hour'"
         )
 
-        # Spend today
+        # Spend today (only allowed requests count toward spend)
         spend_today_cents = await conn.fetchval(
-            "SELECT COALESCE(SUM(spend_delta), 0) FROM audit_log WHERE ts >= CURRENT_DATE"
+            "SELECT COALESCE(SUM(spend_delta), 0) FROM audit_log WHERE ts >= CURRENT_DATE AND decision = 'allow'"
         )
 
     metrics_snap = {}

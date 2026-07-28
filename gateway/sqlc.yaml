@@ -1,7 +1,7 @@
 version: "2"
 sql:
   - engine: "postgresql"
-    schema: "../db/migrations/001_init.sql"
+    schema: "db/schema.sql"
     queries: "db/queries/"
     gen:
       go:
@@ -9,6 +9,7 @@ sql:
         out: "internal/db"
         sql_package: "pgx/v5"
         emit_json_tags: true
+        emit_empty_slices: true
         overrides:
           - db_type: "timestamptz"
             go_type: "time.Time"
@@ -18,3 +19,5 @@ sql:
             go_type: "int64"
           - db_type: "varchar"
             go_type: "string"
+          - db_type: "jsonb"
+            go_type: "encoding/json.RawMessage"

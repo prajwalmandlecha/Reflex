@@ -1,6 +1,6 @@
-'use client';
+"use client";
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from "react";
 
 // Default to same-origin WebSocket; nginx proxies /ws/ to the backend.
 const WS_BASE =
@@ -16,10 +16,13 @@ export function useWebSocket<T>(path: string, maxHistory = 100) {
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    let ws: WebSocket;
-    let timer: NodeJS.Timeout;
+    let ws: WebSocket | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    // When true, the close was deliberate (unmount / dep change) — do NOT reconnect (G9).
+    let closedIntentionally = false;
 
     const connect = () => {
+      if (closedIntentionally) return;
       const url = `${WS_BASE}${path}`;
       ws = new WebSocket(url);
       wsRef.current = ws;
@@ -40,22 +43,36 @@ export function useWebSocket<T>(path: string, maxHistory = 100) {
 
       ws.onclose = () => {
         setIsConnected(false);
-        // Reconnect after 3 seconds
-        timer = setTimeout(connect, 3000);
+        // Only reconnect if this wasn't a deliberate close.
+        if (!closedIntentionally) {
+          timer = setTimeout(connect, 3000);
+        }
       };
 
       ws.onerror = () => {
-        ws.close();
+        ws?.close();
       };
     };
 
     connect();
 
     return () => {
+      closedIntentionally = true;
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      // Close the socket created by THIS effect instance (not just the latest ref),
+      // so a prior reconnect's socket can't leak (G9).
+      if (ws) {
+        ws.onclose = null; // prevent reconnect logic from firing on this close
+        ws.close();
+        ws = null;
+      }
       if (wsRef.current) {
         wsRef.current.close();
+        wsRef.current = null;
       }
-      clearTimeout(timer);
     };
   }, [path, maxHistory]);
 

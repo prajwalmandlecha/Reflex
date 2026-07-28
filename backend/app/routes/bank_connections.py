@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, status
 from app.crypto import encrypt
 from app.database import get_pool
 from app.models.bank_connection import BankConnectionCreate, BankConnectionResponse, BankConnectionUpdate
-from app.services.config_propagation import cache_bank_connections, publish_config_update
+from app.services.config_propagation import cache_bank_connections, cache_tool_routing, publish_config_update
 from app.services.mcp_discovery import fetch_mcp_tools
 from app.services.openapi_ingestion import parse_openapi_spec
 
@@ -79,14 +79,17 @@ async def create_bank_connection(b: BankConnectionCreate):
             b.id, b.name, b.source_type, b.mcp_url, b.base_url, b.openapi_spec, b.credential_type, enc_creds, b.status,
         )
 
-        # Auto-discover tools if native_mcp or openapi
+        # Auto-discover tools if native_mcp or openapi.
+        # Discover FIRST; only wipe existing tools after we have a non-empty
+        # replacement set, so a failed discovery doesn't silently delete the
+        # previously-discovered tools (G16).
         discovered_tools = []
-        if (b.source_type == "native_mcp" and b.mcp_url) or (b.source_type == "openapi" and b.openapi_spec):
-            await conn.execute("DELETE FROM tools WHERE bank_connection_id = $1", b.id)
 
         if b.source_type == "native_mcp" and b.mcp_url:
 
-            mcp_tools = fetch_mcp_tools(b.mcp_url)
+            mcp_tools = await fetch_mcp_tools(b.mcp_url)
+            if mcp_tools:
+                await conn.execute("DELETE FROM tools WHERE bank_connection_id = $1", b.id)
             for t in mcp_tools:
                 t_row = await conn.fetchrow(
                     """
@@ -107,6 +110,8 @@ async def create_bank_connection(b: BankConnectionCreate):
                     })
         elif b.source_type == "openapi" and b.openapi_spec:
             _, openapi_tools = parse_openapi_spec(b.openapi_spec)
+            if openapi_tools:
+                await conn.execute("DELETE FROM tools WHERE bank_connection_id = $1", b.id)
             for t in openapi_tools:
                 t_row = await conn.fetchrow(
                     """
@@ -127,6 +132,7 @@ async def create_bank_connection(b: BankConnectionCreate):
                     })
 
     await cache_bank_connections()
+    await cache_tool_routing()
     await publish_config_update("connection", b.id)
 
     return BankConnectionResponse(
@@ -145,6 +151,7 @@ async def delete_all_connections():
     async with pool.acquire() as conn:
         await conn.execute("DELETE FROM bank_connections")
     await cache_bank_connections()
+    await cache_tool_routing()
     await publish_config_update("connection", "all")
     return {"status": "cleared", "message": "All bank connections and tools deleted successfully"}
 
@@ -157,6 +164,7 @@ async def delete_bank_connection(connection_id: str):
         if res == "DELETE 0":
             raise HTTPException(status_code=404, detail=f"Bank connection '{connection_id}' not found")
     await cache_bank_connections()
+    await cache_tool_routing()
     await publish_config_update("connection", connection_id)
     return None
 
@@ -203,6 +211,7 @@ async def register_openapi_spec(connection_id: str, payload: dict):
             inserted_tools.append(dict(row))
 
     await cache_bank_connections()
+    await cache_tool_routing()
     await publish_config_update("openapi", connection_id)
 
     return {

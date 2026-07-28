@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/agp/gateway/internal/db"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -18,25 +19,28 @@ type VerifyResult struct {
 
 // Verify reads the entire audit log and checks the hash chain integrity.
 func Verify(ctx context.Context, pool *pgxpool.Pool) (*VerifyResult, error) {
-	rows, err := pool.Query(ctx, "SELECT id, ts, agent_id, agent_class_id, action, decision, deny_stage, spend_delta, governance_overhead_ms, reason, prev_hash, entry_hash FROM audit_log ORDER BY id ASC")
+	q := db.New(pool)
+	rows, err := q.ListAuditLogForVerify(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("querying audit log: %w", err)
 	}
-	defer rows.Close()
 
 	result := &VerifyResult{Valid: true}
 	var prevHash string
 
-	for rows.Next() {
-		var id int64
-		var ts time.Time
-		var agentID, agentClassID, action, decision, denyStage, reason, rowPrevHash, entryHash string
-		var spendDelta int64
-		var govOverhead float64
-
-		if err := rows.Scan(&id, &ts, &agentID, &agentClassID, &action, &decision, &denyStage, &spendDelta, &govOverhead, &reason, &rowPrevHash, &entryHash); err != nil {
-			return nil, fmt.Errorf("scanning audit row: %w", err)
-		}
+	for _, row := range rows {
+		id := row.ID
+		ts := row.Ts
+		agentID := row.AgentID
+		agentClassID := row.AgentClassID.String
+		action := row.Action
+		decision := row.Decision
+		denyStage := row.DenyStage.String
+		reason := row.Reason.String
+		rowPrevHash := row.PrevHash.String
+		entryHash := row.EntryHash
+		spendDelta := row.SpendDelta.Int64
+		govOverhead := row.GovernanceOverheadMs.Float64
 
 		result.TotalEntries++
 

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import { cn } from '@/lib/utils';
+import { cn, copyToClipboard } from '@/lib/utils';
 import { Panel } from '@/components/gov/panel';
 import { StatusBadge } from '@/components/gov/status-badge';
 import { SpendBar } from '@/components/gov/spend-bar';
@@ -270,10 +270,12 @@ function CreateInstanceForm({ classes, onComplete }: { classes: AgentClass[]; on
     }
   };
 
-  const copyToken = () => {
-    navigator.clipboard.writeText(mintedToken);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const copyToken = async () => {
+    const ok = await copyToClipboard(mintedToken);
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
   };
 
   if (mintedToken) {
@@ -400,7 +402,7 @@ function AgentDetail({
   const handleMintToken = async () => {
     setLoadingToken(true);
     try {
-      const res = await fetch(`http://localhost:8000/api/v1/tokens?agent_id=${agent.id}&agent_kind=${agent.classId}`, { method: 'POST' });
+      const res = await fetch(`/api/v1/tokens?agent_id=${agent.id}&agent_kind=${agent.classId}`, { method: 'POST' });
       const data = await res.json();
       setJwtToken(data.token || '');
     } catch (err) {
@@ -410,10 +412,12 @@ function AgentDetail({
     }
   };
 
-  const copyToken = () => {
-    navigator.clipboard.writeText(jwtToken);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const copyToken = async () => {
+    const ok = await copyToClipboard(jwtToken);
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
   };
 
   return (
@@ -491,7 +495,7 @@ function AgentDetail({
       </div>
 
       {/* Connection Info & Snippets */}
-      <AgentConnectionSnippet agentId={agent.id} token={jwtToken} />
+      <AgentConnectionSnippet agent={agent} cls={cls} token={jwtToken} />
 
       {/* Recent actions */}
       <div className="border-b border-white/5 pb-4">
@@ -595,44 +599,72 @@ function AgentDetail({
   );
 }
 
-function AgentConnectionSnippet({ agentId, token }: { agentId: string; token?: string }) {
+function AgentConnectionSnippet({ agent, cls, token }: { agent: AgentInstance; cls?: AgentClass; token?: string }) {
   const [activeTab, setActiveTab] = useState<'mcp.json' | 'curl'>('mcp.json');
   const [copied, setCopied] = useState(false);
   const bearer = token || '<YOUR_JWT_TOKEN>';
 
-  const mcpJsonSnippet = `{
-  "mcpServers": {
-    "agp-governance": {
-      "url": "http://localhost:8080/mcp",
-      "headers": {
-        "Authorization": "Bearer ${bearer}",
-        "X-Agent-ID": "${agentId}"
-      }
-    }
-  }
-}`;
+  // Derive the gateway URL from the current host (nginx proxies port 80 → gateway 8080)
+  const gatewayUrl = typeof window !== 'undefined'
+    ? `${window.location.protocol}//${window.location.hostname}:8080/mcp`
+    : 'http://localhost:8080/mcp';
 
-  const curlSnippet = `curl -X POST http://localhost:8080/mcp \\
+  // Pick a sample tool from the agent's allowed tools for the curl example
+  const allowedTools = agent.tool_overrides?.length
+    ? agent.tool_overrides
+    : cls?.allowedTools || [];
+  const sampleTool = allowedTools[0] || 'get_balance';
+
+  // Build sample arguments based on common tool patterns
+  const sampleArgs: Record<string, string> = {};
+  if (sampleTool.includes('balance') || sampleTool.includes('transaction') || sampleTool.includes('history')) {
+    sampleArgs.account_id = 'acc-101';
+  } else if (sampleTool.includes('transfer') || sampleTool.includes('payment')) {
+    sampleArgs.recipient_account = 'acc-102';
+    sampleArgs.amount_cents = '1000';
+  } else if (sampleTool.includes('contact')) {
+    sampleArgs.contact_id = 'contact-1';
+  } else {
+    sampleArgs.account_id = 'acc-101';
+  }
+
+  const serverName = agent.id.replace(/[^a-zA-Z0-9-_]/g, '-');
+
+  const mcpJsonSnippet = JSON.stringify({
+    mcpServers: {
+      [serverName]: {
+        url: gatewayUrl,
+        headers: {
+          Authorization: `Bearer ${bearer}`,
+          'X-Agent-ID': agent.id,
+        },
+      },
+    },
+  }, null, 2);
+
+  const curlSnippet = `curl -X POST ${gatewayUrl} \\
   -H "Authorization: Bearer ${bearer}" \\
-  -H "X-Agent-ID: ${agentId}" \\
+  -H "X-Agent-ID: ${agent.id}" \\
   -H "Content-Type: application/json" \\
   -H "Accept: application/json, text/event-stream" \\
-  -d '{
-    "jsonrpc": "2.0",
-    "method": "tools/call",
-    "params": {
-      "name": "get_balance",
-      "arguments": {"account_id": "acc-101"}
+  -d '${JSON.stringify({
+    jsonrpc: '2.0',
+    method: 'tools/call',
+    params: {
+      name: sampleTool,
+      arguments: sampleArgs,
     },
-    "id": 1
-  }'`;
+    id: 1,
+  }, null, 2)}'`;
 
   const activeSnippet = activeTab === 'mcp.json' ? mcpJsonSnippet : curlSnippet;
 
-  const copySnippet = () => {
-    navigator.clipboard.writeText(activeSnippet);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const copySnippet = async () => {
+    const ok = await copyToClipboard(activeSnippet);
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
   };
 
   return (
@@ -672,8 +704,10 @@ function AgentConnectionSnippet({ agentId, token }: { agentId: string; token?: s
       </div>
 
       <div className="text-[10px] text-ink-secondary space-y-0.5 pt-1 font-mono">
-        <div>• <strong className="text-white">AGP Gateway Endpoint</strong>: <code className="text-cyan-300">http://localhost:8080/mcp</code></div>
-        <div>• <strong className="text-white">Auth Header</strong>: <code className="text-cyan-300">Authorization: Bearer &lt;JWT_TOKEN&gt;</code></div>
+        <div>• <strong className="text-white">Gateway Endpoint</strong>: <code className="text-cyan-300">{gatewayUrl}</code></div>
+        <div>• <strong className="text-white">Agent ID</strong>: <code className="text-cyan-300">{agent.id}</code></div>
+        <div>• <strong className="text-white">Class</strong>: <code className="text-cyan-300">{cls?.name ?? agent.classId}</code></div>
+        <div>• <strong className="text-white">Allowed Tools</strong>: <code className="text-cyan-300">{allowedTools.length > 0 ? allowedTools.join(', ') : 'None assigned'}</code></div>
       </div>
     </div>
   );
@@ -778,7 +812,17 @@ function AgentConnectionGuideModal({ open, onOpenChange }: { open: boolean; onOp
             </div>
           </div>
 
-          <AgentConnectionSnippet agentId="custom-agent-alpha" />
+          <AgentConnectionSnippet
+            agent={{
+              id: 'custom-agent-alpha',
+              classId: 'your-class-id',
+              status: 'active',
+              spendToday: 0,
+              capToday: 500,
+              lastAction: 'Idle',
+              lastSeen: 'Just now',
+            }}
+          />
 
           <div className="flex justify-end pt-2">
             <Button onClick={() => onOpenChange(false)} className="bg-cyan-600 hover:bg-cyan-500 text-white font-mono text-xs px-5">

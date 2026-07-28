@@ -11,6 +11,16 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _rego_str(value: Any) -> str:
+    """Return a safely-quoted, escaped Rego string literal for a Python value.
+
+    Uses JSON encoding, which produces a double-quoted string with the same
+    escaping rules Rego expects (\\, \", and control chars). Prevents a value
+    containing a quote or backslash from generating invalid Rego or injecting
+    policy code (G17)."""
+    return json.dumps(str(value))
+
+
 def visual_rules_to_rego(visual_rules: list[dict[str, Any]], target_id: str | None = None, scope: str = "global") -> str:
     """Auto-compile visual rule conditions into clean, standard Rego code."""
     if not visual_rules:
@@ -38,11 +48,11 @@ def visual_rules_to_rego(visual_rules: list[dict[str, Any]], target_id: str | No
         if not conditions:
             lines.append(f"{effect} if {{")
             if action and action != "*":
-                lines.append(f'\tinput.action == "{action}"')
+                lines.append(f'\tinput.action == {_rego_str(action)}')
             if target_id and scope == "instance":
-                lines.append(f'\tinput.agent_id == "{target_id}"')
+                lines.append(f'\tinput.agent_id == {_rego_str(target_id)}')
             elif target_id and scope == "class":
-                lines.append(f'\tinput.agent_kind == "{target_id}"')
+                lines.append(f'\tinput.agent_kind == {_rego_str(target_id)}')
             lines.append("}")
             lines.append("")
         else:
@@ -53,14 +63,15 @@ def visual_rules_to_rego(visual_rules: list[dict[str, Any]], target_id: str | No
 
                 lines.append(f"{effect} if {{")
                 if action and action != "*":
-                    lines.append(f'\tinput.action == "{action}"')
+                    lines.append(f'\tinput.action == {_rego_str(action)}')
                 if target_id and scope == "instance":
-                    lines.append(f'\tinput.agent_id == "{target_id}"')
+                    lines.append(f'\tinput.agent_id == {_rego_str(target_id)}')
                 elif target_id and scope == "class":
-                    lines.append(f'\tinput.agent_kind == "{target_id}"')
+                    lines.append(f'\tinput.agent_kind == {_rego_str(target_id)}')
 
                 # Check both params (Gateway format) and arguments (Testcase format)
-                lines.append(f'\tparam_val := object.get(object.get(input, "params", {{}}), "{field}", object.get(object.get(input, "arguments", {{}}), "{field}", null))')
+                field_lit = _rego_str(field)
+                lines.append(f'\tparam_val := object.get(object.get(input, "params", {{}}), {field_lit}, object.get(object.get(input, "arguments", {{}}), {field_lit}, null))')
                 lines.append('\tparam_val != null')
 
                 if op in ("eq", "=="):
@@ -69,14 +80,14 @@ def visual_rules_to_rego(visual_rules: list[dict[str, Any]], target_id: str | No
                     elif isinstance(val, (int, float)) or (isinstance(val, str) and val.replace('.', '', 1).isdigit()):
                         lines.append(f"\tparam_val == {val}")
                     else:
-                        lines.append(f'\tparam_val == "{val}"')
+                        lines.append(f"\tparam_val == {_rego_str(val)}")
                 elif op in ("ne", "!="):
                     if isinstance(val, bool):
                         lines.append(f"\tparam_val != {str(val).lower()}")
                     elif isinstance(val, (int, float)) or (isinstance(val, str) and val.replace('.', '', 1).isdigit()):
                         lines.append(f"\tparam_val != {val}")
                     else:
-                        lines.append(f'\tparam_val != "{val}"')
+                        lines.append(f"\tparam_val != {_rego_str(val)}")
                 elif op == "gt":
                     lines.append(f"\tto_number(param_val) > {val}")
                 elif op == "gte":
@@ -86,11 +97,11 @@ def visual_rules_to_rego(visual_rules: list[dict[str, Any]], target_id: str | No
                 elif op == "lte":
                     lines.append(f"\tto_number(param_val) <= {val}")
                 elif op == "contains":
-                    lines.append(f'\tcontains(sprintf("%v", [param_val]), "{val}")')
+                    lines.append(f'\tcontains(sprintf("%v", [param_val]), {_rego_str(val)})')
                 elif op == "regex_deny":
-                    lines.append(f'\tregex.match("{val}", sprintf("%v", [param_val]))')
+                    lines.append(f'\tregex.match({_rego_str(val)}, sprintf("%v", [param_val]))')
                 elif op == "regex_allow":
-                    lines.append(f'\tnot regex.match("{val}", sprintf("%v", [param_val]))')
+                    lines.append(f'\tnot regex.match({_rego_str(val)}, sprintf("%v", [param_val]))')
                 elif op == "in_list":
                     list_str = json.dumps(val if isinstance(val, list) else [str(val)])
                     lines.append(f"\tparam_val in {list_str}")

@@ -29,6 +29,7 @@ import {
   Octagon,
   Settings,
   Bell,
+  HelpCircle,
 } from 'lucide-react';
 
 import { useWebSocket } from '@/hooks/useWebSocket';
@@ -86,6 +87,20 @@ export function AppShell() {
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [agentsFilter, setAgentsFilter] = useState<{ classId?: string; status?: string } | null>(null);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
+  const [showHelpModal, setShowHelpModal] = useState(false);
+  const [hideHelpOnStartup, setHideHelpOnStartup] = useState(false);
+
+  // Show the getting-started guide on load unless the operator opted out
+  useEffect(() => {
+    const dismissed = localStorage.getItem('reflex_help_dismissed') === '1';
+    setHideHelpOnStartup(dismissed);
+    if (!dismissed) setShowHelpModal(true);
+  }, []);
+
+  const toggleHideHelpOnStartup = (hide: boolean) => {
+    setHideHelpOnStartup(hide);
+    localStorage.setItem('reflex_help_dismissed', hide ? '1' : '0');
+  };
 
   const { isConnected: isFleetWsConnected } = useWebSocket('/ws/fleet');
   const { history: wsAlerts } = useWebSocket<AlertItem>('/ws/alerts');
@@ -126,6 +141,7 @@ export function AppShell() {
       } else if (e.key === 'Escape') {
         setSelectedAgentId(null);
         setShowShortcutsModal(false);
+        setShowHelpModal(false);
       } else if (e.shiftKey && e.key.toUpperCase() === 'E') {
         e.preventDefault();
         setView('estop');
@@ -287,6 +303,15 @@ export function AppShell() {
 
           <div className="flex items-center gap-3">
             <button
+              onClick={() => setShowHelpModal(true)}
+              className="px-2.5 py-1 rounded border border-[#232B35] bg-[#131A22] text-[#8B96A3] hover:text-[#E4E9EE] hover:bg-[#232B35]/50 font-mono text-xs transition-colors flex items-center gap-1.5"
+              title="Getting Started Guide"
+            >
+              <HelpCircle className="w-3.5 h-3.5 text-[#4C8DFF]" />
+              <span>Help</span>
+            </button>
+
+            <button
               onClick={() => setShowShortcutsModal(true)}
               className="px-2.5 py-1 rounded border border-[#232B35] bg-[#131A22] text-[#8B96A3] hover:text-[#E4E9EE] hover:bg-[#232B35]/50 font-mono text-xs transition-colors flex items-center gap-1"
               title="Keyboard Shortcuts (?)"
@@ -352,6 +377,110 @@ export function AppShell() {
           {view === 'settings' && <SettingsView operator={operator} />}
         </main>
       </div>
+
+      {/* Getting Started / Help Modal */}
+      {showHelpModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-lg border border-[#232B35] bg-[#131A22] p-5 shadow-2xl rounded-lg max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-[#232B35] pb-3 mb-4">
+              <h3 className="font-mono text-sm font-semibold uppercase tracking-wider text-[#E4E9EE] flex items-center gap-2">
+                <HelpCircle className="w-4 h-4 text-[#4C8DFF]" />
+                Getting Started
+              </h3>
+              <button
+                onClick={() => setShowHelpModal(false)}
+                className="font-mono text-xs text-[#8B96A3] hover:text-[#E4E9EE]"
+              >
+                ✕ Esc
+              </button>
+            </div>
+
+            <p className="text-xs text-[#8B96A3] mb-4 leading-relaxed">
+              Reflex governs how AI agents talk to your banking APIs. Follow these steps to
+              onboard and run your first governed agent:
+            </p>
+
+            <div className="space-y-3">
+              {[
+                {
+                  step: 1,
+                  title: 'Add a Bank Connection',
+                  desc: 'Go to Bank Connections and connect an upstream bank — either a REST API (via its OpenAPI spec) or an MCP server. Reflex discovers the available tools/endpoints automatically.',
+                  viewId: 'bank' as ViewId,
+                  linkLabel: 'Bank Connections',
+                },
+                {
+                  step: 2,
+                  title: 'Create an Agent Class',
+                  desc: 'In Agent Classes, define a class with its rules and restrictions: allowed tools, spend caps, rate limits, and constraints. Every instance of the class inherits these guardrails.',
+                  viewId: 'classes' as ViewId,
+                  linkLabel: 'Agent Classes',
+                },
+                {
+                  step: 3,
+                  title: 'Register Agent Instances',
+                  desc: 'In Agents, register instances of your class. Each instance gets a JWT bearer token minted at registration — copy it and give it to your agent.',
+                  viewId: 'agents' as ViewId,
+                  linkLabel: 'Agents',
+                },
+                {
+                  step: 4,
+                  title: 'Connect Your Agent via the Gateway',
+                  desc: 'Point your agent at the Reflex gateway with the minted token in the Authorization header (see the Connection Guide in the Agents tab). Every call is authenticated, policy-checked, and audited.',
+                  viewId: 'agents' as ViewId,
+                  linkLabel: 'Connection Guide',
+                },
+                {
+                  step: 5,
+                  title: 'Monitor & Control',
+                  desc: 'Watch live traffic in Command Center and Activity, review the tamper-evident Audit Log, and use Emergency Stop to revoke an instance, a class, or the whole fleet instantly.',
+                  viewId: 'command' as ViewId,
+                  linkLabel: 'Command Center',
+                },
+              ].map((s) => (
+                <div key={s.step} className="flex gap-3 rounded-lg border border-[#232B35] bg-[#0B0F14]/60 p-3">
+                  <div className="w-6 h-6 rounded-full bg-[#4C8DFF]/15 border border-[#4C8DFF]/30 flex items-center justify-center font-mono text-xs font-bold text-[#4C8DFF] flex-shrink-0">
+                    {s.step}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="font-mono text-xs font-semibold text-[#E4E9EE] mb-1 flex items-center gap-2 flex-wrap">
+                      {s.title}
+                      <button
+                        onClick={() => {
+                          setView(s.viewId);
+                          setShowHelpModal(false);
+                        }}
+                        className="px-1.5 py-0.5 rounded border border-[#4C8DFF]/30 bg-[#4C8DFF]/10 text-[10px] font-mono text-[#4C8DFF] hover:bg-[#4C8DFF]/20 transition-colors"
+                      >
+                        Open {s.linkLabel} →
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-[#8B96A3] leading-relaxed">{s.desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-5 pt-3 border-t border-[#232B35] flex items-center justify-between">
+              <label className="flex items-center gap-2 font-mono text-[11px] text-[#8B96A3] cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={hideHelpOnStartup}
+                  onChange={(e) => toggleHideHelpOnStartup(e.target.checked)}
+                  className="accent-[#4C8DFF]"
+                />
+                Don&apos;t show on startup
+              </label>
+              <button
+                onClick={() => setShowHelpModal(false)}
+                className="px-3 py-1.5 rounded bg-[#4C8DFF] text-white font-mono text-xs hover:bg-[#4C8DFF]/90 transition-colors"
+              >
+                Got it
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Keyboard Shortcuts Modal */}
       {showShortcutsModal && (

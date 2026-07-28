@@ -42,32 +42,34 @@ type GovernanceTimings struct {
 }
 
 type GovernanceEvent struct {
-	Type            string            `json:"type"`
-	AgentID         string            `json:"agent_id"`
-	AgentClassID    string            `json:"agent_class_id"`
-	Tool            string            `json:"tool"`
-	Decision        string            `json:"decision"`
-	DenyStage       string            `json:"deny_stage"`
-	Reason          string            `json:"reason"`
-	SpendDeltaCents int64             `json:"spend_delta_cents"`
+	Type            string             `json:"type"`
+	AgentID         string             `json:"agent_id"`
+	AgentClassID    string             `json:"agent_class_id"`
+	Tool            string             `json:"tool"`
+	Decision        string             `json:"decision"`
+	DenyStage       string             `json:"deny_stage"`
+	Reason          string             `json:"reason"`
+	SpendDeltaCents int64              `json:"spend_delta_cents"`
 	Latency         map[string]float64 `json:"latency"`
-	Timestamp       string            `json:"timestamp"`
+	Timestamp       string             `json:"timestamp"`
 }
 
 type MCPProxy struct {
-	targets          map[string]string
-	openAPITargets   map[string]*OpenAPISpecTarget
-	openAPIMux       sync.RWMutex
-	ks               *killswitch.Switch
-	policyEngine     *authz.Engine
-	spendLimiter     *spend.Limiter
-	constraintCheck  *constraints.Checker
-	configCache      *configcache.ConfigCache
-	auditor          *audit.Logger
-	jwtMgr           *authn.JWTManager
-	rdb              *redis.Client
-	logger           *slog.Logger
-	client           *http.Client
+	targets         map[string]string
+	openAPITargets  map[string]*OpenAPISpecTarget
+	openAPIMux      sync.RWMutex
+	toolRouting     map[string]string // tool_name → service/connection_id
+	toolRoutingMux  sync.RWMutex
+	ks              *killswitch.Switch
+	policyEngine    *authz.Engine
+	spendLimiter    *spend.Limiter
+	constraintCheck *constraints.Checker
+	configCache     *configcache.ConfigCache
+	auditor         *audit.Logger
+	jwtMgr          *authn.JWTManager
+	rdb             *redis.Client
+	logger          *slog.Logger
+	client          *http.Client
 }
 
 func NewMCPProxy(
@@ -85,6 +87,7 @@ func NewMCPProxy(
 	return &MCPProxy{
 		targets:         targets,
 		openAPITargets:  make(map[string]*OpenAPISpecTarget),
+		toolRouting:     make(map[string]string),
 		ks:              ks,
 		policyEngine:    policyEngine,
 		spendLimiter:    spendLimiter,
@@ -114,6 +117,115 @@ func (p *MCPProxy) RegisterOpenAPISpec(serviceName string, baseURL string, specD
 	return nil
 }
 
+// connectionEntry mirrors a single bank_connections row as cached in Redis
+// under agp:connections by the backend.
+type connectionEntry struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	SourceType  string `json:"source_type"`
+	MCPURL      string `json:"mcp_url"`
+	BaseURL     string `json:"base_url"`
+	OpenAPISpec string `json:"openapi_spec"`
+}
+
+// LoadOpenAPISpecs reads the bank-connection cache from Redis and registers an
+// OpenAPI virtual target for every connection of source_type "openapi" that has
+// a spec. It replaces the entire OpenAPI target set atomically. Called once at
+// startup and again whenever a connection/openapi config-update arrives (G7).
+func (p *MCPProxy) LoadOpenAPISpecs(ctx context.Context) {
+	if p.rdb == nil {
+		return
+	}
+	raw, err := p.rdb.Get(ctx, "agp:connections").Result()
+	if err != nil || raw == "" {
+		return
+	}
+	var mapping map[string]connectionEntry
+	if err := json.Unmarshal([]byte(raw), &mapping); err != nil {
+		p.logger.Warn("failed to parse agp:connections for openapi specs", "error", err)
+		return
+	}
+
+	newTargets := make(map[string]*OpenAPISpecTarget)
+	for id, conn := range mapping {
+		if conn.SourceType != "openapi" || conn.OpenAPISpec == "" {
+			continue
+		}
+		doc, err := adapter.LoadSpec([]byte(conn.OpenAPISpec))
+		if err != nil {
+			p.logger.Warn("skipping unparsable openapi spec", "connection", id, "error", err)
+			continue
+		}
+		baseURL := conn.BaseURL
+		if baseURL == "" {
+			baseURL = "http://localhost:8080"
+		}
+		newTargets[id] = &OpenAPISpecTarget{BaseURL: baseURL, Doc: doc}
+	}
+
+	p.openAPIMux.Lock()
+	p.openAPITargets = newTargets
+	p.openAPIMux.Unlock()
+	p.logger.Info("loaded openapi virtual targets", "count", len(newTargets))
+}
+
+// LoadToolRouting reads the tool_name → connection_id mapping from Redis.
+// This enables the gateway to route /mcp requests to the correct downstream
+// based on the tool name in tools/call, without requiring a service-specific URL.
+func (p *MCPProxy) LoadToolRouting(ctx context.Context) {
+	if p.rdb == nil {
+		return
+	}
+	raw, err := p.rdb.Get(ctx, "agp:tool_routing").Result()
+	if err != nil || raw == "" {
+		return
+	}
+	var mapping map[string]string
+	if err := json.Unmarshal([]byte(raw), &mapping); err != nil {
+		p.logger.Warn("failed to parse agp:tool_routing", "error", err)
+		return
+	}
+	p.toolRoutingMux.Lock()
+	p.toolRouting = mapping
+	p.toolRoutingMux.Unlock()
+	p.logger.Info("loaded tool routing map", "count", len(mapping))
+}
+
+// resolveServiceForTool returns the connection_id that owns the given tool.
+func (p *MCPProxy) resolveServiceForTool(toolName string) string {
+	p.toolRoutingMux.RLock()
+	defer p.toolRoutingMux.RUnlock()
+	return p.toolRouting[toolName]
+}
+
+// SubscribeConnectionUpdates listens for connection/openapi config changes and
+// reloads OpenAPI virtual targets so newly-registered specs take effect without
+// a restart. Runs until ctx is cancelled.
+func (p *MCPProxy) SubscribeConnectionUpdates(ctx context.Context) {
+	if p.rdb == nil {
+		return
+	}
+	sub := p.rdb.Subscribe(ctx, "config:updates")
+	defer sub.Close()
+	ch := sub.Channel()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg, ok := <-ch:
+			if !ok {
+				return
+			}
+			// Reload on any connection/openapi change.
+			if msg == nil {
+				continue
+			}
+			p.LoadOpenAPISpecs(ctx)
+			p.LoadToolRouting(ctx)
+		}
+	}
+}
+
 func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	reqStart := time.Now()
 
@@ -135,12 +247,6 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	serviceName := p.extractServiceName(r.URL.Path)
-
-	p.openAPIMux.RLock()
-	openAPITarget, isOpenAPI := p.openAPITargets[serviceName]
-	p.openAPIMux.RUnlock()
-
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -156,19 +262,87 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	method, _ := rpcReq["method"].(string)
 	reqID := rpcReq["id"]
 
+	// JSON-RPC notifications (no "id" field) must receive 202 Accepted per MCP spec.
+	// VS Code's MCP client logs "Unexpected 200 response" for notifications that
+	// get a 200 instead of 202.
+	if reqID == nil && method != "" && strings.HasPrefix(method, "notifications/") {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+
+	// Resolve the target service via tool routing for tools/call
+	var serviceName string
+	if method == "tools/call" {
+		params, _ := rpcReq["params"].(map[string]any)
+		toolName, _ := params["name"].(string)
+		if toolName != "" {
+			if resolved := p.resolveServiceForTool(toolName); resolved != "" {
+				serviceName = resolved
+				p.logger.Debug("resolved service via tool routing", "tool", toolName, "service", serviceName)
+			}
+		}
+	}
+
+	p.openAPIMux.RLock()
+	openAPITarget, isOpenAPI := p.openAPITargets[serviceName]
+	p.openAPIMux.RUnlock()
+
 	if sessionID := r.Header.Get("Mcp-Session-Id"); sessionID != "" {
 		p.trackSession(r.Context(), sessionID, agentID, agentKind, serviceName)
 	}
 
 	if isOpenAPI {
-		p.handleOpenAPIRequest(w, r, openAPITarget, rpcReq, method, agentID, agentKind, classID, allowedTools, agentCfg, reqStart)
+		p.handleOpenAPIRequest(w, r, openAPITarget, rpcReq, method, serviceName, agentID, agentKind, classID, allowedTools, agentCfg, reqStart)
 		return
 	}
 
-	targetURL := p.resolveTargetURL(r.URL.Path)
+	// Handle initialize at the gateway level — the gateway is the MCP server
+	// from the client's perspective; downstream sessions are managed internally.
+	if method == "initialize" {
+		sessionID := fmt.Sprintf("sess_%d_%s", time.Now().UnixNano(), agentID)
+		w.Header().Set("Mcp-Session-Id", sessionID)
+		p.trackSession(r.Context(), sessionID, agentID, agentKind, serviceName)
 
-	if method == "tools/list" && len(allowedTools) > 0 {
-		p.handleFilteredToolsList(w, r, targetURL, bodyBytes, allowedTools)
+		// Echo back the client's requested protocol version, defaulting to 2024-11-05
+		clientProtocol := "2024-11-05"
+		if params, ok := rpcReq["params"].(map[string]any); ok {
+			if pv, ok := params["protocolVersion"].(string); ok && pv != "" {
+				clientProtocol = pv
+			}
+		}
+
+		res := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      reqID,
+			"result": map[string]any{
+				"protocolVersion": clientProtocol,
+				"capabilities":    map[string]any{"tools": map[string]any{}},
+				"serverInfo":      map[string]any{"name": "reflex-gateway", "version": "1.0.0"},
+			},
+		}
+		p.sendJSONRPCResponse(w, r, res)
+		return
+	}
+
+	// Resolve target URL from service name
+	var targetURL string
+	if serviceName != "" {
+		if url, ok := p.targets[serviceName]; ok {
+			targetURL = url
+		}
+	}
+	if targetURL == "" {
+		if defaultURL, ok := p.targets["default"]; ok {
+			targetURL = defaultURL
+		} else {
+			targetURL = "http://localhost:9000"
+		}
+	}
+
+	if method == "tools/list" {
+		// Always aggregate tools from all services
+		p.handleAggregatedToolsList(w, r, bodyBytes, allowedTools)
 		return
 	}
 
@@ -198,6 +372,12 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		decisionStr := map[bool]string{true: "allow", false: "deny"}[allowed]
 
+		// Denied requests must not contribute to spend totals
+		spendDeltaCents := int64(0)
+		if allowed {
+			spendDeltaCents = int64(amount * 100)
+		}
+
 		// Record Prometheus Metrics
 		metrics.RequestDuration.WithLabelValues(toolName, classID, decisionStr).Observe(totalMs / 1000.0)
 		metrics.GovernanceOverhead.WithLabelValues(toolName, decisionStr).Observe(govOverheadMs / 1000.0)
@@ -216,7 +396,7 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Decision:        decisionStr,
 			DenyStage:       denyStage,
 			Reason:          reason,
-			SpendDeltaCents: int64(amount * 100),
+			SpendDeltaCents: spendDeltaCents,
 			Latency: map[string]float64{
 				"total_ms":               totalMs,
 				"killswitch_ms":          timings.KillswitchMs,
@@ -239,7 +419,7 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Decision:             decisionStr,
 			DenyStage:            denyStage,
 			Reason:               reason,
-			SpendDelta:           int64(amount * 100),
+			SpendDelta:           spendDeltaCents,
 			TotalLatencyMs:       totalMs,
 			KillswitchLatencyMs:  timings.KillswitchMs,
 			PolicyLatencyMs:      timings.PolicyMs,
@@ -280,9 +460,10 @@ func (p *MCPProxy) governCall(
 		return false, "killswitch", ksRes.Reason, t
 	}
 
-	// Stage 2: Dynamic Per-Tool Constraints
+	// Stage 2: Dynamic Per-Tool Constraints (DRY-RUN — read-only, no counter
+	// increments yet, so a deny at a later stage never consumes budget; G4)
 	cStart := time.Now()
-	cOk, cReason := p.constraintCheck.Check(ctx, cfg, toolName, args)
+	cOk, cReason := p.constraintCheck.Check(ctx, cfg, toolName, args, false)
 	t.ConstraintMs = ms(time.Since(cStart))
 	metrics.ConstraintCheckDuration.WithLabelValues(toolName).Observe(t.ConstraintMs / 1000.0)
 
@@ -332,6 +513,16 @@ func (p *MCPProxy) governCall(
 		}
 	} else {
 		t.SpendCheckMs = ms(time.Since(spendStart))
+	}
+
+	// Stage 5: Commit stateful constraint counters (rate limit, cumulative spend)
+	// now that ALL governance stages have passed. This is the only place these
+	// counters are incremented, so denied calls never consume budget (G4). If the
+	// commit itself reports a breach (lost a race against a concurrent call), deny.
+	commitOk, commitReason := p.constraintCheck.Check(ctx, cfg, toolName, args, true)
+	if !commitOk {
+		t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs + t.PolicyMs + t.SpendCheckMs
+		return false, "constraint", commitReason, t
 	}
 
 	t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs + t.PolicyMs + t.SpendCheckMs
@@ -388,6 +579,7 @@ func (p *MCPProxy) handleOpenAPIRequest(
 	target *OpenAPISpecTarget,
 	rpcReq map[string]any,
 	method string,
+	serviceName string,
 	agentID string,
 	agentKind string,
 	classID string,
@@ -401,21 +593,29 @@ func (p *MCPProxy) handleOpenAPIRequest(
 	case "initialize":
 		sessionID := fmt.Sprintf("sess_%d_%s", time.Now().UnixNano(), agentID)
 		w.Header().Set("Mcp-Session-Id", sessionID)
-		p.trackSession(r.Context(), sessionID, agentID, agentKind, p.extractServiceName(r.URL.Path))
+		p.trackSession(r.Context(), sessionID, agentID, agentKind, serviceName)
+
+		clientProtocol := "2024-11-05"
+		if params, ok := rpcReq["params"].(map[string]any); ok {
+			if pv, ok := params["protocolVersion"].(string); ok && pv != "" {
+				clientProtocol = pv
+			}
+		}
 
 		res := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      reqID,
 			"result": map[string]any{
-				"protocolVersion": "2024-11-05",
+				"protocolVersion": clientProtocol,
 				"capabilities":    map[string]any{"tools": map[string]any{}},
-				"serverInfo":      map[string]any{"name": "agp-virtual-openapi-mcp", "version": "1.0.0"},
+				"serverInfo":      map[string]any{"name": "reflex-gateway", "version": "1.0.0"},
 			},
 		}
 		p.sendJSONRPCResponse(w, r, res)
 
 	case "notifications/initialized":
-		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusAccepted)
 
 	case "tools/list":
 		tools, err := adapter.SpecToMCPTools(target.Doc)
@@ -453,12 +653,10 @@ func (p *MCPProxy) handleOpenAPIRequest(
 		toolName, _ := params["name"].(string)
 		args, _ := params["arguments"].(map[string]any)
 
-		var amount float64
-		if amt, ok := args["amount"].(float64); ok {
-			amount = amt
-		} else if amtCents, ok := args["amount_cents"].(float64); ok {
-			amount = amtCents / 100.0
-		}
+		// Use the shared extractor (handles float/int/string for amount and
+		// amount_cents) so caps and the $1000 bound aren't bypassed by
+		// non-float64 JSON number encodings (G12).
+		amount := extractAmount(args)
 
 		allowed, denyStage, reason, timings := p.governCall(r.Context(), agentID, classID, agentKind, toolName, amount, allowedTools, agentCfg, args)
 
@@ -467,17 +665,24 @@ func (p *MCPProxy) handleOpenAPIRequest(
 		if allowed {
 			restReq, err := adapter.BuildRESTRequest(target.BaseURL, target.Doc, toolName, args)
 			if err != nil {
-				p.sendErrorResponse(w, r, reqID, fmt.Sprintf("invalid tool arguments: %v", err))
-				return
+				// Downstream request construction failed after governance allowed:
+				// record as a downstream-stage failure and STILL audit/emit below.
+				allowed = false
+				denyStage = "downstream"
+				reason = fmt.Sprintf("invalid tool arguments: %v", err)
+				p.sendErrorResponse(w, r, reqID, reason)
+			} else {
+				restReq = restReq.WithContext(r.Context())
+				resp, err := p.client.Do(restReq)
+				if err != nil {
+					allowed = false
+					denyStage = "downstream"
+					reason = "downstream bank REST API unreachable"
+					p.sendErrorResponse(w, r, reqID, reason)
+				} else {
+					mcpResult = adapter.RESTResponseToMCPResult(resp)
+				}
 			}
-			restReq = restReq.WithContext(r.Context())
-
-			resp, err := p.client.Do(restReq)
-			if err != nil {
-				p.sendErrorResponse(w, r, reqID, "downstream bank REST API unreachable")
-				return
-			}
-			mcpResult = adapter.RESTResponseToMCPResult(resp)
 		} else {
 			p.sendErrorResponse(w, r, reqID, reason)
 		}
@@ -489,6 +694,21 @@ func (p *MCPProxy) handleOpenAPIRequest(
 		totalMs := ms(time.Since(reqStart))
 		govOverheadMs := timings.GovernanceTotal
 		decisionStr := map[bool]string{true: "allow", false: "deny"}[allowed]
+
+		// Denied requests must not contribute to spend totals
+		spendDeltaCents := int64(0)
+		if allowed {
+			spendDeltaCents = int64(amount * 100)
+		}
+
+		// Record Prometheus Metrics (parity with the MCP tools/call path)
+		metrics.RequestDuration.WithLabelValues(toolName, classID, decisionStr).Observe(totalMs / 1000.0)
+		metrics.GovernanceOverhead.WithLabelValues(toolName, decisionStr).Observe(govOverheadMs / 1000.0)
+		if allowed {
+			metrics.DownstreamDuration.WithLabelValues(serviceName, toolName).Observe(downstreamMs / 1000.0)
+			metrics.SpendProcessed.WithLabelValues(agentID, classID).Add(amount * 100)
+		}
+		metrics.DecisionsTotal.WithLabelValues(toolName, classID, decisionStr, denyStage).Inc()
 
 		if allowed {
 			res := map[string]any{"jsonrpc": "2.0", "id": reqID, "result": mcpResult}
@@ -503,7 +723,7 @@ func (p *MCPProxy) handleOpenAPIRequest(
 			Decision:        decisionStr,
 			DenyStage:       denyStage,
 			Reason:          reason,
-			SpendDeltaCents: int64(amount * 100),
+			SpendDeltaCents: spendDeltaCents,
 			Latency: map[string]float64{
 				"total_ms":               totalMs,
 				"killswitch_ms":          timings.KillswitchMs,
@@ -520,12 +740,12 @@ func (p *MCPProxy) handleOpenAPIRequest(
 			AgentID:              agentID,
 			AgentClassID:         classID,
 			Action:               toolName,
-			BankConnectionID:     p.extractServiceName(r.URL.Path),
+			BankConnectionID:     serviceName,
 			Params:               args,
 			Decision:             decisionStr,
 			DenyStage:            denyStage,
 			Reason:               reason,
-			SpendDelta:           int64(amount * 100),
+			SpendDelta:           spendDeltaCents,
 			TotalLatencyMs:       totalMs,
 			KillswitchLatencyMs:  timings.KillswitchMs,
 			PolicyLatencyMs:      timings.PolicyMs,
@@ -549,7 +769,7 @@ func (p *MCPProxy) publishEvent(ctx context.Context, event GovernanceEvent) {
 
 func (p *MCPProxy) sendJSONRPCResponse(w http.ResponseWriter, r *http.Request, res map[string]any) {
 	b, _ := json.Marshal(res)
-	if strings.Contains(r.Header.Get("Accept"), "text/event-stream") && !strings.Contains(r.Header.Get("Accept"), "application/json") {
+	if prefersSSE(r) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintf(w, "event: message\ndata: %s\n\n", string(b))
@@ -560,7 +780,25 @@ func (p *MCPProxy) sendJSONRPCResponse(w http.ResponseWriter, r *http.Request, r
 	}
 }
 
+// prefersSSE returns true if the client's Accept header lists text/event-stream
+// before application/json, indicating SSE is the preferred transport.
+func prefersSSE(r *http.Request) bool {
+	accept := r.Header.Get("Accept")
+	sseIdx := strings.Index(accept, "text/event-stream")
+	jsonIdx := strings.Index(accept, "application/json")
+	if sseIdx == -1 {
+		return false
+	}
+	if jsonIdx == -1 {
+		return true
+	}
+	return sseIdx < jsonIdx
+}
+
 func (p *MCPProxy) sendErrorResponse(w http.ResponseWriter, r *http.Request, reqID any, reason string) {
+	// Marshal the inner payload so a reason containing quotes/backslashes can't
+	// produce invalid JSON (G20).
+	innerJSON, _ := json.Marshal(map[string]any{"allow": false, "reason": reason})
 	errResp := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      reqID,
@@ -568,21 +806,164 @@ func (p *MCPProxy) sendErrorResponse(w http.ResponseWriter, r *http.Request, req
 			"content": []map[string]any{
 				{
 					"type": "text",
-					"text": fmt.Sprintf(`{"allow":false,"reason":"%s"}`, reason),
+					"text": string(innerJSON),
 				},
 			},
 			"isError": true,
 		},
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-
 	errJSON, _ := json.Marshal(errResp)
-	if strings.Contains(r.Header.Get("Accept"), "text/event-stream") && !strings.Contains(r.Header.Get("Accept"), "application/json") {
+	if prefersSSE(r) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
 		fmt.Fprintf(w, "event: message\ndata: %s\n\n", string(errJSON))
 	} else {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
 		w.Write(errJSON)
 	}
+}
+
+// handleAggregatedToolsList fetches tools/list from all registered services
+// (native MCP targets + OpenAPI virtual targets), merges them, filters by the
+// agent's allowed tools, and returns a single combined response.
+func (p *MCPProxy) handleAggregatedToolsList(w http.ResponseWriter, r *http.Request, bodyBytes []byte, allowedTools []string) {
+	allowedSet := make(map[string]bool)
+	for _, t := range allowedTools {
+		allowedSet[t] = true
+	}
+
+	var allTools []any
+	var rpcReq map[string]any
+	_ = json.Unmarshal(bodyBytes, &rpcReq)
+	reqID := rpcReq["id"]
+
+	// 1. Fetch from native MCP targets
+	seen := make(map[string]bool)
+	for svcName, targetBaseURL := range p.targets {
+		if svcName == "default" {
+			continue
+		}
+		targetURL := targetBaseURL
+		if !strings.HasSuffix(targetURL, "/mcp") {
+			targetURL = strings.TrimSuffix(targetURL, "/") + "/mcp"
+		}
+		if seen[targetURL] {
+			continue
+		}
+		seen[targetURL] = true
+
+		tools := p.fetchToolsFromTarget(r, targetURL, bodyBytes)
+		allTools = append(allTools, tools...)
+	}
+
+	// 2. Fetch from OpenAPI virtual targets
+	p.openAPIMux.RLock()
+	for _, target := range p.openAPITargets {
+		mcpTools, err := adapter.SpecToMCPTools(target.Doc)
+		if err != nil {
+			continue
+		}
+		for _, t := range mcpTools {
+			toolMap := map[string]any{
+				"name":        t.Name,
+				"description": t.Description,
+				"inputSchema": t.InputSchema,
+			}
+			allTools = append(allTools, toolMap)
+		}
+	}
+	p.openAPIMux.RUnlock()
+
+	// 3. Filter by allowed tools
+	var filtered []any
+	for _, tool := range allTools {
+		if toolMap, ok := tool.(map[string]any); ok {
+			name, _ := toolMap["name"].(string)
+			if len(allowedTools) == 0 || allowedSet[name] {
+				filtered = append(filtered, tool)
+			}
+		}
+	}
+	if filtered == nil {
+		filtered = []any{}
+	}
+
+	res := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      reqID,
+		"result":  map[string]any{"tools": filtered},
+	}
+	p.sendJSONRPCResponse(w, r, res)
+}
+
+// fetchToolsFromTarget fetches tools/list from a single native MCP downstream.
+// Handles session termination by retrying with a fresh session.
+func (p *MCPProxy) fetchToolsFromTarget(r *http.Request, targetURL string, bodyBytes []byte) []any {
+	tools, terminated := p.doFetchTools(r, targetURL, bodyBytes, false)
+	if terminated {
+		p.logger.Info("downstream session terminated during tools/list, re-initializing", "target", targetURL)
+		p.invalidateDownstreamSession(r.Context(), targetURL)
+		tools, _ = p.doFetchTools(r, targetURL, bodyBytes, true)
+	}
+	return tools
+}
+
+func (p *MCPProxy) doFetchTools(r *http.Request, targetURL string, bodyBytes []byte, forceNewSession bool) ([]any, bool) {
+	outReq, err := http.NewRequestWithContext(r.Context(), "POST", targetURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, false
+	}
+	outReq.Header.Set("Content-Type", "application/json")
+	outReq.Header.Set("Accept", "application/json, text/event-stream")
+
+	if forceNewSession {
+		if sessID := p.createDownstreamSession(r.Context(), targetURL); sessID != "" {
+			outReq.Header.Set("Mcp-Session-Id", sessID)
+		}
+	} else if sessID := p.getOrCreateDownstreamSession(r.Context(), targetURL); sessID != "" {
+		outReq.Header.Set("Mcp-Session-Id", sessID)
+	}
+
+	resp, err := p.client.Do(outReq)
+	if err != nil {
+		p.logger.Warn("failed to fetch tools from target", "url", targetURL, "error", err)
+		return nil, false
+	}
+	defer resp.Body.Close()
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, false
+	}
+
+	// Check for session termination
+	if strings.Contains(string(respBytes), "Session has been terminated") {
+		return nil, true
+	}
+
+	rawStr := strings.TrimSpace(string(respBytes))
+	if strings.HasPrefix(rawStr, "event: message") {
+		idx := strings.Index(rawStr, "data: ")
+		if idx != -1 {
+			rawStr = strings.TrimSpace(rawStr[idx+6:])
+		}
+	}
+
+	var jsonResp map[string]any
+	if err := json.Unmarshal([]byte(rawStr), &jsonResp); err != nil {
+		return nil, false
+	}
+
+	result, ok := jsonResp["result"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	tools, ok := result["tools"].([]any)
+	if !ok {
+		return nil, false
+	}
+	return tools, false
 }
 
 func (p *MCPProxy) handleFilteredToolsList(w http.ResponseWriter, r *http.Request, targetBaseURL string, bodyBytes []byte, allowedTools []string) {
@@ -691,7 +1072,7 @@ func (p *MCPProxy) getOrCreateDownstreamSession(ctx context.Context, targetURL s
 		"params": map[string]any{
 			"protocolVersion": "2024-11-05",
 			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "agp-gateway-auto", "version": "1.0"},
+			"clientInfo":      map[string]any{"name": "reflex-gateway", "version": "1.0.0"},
 		},
 	})
 
@@ -726,32 +1107,47 @@ func (p *MCPProxy) proxyToTarget(w http.ResponseWriter, r *http.Request, targetB
 		targetURL += "?" + r.URL.RawQuery
 	}
 
-	outReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, bytes.NewReader(bodyBytes))
-	if err != nil {
-		http.Error(w, "proxy error", http.StatusInternalServerError)
-		return
-	}
-
-	for k, vv := range r.Header {
-		for _, v := range vv {
-			outReq.Header.Add(k, v)
-		}
-	}
-	outReq.Header.Set("X-Forwarded-By", "agp-gateway")
-
-	if outReq.Header.Get("Mcp-Session-Id") == "" {
-		if sessID := p.getOrCreateDownstreamSession(r.Context(), targetURL); sessID != "" {
-			outReq.Header.Set("Mcp-Session-Id", sessID)
-		}
-	}
-
-	resp, err := p.client.Do(outReq)
-	if err != nil {
-		p.logger.Error("failed to reach target MCP Server", "target", targetBaseURL, "error", err)
+	resp := p.doProxyRequest(r, targetURL, bodyBytes, false)
+	if resp == nil {
+		p.logger.Error("failed to reach target MCP Server", "target", targetBaseURL)
 		http.Error(w, fmt.Sprintf("downstream MCP Server (%s) unreachable", targetBaseURL), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
+
+	// Read the response body to check for session errors
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, "error reading downstream response", http.StatusInternalServerError)
+		return
+	}
+
+	// Detect "Session has been terminated" and retry with a fresh session
+	if strings.Contains(string(respBytes), "Session has been terminated") {
+		p.logger.Info("downstream session terminated, re-initializing", "target", targetURL)
+		p.invalidateDownstreamSession(r.Context(), targetURL)
+		resp.Body.Close()
+
+		resp2 := p.doProxyRequest(r, targetURL, bodyBytes, true)
+		if resp2 == nil {
+			http.Error(w, fmt.Sprintf("downstream MCP Server (%s) unreachable", targetBaseURL), http.StatusBadGateway)
+			return
+		}
+		defer resp2.Body.Close()
+		respBytes, err = io.ReadAll(resp2.Body)
+		if err != nil {
+			http.Error(w, "error reading downstream response", http.StatusInternalServerError)
+			return
+		}
+		for k, vv := range resp2.Header {
+			for _, v := range vv {
+				w.Header().Add(k, v)
+			}
+		}
+		w.WriteHeader(resp2.StatusCode)
+		w.Write(respBytes)
+		return
+	}
 
 	for k, vv := range resp.Header {
 		for _, v := range vv {
@@ -759,57 +1155,109 @@ func (p *MCPProxy) proxyToTarget(w http.ResponseWriter, r *http.Request, targetB
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	w.Write(respBytes)
 }
 
-func (p *MCPProxy) extractServiceName(path string) string {
-	cleanPath := strings.TrimPrefix(path, "/mcp")
-	cleanPath = strings.TrimPrefix(cleanPath, "/")
-	parts := strings.Split(cleanPath, "/")
-	if len(parts) > 0 {
-		return parts[0]
+// doProxyRequest forwards the request to the downstream target, managing the
+// downstream session. If forceNewSession is true, skips the cached session.
+func (p *MCPProxy) doProxyRequest(r *http.Request, targetURL string, bodyBytes []byte, forceNewSession bool) *http.Response {
+	outReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil
 	}
-	return ""
-}
 
-func (p *MCPProxy) resolveTargetURL(path string) string {
-	cleanPath := strings.TrimPrefix(path, "/mcp")
-	cleanPath = strings.TrimPrefix(cleanPath, "/")
-
-	parts := strings.Split(cleanPath, "/")
-	if len(parts) > 0 && parts[0] != "" {
-		serviceName := parts[0]
-		if url, ok := p.targets[serviceName]; ok {
-			return url
+	for k, vv := range r.Header {
+		// Don't forward the client's session ID — the gateway manages downstream sessions
+		if strings.EqualFold(k, "Mcp-Session-Id") {
+			continue
+		}
+		for _, v := range vv {
+			outReq.Header.Add(k, v)
 		}
 	}
+	outReq.Header.Set("X-Forwarded-By", "agp-gateway")
 
-	if defaultURL, ok := p.targets["default"]; ok {
-		return defaultURL
+	if forceNewSession {
+		if sessID := p.createDownstreamSession(r.Context(), targetURL); sessID != "" {
+			outReq.Header.Set("Mcp-Session-Id", sessID)
+		}
+	} else if sessID := p.getOrCreateDownstreamSession(r.Context(), targetURL); sessID != "" {
+		outReq.Header.Set("Mcp-Session-Id", sessID)
 	}
-	return "http://localhost:9000"
+
+	resp, err := p.client.Do(outReq)
+	if err != nil {
+		return nil
+	}
+	return resp
 }
 
+// invalidateDownstreamSession removes the cached session for a target.
+func (p *MCPProxy) invalidateDownstreamSession(ctx context.Context, targetURL string) {
+	if p.rdb != nil {
+		key := fmt.Sprintf("mcp:auto_session:%s", targetURL)
+		p.rdb.Del(ctx, key)
+	}
+}
+
+// createDownstreamSession initializes a new session with the downstream and caches it.
+func (p *MCPProxy) createDownstreamSession(ctx context.Context, targetURL string) string {
+	initBody, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": "2024-11-05",
+			"capabilities":    map[string]any{},
+			"clientInfo":      map[string]any{"name": "reflex-gateway", "version": "1.0.0"},
+		},
+	})
+
+	initReq, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(initBody))
+	if err != nil {
+		return ""
+	}
+	initReq.Header.Set("Content-Type", "application/json")
+	initReq.Header.Set("Accept", "application/json, text/event-stream")
+
+	resp, err := p.client.Do(initReq)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+
+	sessID := resp.Header.Get("Mcp-Session-Id")
+	if sessID != "" && p.rdb != nil {
+		key := fmt.Sprintf("mcp:auto_session:%s", targetURL)
+		p.rdb.Set(ctx, key, sessID, 1*time.Hour)
+	}
+	return sessID
+}
+
+// extractIdentity authenticates the caller. A valid Bearer JWT is REQUIRED;
+// identity is derived solely from the validated token claims. The X-Agent-ID
+// header is accepted only as an optional consistency cross-check — if present
+// and it disagrees with the token's agent_id, the request is rejected. The
+// header alone is never sufficient to establish identity.
 func (p *MCPProxy) extractIdentity(r *http.Request) (string, string, error) {
-	agentID := r.Header.Get("X-Agent-ID")
-	agentKind := r.Header.Get("X-Agent-Kind")
-	if agentID != "" {
-		if agentKind == "" {
-			agentKind = "custom"
-		}
-		return agentID, agentKind, nil
-	}
-
 	authHeader := r.Header.Get("Authorization")
-	if authHeader != "" {
-		token := strings.TrimPrefix(authHeader, "Bearer ")
-		claims, err := p.jwtMgr.Validate(token)
-		if err == nil {
-			return claims.AgentID, claims.AgentKind, nil
-		}
+	if authHeader == "" {
+		return "", "", fmt.Errorf("missing Authorization header (Bearer JWT required)")
 	}
 
-	return "", "", fmt.Errorf("missing X-Agent-ID or Authorization header")
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	claims, err := p.jwtMgr.Validate(token)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid or expired token: %v", err)
+	}
+
+	// Optional cross-check: if the caller also asserts an agent id via header,
+	// it must match the token's identity (prevents confused-deputy mistakes).
+	if headerAgentID := r.Header.Get("X-Agent-ID"); headerAgentID != "" && headerAgentID != claims.AgentID {
+		return "", "", fmt.Errorf("X-Agent-ID header does not match authenticated token identity")
+	}
+
+	return claims.AgentID, claims.AgentKind, nil
 }
 
 func (p *MCPProxy) trackSession(ctx context.Context, sessionID, agentID, agentKind, service string) {

@@ -36,6 +36,11 @@ local incremented = {}
 
 for i, scope in ipairs(scopes) do
     local new_val = redis.call('INCRBY', scope.key, amount)
+    -- Set a TTL on first creation so windowed counters don't leak forever (G13).
+    -- 48h comfortably covers both hourly and daily bucket keys.
+    if new_val == amount then
+        redis.call('EXPIRE', scope.key, 172800)
+    end
     table.insert(incremented, scope.key)
     if new_val > tonumber(scope.cap) then
         -- rollback all already-incremented keys

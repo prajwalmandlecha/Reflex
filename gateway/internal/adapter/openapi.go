@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -209,7 +210,8 @@ func BuildRESTRequest(baseURL string, doc *openapi3.T, toolName string, args map
 			usedArgs[p.Name] = true
 			valStr := fmt.Sprintf("%v", val)
 			if p.In == "path" {
-				finalPath = strings.ReplaceAll(finalPath, "{"+p.Name+"}", valStr)
+				// Path-escape so values containing '/', '?' or '%' don't break routing (G21).
+				finalPath = strings.ReplaceAll(finalPath, "{"+p.Name+"}", url.PathEscape(valStr))
 			} else if p.In == "query" {
 				queryParams[p.Name] = valStr
 			}
@@ -218,9 +220,10 @@ func BuildRESTRequest(baseURL string, doc *openapi3.T, toolName string, args map
 
 	fullURL := strings.TrimRight(baseURL, "/") + finalPath
 	if len(queryParams) > 0 {
-		var q []string
+		// Query-escape keys & values so '&', '=', spaces, '%' don't corrupt the query (G21).
+		q := make([]string, 0, len(queryParams))
 		for k, v := range queryParams {
-			q = append(q, k+"="+v)
+			q = append(q, url.QueryEscape(k)+"="+url.QueryEscape(v))
 		}
 		fullURL += "?" + strings.Join(q, "&")
 	}
