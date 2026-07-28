@@ -11,7 +11,8 @@ import type {
   BankTool,
 } from './types';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+// Empty base = same-origin requests; nginx proxies /api/ and /ws/ to the backend.
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
