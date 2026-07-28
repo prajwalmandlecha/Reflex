@@ -38,7 +38,7 @@ export function ActivityView({
         )
           return false;
       }
-      if (classFilter !== 'all' && evt.agentClass !== classes.find((c) => c.id === classFilter)?.name)
+      if (classFilter !== 'all' && ((evt as any).agent_class_id || evt.agentClass) !== classFilter)
         return false;
       if (decisionFilter !== 'all' && evt.decision !== decisionFilter) return false;
       return true;

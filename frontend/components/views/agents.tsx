@@ -151,35 +151,58 @@ export function AgentsView({
       </div>
 
       {/* Grid */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {filtered.map((inst) => {
-          const cls = classMap.get(inst.classId);
-          return (
-            <div key={inst.id} onClick={() => onSelectAgent(inst.id)} className="cursor-pointer">
-              <Panel className="transition-colors hover:border-white/20">
-              <div className="flex items-start justify-between border-b border-white/5 p-4">
-                <div>
-                  <div className="font-mono text-sm text-ink-primary font-semibold">{inst.id}</div>
-                  <div className="mt-0.5 font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
-                    {cls?.name ?? inst.className ?? inst.classId}
+      {filtered.length > 0 ? (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {filtered.map((inst) => {
+            const cls = classMap.get(inst.classId);
+            return (
+              <div key={inst.id} onClick={() => onSelectAgent(inst.id)} className="cursor-pointer">
+                <Panel className="transition-colors hover:border-white/20">
+                <div className="flex items-start justify-between border-b border-white/5 p-4">
+                  <div>
+                    <div className="font-mono text-sm text-ink-primary font-semibold">{inst.id}</div>
+                    <div className="mt-0.5 font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
+                      {cls?.name ?? inst.className ?? inst.classId}
+                    </div>
+                  </div>
+                  <StatusBadge status={inst.status} />
+                </div>
+
+                <div className="p-4 space-y-3">
+                  <SpendBar used={inst.spendToday} cap={inst.capToday || 5000} />
+
+                  <div className="flex items-center justify-between font-mono text-[10px] text-ink-secondary">
+                    <span>Last action: {inst.lastAction || 'Idle'}</span>
+                    <span>{formatTimestamp(inst.lastSeen)}</span>
                   </div>
                 </div>
-                <StatusBadge status={inst.status} />
-              </div>
-
-              <div className="p-4 space-y-3">
-                <SpendBar used={inst.spendToday} cap={inst.capToday || 5000} />
-
-                <div className="flex items-center justify-between font-mono text-[10px] text-ink-secondary">
-                  <span>Last action: {inst.lastAction || 'Idle'}</span>
-                  <span>{formatTimestamp(inst.lastSeen)}</span>
-                </div>
-              </div>
-            </Panel>
-          </div>
-          );
-        })}
-      </div>
+              </Panel>
+            </div>
+            );
+          })}
+        </div>
+      ) : (
+        <Panel className="p-12 text-center">
+          <Shield className="mx-auto h-8 w-8 text-ink-secondary/40 mb-3" />
+          <h3 className="font-mono text-sm uppercase tracking-widest text-ink-primary font-semibold">
+            {instances.length === 0 ? 'No Agent Instances Registered' : 'No Matching Agent Instances'}
+          </h3>
+          <p className="mt-1 font-sans text-xs text-ink-secondary max-w-sm mx-auto">
+            {instances.length === 0
+              ? 'Register an agent instance to start monitoring tool calls, enforcing spend caps, and tracking telemetry.'
+              : 'Try clearing your search query or adjusting your class and status filters.'}
+          </p>
+          {instances.length === 0 && (
+            <Button
+              onClick={() => setShowCreate(true)}
+              className="mt-4 border border-cyan-500/30 bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 font-mono text-xs"
+            >
+              <Plus className="mr-1.5 h-4 w-4" />
+              Register First Instance
+            </Button>
+          )}
+        </Panel>
+      )}
 
       {/* Instance Detail Drawer */}
       <Sheet open={!!selectedAgent} onOpenChange={(open) => !open && onSelectAgent(null)}>
@@ -190,19 +213,31 @@ export function AgentsView({
                 cls={classMap.get(selectedAgent.classId)}
                 activityFeed={activityFeed}
                 onRevoke={async () => {
-                  await api.revokeAgent(selectedAgent.id);
-                  onSelectAgent(null);
-                  if (onRefresh) onRefresh();
+                  try {
+                    await api.revokeAgent(selectedAgent.id);
+                    onSelectAgent(null);
+                    if (onRefresh) onRefresh();
+                  } catch (err: any) {
+                    alert(`Failed to revoke agent: ${err.message || 'Unknown error'}`);
+                  }
                 }}
                 onRevive={async () => {
-                  await api.reviveAgent(selectedAgent.id);
-                  onSelectAgent(null);
-                  if (onRefresh) onRefresh();
+                  try {
+                    await api.reviveAgent(selectedAgent.id);
+                    onSelectAgent(null);
+                    if (onRefresh) onRefresh();
+                  } catch (err: any) {
+                    alert(`Failed to revive agent: ${err.message || 'Unknown error'}`);
+                  }
                 }}
                 onDelete={async () => {
-                  await api.deleteAgentInstance(selectedAgent.id);
-                  onSelectAgent(null);
-                  if (onRefresh) onRefresh();
+                  try {
+                    await api.deleteAgentInstance(selectedAgent.id);
+                    onSelectAgent(null);
+                    if (onRefresh) onRefresh();
+                  } catch (err: any) {
+                    alert(`Failed to delete agent: ${err.message || 'Unknown error'}`);
+                  }
                 }}
               />
           )}

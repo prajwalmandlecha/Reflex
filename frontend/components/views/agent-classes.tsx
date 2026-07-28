@@ -62,184 +62,211 @@ export function AgentClassesView({
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        {classes.map((cls) => {
-          const clsInstances = instances.filter((i) => i.classId === cls.id);
-          const activeCount = clsInstances.filter((i) => i.status === 'active').length;
-          return (
-            <Panel key={cls.id}>
-              <div className="border-b border-white/5 p-4">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <button
-                      onClick={() => setEditClass(cls)}
-                      className="font-mono text-sm text-ink-primary hover:text-accent font-semibold"
-                    >
-                      {cls.name}
-                    </button>
-                    <p className="mt-0.5 font-sans text-xs text-ink-secondary">
-                      {cls.description}
-                    </p>
-                  </div>
-                  <span className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
-                    {activeCount}/{cls.instanceCount || clsInstances.length} active
-                  </span>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-px bg-white/5">
-                <div className="bg-white/[0.02] p-3">
-                  <div className="flex items-center gap-1.5">
-                    <Wrench className="h-3 w-3 text-ink-secondary" />
-                    <span className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
-                      Allowed Tools
-                    </span>
-                  </div>
-                  <div className="mt-1.5 flex flex-wrap gap-1">
-                    {(cls.allowedTools || cls.defaultAllowedTools || []).map((t) => (
-                      <span
-                        key={t}
-                        className="border border-cyan-500/20 bg-cyan-500/10 px-1.5 py-0.5 font-mono text-[10px] text-cyan-400 rounded"
+      {classes.length > 0 ? (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          {classes.map((cls) => {
+            const clsInstances = instances.filter((i) => i.classId === cls.id);
+            const activeCount = clsInstances.filter((i) => i.status === 'active').length;
+            return (
+              <Panel key={cls.id}>
+                <div className="border-b border-white/5 p-4">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <button
+                        onClick={() => setEditClass(cls)}
+                        className="font-mono text-sm text-ink-primary hover:text-accent font-semibold"
                       >
-                        {t}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-                <div className="bg-white/[0.02] p-3">
-                  <div className="flex items-center gap-1.5">
-                    <DollarSign className="h-3 w-3 text-ink-secondary" />
+                        {cls.name}
+                      </button>
+                      <p className="mt-0.5 font-sans text-xs text-ink-secondary">
+                        {cls.description}
+                      </p>
+                    </div>
                     <span className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
-                      Hourly Cap
+                      {activeCount}/{cls.instanceCount || clsInstances.length} active
                     </span>
                   </div>
-                  <div className="mt-1.5 font-mono text-xs text-ink-primary tabular font-medium">
-                    {cls.defaultCap?.amount > 0
-                      ? `${formatCurrency(cls.defaultCap.amount)}`
-                      : 'No spend cap'}
+                </div>
+
+                <div className="grid grid-cols-2 gap-px bg-white/5">
+                  <div className="bg-white/[0.02] p-3">
+                    <div className="flex items-center gap-1.5">
+                      <Wrench className="h-3 w-3 text-ink-secondary" />
+                      <span className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
+                        Allowed Tools
+                      </span>
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {(cls.allowedTools || cls.defaultAllowedTools || []).map((t) => (
+                        <span
+                          key={t}
+                          className="border border-cyan-500/20 bg-cyan-500/10 px-1.5 py-0.5 font-mono text-[10px] text-cyan-400 rounded"
+                        >
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="bg-white/[0.02] p-3">
+                    <div className="flex items-center gap-1.5">
+                      <DollarSign className="h-3 w-3 text-ink-secondary" />
+                      <span className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
+                        Hourly Cap
+                      </span>
+                    </div>
+                    <div className="mt-1.5 font-mono text-xs text-ink-primary tabular font-medium">
+                      {cls.defaultCap?.amount > 0
+                        ? `${formatCurrency(cls.defaultCap.amount)}`
+                        : 'No spend cap'}
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <div className="border-t border-white/5 p-3">
-                <div className="flex items-center gap-1.5">
-                  <Clock className="h-3 w-3 text-ink-secondary" />
-                  <span className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
-                    Configured Constraints
-                  </span>
+                <div className="border-t border-white/5 p-3">
+                  <div className="flex items-center gap-1.5">
+                    <Clock className="h-3 w-3 text-ink-secondary" />
+                    <span className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
+                      Configured Constraints
+                    </span>
+                  </div>
+                  <div className="mt-1.5 space-y-1 max-h-28 overflow-y-auto pr-1">
+                    {Object.entries(cls.defaultConstraints || {}).length > 0 ? (
+                      Object.entries(cls.defaultConstraints || {}).map(([toolName, ruleObj]) => (
+                        <div key={toolName} className="font-mono text-[10px] border border-white/5 bg-white/[0.02] p-1 rounded">
+                          <span className="text-cyan-400 font-semibold">{toolName}: </span>
+                          <span className="text-ink-secondary">{JSON.stringify(ruleObj)}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <span className="font-mono text-[10px] text-ink-secondary">No custom constraints set.</span>
+                    )}
+                  </div>
                 </div>
-                <div className="mt-1.5 space-y-1 max-h-28 overflow-y-auto pr-1">
-                  {Object.entries(cls.defaultConstraints || {}).length > 0 ? (
-                    Object.entries(cls.defaultConstraints || {}).map(([toolName, ruleObj]) => (
-                      <div key={toolName} className="font-mono text-[10px] border border-white/5 bg-white/[0.02] p-1 rounded">
-                        <span className="text-cyan-400 font-semibold">{toolName}: </span>
-                        <span className="text-ink-secondary">{JSON.stringify(ruleObj)}</span>
-                      </div>
-                    ))
+
+                <div className="flex items-center justify-between border-t border-white/5 p-3">
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      onClick={() => setEditClass(cls)}
+                      className="font-mono text-[10px] uppercase tracking-widest text-accent hover:bg-accent/10"
+                    >
+                      <Settings2 className="mr-1 h-3 w-3" /> Edit class
+                    </Button>
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          className="font-mono text-[10px] uppercase tracking-widest text-rose-400 hover:bg-rose-500/10"
+                        >
+                          <Trash2 className="mr-1 h-3 w-3" /> Delete
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent className="border-white/10 bg-slate-950 text-white">
+                        <AlertDialogHeader>
+                          <AlertDialogTitle className="font-mono text-sm uppercase tracking-widest text-rose-400">
+                            Delete Agent Class '{cls.name}'?
+                          </AlertDialogTitle>
+                          <AlertDialogDescription className="font-sans text-xs text-ink-secondary">
+                            This will permanently delete the agent class record. All attached instances will be cascade deleted from the governance platform.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel className="border-white/10 bg-transparent text-ink-secondary font-mono text-xs">
+                            Cancel
+                          </AlertDialogCancel>
+                          <AlertDialogAction
+                            onClick={async () => {
+                              try {
+                                await api.deleteAgentClass(cls.id);
+                                if (onRefresh) onRefresh();
+                              } catch (err: any) {
+                                alert(`Failed to delete class: ${err.message || 'Unknown error'}`);
+                              }
+                            }}
+                            className="bg-rose-600 text-white hover:bg-rose-500 font-mono text-xs"
+                          >
+                            Delete Class
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </div>
+                  {cls.status === 'revoked' ? (
+                    <Button
+                      variant="ghost"
+                      onClick={async () => {
+                        await api.reviveAgentClass(cls.id);
+                        if (onRefresh) onRefresh();
+                      }}
+                      className="font-mono text-[10px] uppercase tracking-widest text-signal-healthy hover:bg-signal-healthy/10"
+                    >
+                      <CheckCircle2 className="mr-1 h-3 w-3" />
+                      Reactivate Class
+                    </Button>
                   ) : (
-                    <span className="font-mono text-[10px] text-ink-secondary">No custom constraints set.</span>
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          className="font-mono text-[10px] uppercase tracking-widest text-signal-stopped hover:bg-signal-stopped/10"
+                        >
+                          <Ban className="mr-1 h-3 w-3" />
+                          Revoke all instances
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent className="border-white/10 bg-slate-950 text-white">
+                        <AlertDialogHeader>
+                          <AlertDialogTitle className="font-mono text-sm uppercase tracking-widest">
+                            Revoke all instances of {cls.name}?
+                          </AlertDialogTitle>
+                          <AlertDialogDescription className="font-sans text-xs text-ink-secondary">
+                            Every active instance in this class will be immediately revoked. All pending actions will be blocked by the gateway.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel className="border-white/10 bg-transparent text-ink-secondary font-mono text-xs">
+                            Cancel
+                          </AlertDialogCancel>
+                          <AlertDialogAction
+                            onClick={async () => {
+                              try {
+                                await api.revokeAgentClass(cls.id);
+                                if (onRefresh) onRefresh();
+                              } catch (err: any) {
+                                alert(`Failed to revoke class: ${err.message || 'Unknown error'}`);
+                              }
+                            }}
+                            className="bg-rose-600 text-white hover:bg-rose-500 font-mono text-xs"
+                          >
+                            Revoke all instances
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
                   )}
                 </div>
-              </div>
-
-              <div className="flex items-center justify-between border-t border-white/5 p-3">
-                <div className="flex items-center gap-1">
-                  <Button
-                    variant="ghost"
-                    onClick={() => setEditClass(cls)}
-                    className="font-mono text-[10px] uppercase tracking-widest text-accent hover:bg-accent/10"
-                  >
-                    <Settings2 className="mr-1 h-3 w-3" /> Edit class
-                  </Button>
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        className="font-mono text-[10px] uppercase tracking-widest text-rose-400 hover:bg-rose-500/10"
-                      >
-                        <Trash2 className="mr-1 h-3 w-3" /> Delete
-                      </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent className="border-white/10 bg-slate-950 text-white">
-                      <AlertDialogHeader>
-                        <AlertDialogTitle className="font-mono text-sm uppercase tracking-widest text-rose-400">
-                          Delete Agent Class '{cls.name}'?
-                        </AlertDialogTitle>
-                        <AlertDialogDescription className="font-sans text-xs text-ink-secondary">
-                          This will permanently delete the agent class record. All attached instances will be cascade deleted from the governance platform.
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel className="border-white/10 bg-transparent text-ink-secondary font-mono text-xs">
-                          Cancel
-                        </AlertDialogCancel>
-                        <AlertDialogAction
-                          onClick={async () => {
-                            await api.deleteAgentClass(cls.id);
-                            if (onRefresh) onRefresh();
-                          }}
-                          className="bg-rose-600 text-white hover:bg-rose-500 font-mono text-xs"
-                        >
-                          Delete Class
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
-                </div>
-                {cls.status === 'revoked' ? (
-                  <Button
-                    variant="ghost"
-                    onClick={async () => {
-                      await api.reviveAgentClass(cls.id);
-                      if (onRefresh) onRefresh();
-                    }}
-                    className="font-mono text-[10px] uppercase tracking-widest text-signal-healthy hover:bg-signal-healthy/10"
-                  >
-                    <CheckCircle2 className="mr-1 h-3 w-3" />
-                    Reactivate Class
-                  </Button>
-                ) : (
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        className="font-mono text-[10px] uppercase tracking-widest text-signal-stopped hover:bg-signal-stopped/10"
-                      >
-                        <Ban className="mr-1 h-3 w-3" />
-                        Revoke all instances
-                      </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent className="border-white/10 bg-slate-950 text-white">
-                      <AlertDialogHeader>
-                        <AlertDialogTitle className="font-mono text-sm uppercase tracking-widest">
-                          Revoke all instances of {cls.name}?
-                        </AlertDialogTitle>
-                        <AlertDialogDescription className="font-sans text-xs text-ink-secondary">
-                          Every active instance in this class will be immediately revoked. All pending actions will be blocked by the gateway.
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel className="border-white/10 bg-transparent text-ink-secondary font-mono text-xs">
-                          Cancel
-                        </AlertDialogCancel>
-                        <AlertDialogAction
-                          onClick={async () => {
-                            await api.revokeAgentClass(cls.id);
-                            if (onRefresh) onRefresh();
-                          }}
-                          className="bg-rose-600 text-white hover:bg-rose-500 font-mono text-xs"
-                        >
-                          Revoke all instances
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
-                )}
-              </div>
-            </Panel>
-          );
-        })}
-      </div>
+              </Panel>
+            );
+          })}
+        </div>
+      ) : (
+        <Panel className="p-12 text-center">
+          <Wrench className="mx-auto h-8 w-8 text-ink-secondary/40 mb-3" />
+          <h3 className="font-mono text-sm uppercase tracking-widest text-ink-primary font-semibold">
+            No Agent Classes Configured
+          </h3>
+          <p className="mt-1 font-sans text-xs text-ink-secondary max-w-sm mx-auto">
+            Agent classes group agents together to define default tool access, rate limits, and spend caps across instances.
+          </p>
+          <Button
+            onClick={() => setShowCreate(true)}
+            className="mt-4 border border-accent/30 bg-accent/10 text-accent hover:bg-accent/20 font-mono text-xs"
+          >
+            <Plus className="mr-1.5 h-4 w-4" />
+            New Class
+          </Button>
+        </Panel>
+      )}
 
       {/* Edit/Create dialog */}
       <Dialog
@@ -258,6 +285,7 @@ export function AgentClassesView({
             </DialogTitle>
           </DialogHeader>
           <ClassForm
+            key={editClass?.id || '__new__'}
             classData={editClass}
             onComplete={() => {
               setEditClass(null);

@@ -33,7 +33,6 @@ const entryTypeColor: Record<string, string> = {
 
 export function AuditLogView({ entries }: { entries: AuditLogEntry[] }) {
   const [search, setSearch] = useState('');
-  const [typeFilter, setTypeFilter] = useState('all');
   const [outcomeFilter, setOutcomeFilter] = useState('all');
 
   const [verifying, setVerifying] = useState(false);
@@ -74,11 +73,10 @@ export function AuditLogView({ entries }: { entries: AuditLogEntry[] }) {
         )
           return false;
       }
-      if (typeFilter !== 'all' && e.entryType !== typeFilter) return false;
       if (outcomeFilter !== 'all' && e.decision !== outcomeFilter) return false;
       return true;
     });
-  }, [entries, search, typeFilter, outcomeFilter]);
+  }, [entries, search, outcomeFilter]);
 
   return (
     <div className="flex flex-col gap-4 p-4">
@@ -177,18 +175,6 @@ export function AuditLogView({ entries }: { entries: AuditLogEntry[] }) {
             className="border-white/10 bg-white/[0.02] pl-9 font-mono text-sm placeholder:text-ink-secondary/50"
           />
         </div>
-        <Select value={typeFilter} onValueChange={setTypeFilter}>
-          <SelectTrigger className="w-[160px] border-white/10 bg-white/[0.02] font-mono text-xs">
-            <SelectValue placeholder="Type" />
-          </SelectTrigger>
-          <SelectContent className="border-border bg-slate-900 text-white">
-            <SelectItem value="all">All types</SelectItem>
-            <SelectItem value="action">Action</SelectItem>
-            <SelectItem value="config_change">Config Change</SelectItem>
-            <SelectItem value="policy_change">Policy Change</SelectItem>
-            <SelectItem value="stop_event">Stop Event</SelectItem>
-          </SelectContent>
-        </Select>
         <Select value={outcomeFilter} onValueChange={setOutcomeFilter}>
           <SelectTrigger className="w-[120px] border-white/10 bg-white/[0.02] font-mono text-xs">
             <SelectValue placeholder="Outcome" />
@@ -210,7 +196,7 @@ export function AuditLogView({ entries }: { entries: AuditLogEntry[] }) {
           <table className="w-full">
             <thead className="sticky top-0 bg-[rgba(14,20,28,0.9)] backdrop-blur-xl">
               <tr className="border-b border-white/5">
-                {['Timestamp', 'Type', 'Agent', 'Action', 'Outcome', 'Reason / Change', 'Operator'].map(
+                {['Timestamp', 'Agent', 'Action', 'Outcome', 'Reason / Change', 'Latency'].map(
                   (h) => (
                     <th
                       key={h}
@@ -233,16 +219,6 @@ export function AuditLogView({ entries }: { entries: AuditLogEntry[] }) {
                     <div className="text-[9px] text-ink-secondary/60">
                       {formatDateTime(entry.timestamp)}
                     </div>
-                  </td>
-                  <td className="px-4 py-2">
-                    <span
-                      className={cn(
-                        'font-mono text-[10px] uppercase tracking-wider font-semibold',
-                        entryTypeColor[entry.entryType || 'action'] || 'text-ink-secondary'
-                      )}
-                    >
-                      {entryTypeLabel[entry.entryType || 'action'] || 'Action'}
-                    </span>
                   </td>
                   <td className="px-4 py-2 font-mono text-[10px] text-accent font-medium">
                     {entry.agentId === '-' ? '—' : entry.agentId}
@@ -272,8 +248,8 @@ export function AuditLogView({ entries }: { entries: AuditLogEntry[] }) {
                       </div>
                     )}
                   </td>
-                  <td className="px-4 py-2 font-mono text-[10px] text-ink-secondary">
-                    {entry.operator ?? '—'}
+                  <td className="whitespace-nowrap px-4 py-2 font-mono text-[10px] text-ink-secondary tabular">
+                    {entry.latencyMs || entry.total_latency_ms ? `${entry.latencyMs || entry.total_latency_ms}ms` : '—'}
                   </td>
                 </tr>
               ))}

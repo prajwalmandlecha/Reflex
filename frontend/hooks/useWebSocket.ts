@@ -2,12 +2,15 @@
 
 import { useEffect, useRef, useState } from "react";
 
-// Default to same-origin WebSocket; nginx proxies /ws/ to the backend.
-const WS_BASE =
-  process.env.NEXT_PUBLIC_WS_URL ||
-  (typeof window !== 'undefined'
-    ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`
-    : '');
+function getWsBase(): string {
+  if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
+  if (typeof window === 'undefined') return '';
+  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  const host = window.location.port === '3000'
+    ? `${window.location.hostname}:8000`
+    : window.location.host;
+  return `${protocol}://${host}`;
+}
 
 export function useWebSocket<T>(path: string, maxHistory = 100) {
   const [data, setData] = useState<T | null>(null);
@@ -23,7 +26,7 @@ export function useWebSocket<T>(path: string, maxHistory = 100) {
 
     const connect = () => {
       if (closedIntentionally) return;
-      const url = `${WS_BASE}${path}`;
+      const url = `${getWsBase()}${path}`;
       ws = new WebSocket(url);
       wsRef.current = ws;
 

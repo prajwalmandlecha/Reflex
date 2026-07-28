@@ -18,7 +18,7 @@ import {
 import { formatDateTime, formatRelative } from '@/lib/format';
 import type { Policy, AgentClass, AgentInstance, VisualRule, RuleCondition, BankConnection, BankTool } from '@/lib/types';
 import { api } from '@/lib/api';
-import { Plus, Code2, FileJson, Play, CheckCircle2, XCircle, Pencil, FileText, FlaskConical, AlertTriangle, Layers, User, Shield, Sliders, LayoutGrid, Check } from 'lucide-react';
+import { Plus, Code2, FileJson, Play, CheckCircle2, XCircle, Pencil, FileText, FlaskConical, AlertTriangle, Layers, User, Shield, Sliders, LayoutGrid, Check, Trash2 } from 'lucide-react';
 
 export function PoliciesView({
   policies,
@@ -175,6 +175,7 @@ function PolicyEditor({
     }
   );
   const [loading, setLoading] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   // Derive allowed tools based on selected scope & target
   const allowedToolsForTarget = useMemo(() => {
@@ -417,6 +418,21 @@ function PolicyEditor({
       });
     } finally {
       setTestLoading(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!policy?.id) return;
+    setLoading(true);
+    try {
+      await api.deletePolicy(policy.id.toString());
+      if (onRefresh) onRefresh();
+      if (onCancel) onCancel();
+    } catch (err: any) {
+      setValidationResult({ ok: false, message: err.message || 'Failed to delete policy' });
+    } finally {
+      setLoading(false);
+      setConfirmDelete(false);
     }
   };
 
@@ -812,32 +828,72 @@ function PolicyEditor({
           )}
         </div>
 
-        {/* Save / Activate */}
-        <div className="mt-4 flex justify-end gap-2">
-          {onCancel && (
+        {/* Save / Activate / Delete */}
+        <div className="mt-4 flex justify-between">
+          {/* Delete (left side) — only for existing policies */}
+          <div>
+            {policy && policy.id && !isNew && (
+              confirmDelete ? (
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-xs text-red-400">Delete this policy?</span>
+                  <Button
+                    onClick={handleDelete}
+                    disabled={loading}
+                    className="bg-red-600 text-white hover:bg-red-700 font-mono text-xs"
+                  >
+                    Confirm Delete
+                  </Button>
+                  <Button
+                    onClick={() => setConfirmDelete(false)}
+                    variant="ghost"
+                    className="text-ink-secondary font-mono text-xs"
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  onClick={() => setConfirmDelete(true)}
+                  variant="ghost"
+                  className="text-red-400 hover:text-red-300 hover:bg-red-500/10 font-mono text-xs"
+                >
+                  <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                  Delete
+                </Button>
+              )
+            )}
+          </div>
+
+          {/* Save / Activate (right side) */}
+          <div className="flex gap-2">
+            {onCancel && (
+              <Button
+                onClick={onCancel}
+                variant="ghost"
+                className="border-border text-ink-secondary hover:bg-white/5 font-mono text-xs"
+              >
+                Cancel
+              </Button>
+            )}
+            {/* Only show Save Draft for new or draft policies — don't allow demoting active policies */}
+            {(isNew || policy?.status !== 'active') && (
+              <Button
+                onClick={() => handleSave('draft')}
+                disabled={loading}
+                variant="outline"
+                className="border-border text-ink-secondary font-mono text-xs"
+              >
+                Save draft
+              </Button>
+            )}
             <Button
-              onClick={onCancel}
-              variant="ghost"
-              className="border-border text-ink-secondary hover:bg-white/5 font-mono text-xs"
+              onClick={() => handleSave('active')}
+              disabled={loading}
+              className="bg-signal-healthy text-black hover:bg-signal-healthy/90 font-mono text-xs font-semibold"
             >
-              Cancel
+              {policy?.status === 'active' ? 'Save & Keep Active' : 'Activate Policy'}
             </Button>
-          )}
-          <Button
-            onClick={() => handleSave('draft')}
-            disabled={loading}
-            variant="outline"
-            className="border-border text-ink-secondary font-mono text-xs"
-          >
-            Save draft
-          </Button>
-          <Button
-            onClick={() => handleSave('active')}
-            disabled={loading}
-            className="bg-signal-healthy text-black hover:bg-signal-healthy/90 font-mono text-xs font-semibold"
-          >
-            Activate Policy
-          </Button>
+          </div>
         </div>
       </div>
     </Panel>

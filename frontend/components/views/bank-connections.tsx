@@ -72,124 +72,151 @@ export function BankConnectionsView({
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        {connections.map((conn) => (
-          <Panel key={conn.id}>
-            <div className="flex items-start justify-between border-b border-white/5 p-4">
-              <div className="flex items-start gap-3">
-                <div className="mt-0.5 flex h-8 w-8 items-center justify-center rounded border border-white/10 bg-white/5 font-mono text-xs font-bold text-accent">
-                  <Server className="h-4 w-4" />
-                </div>
-                <div>
-                  <div className="font-mono text-sm font-semibold text-ink-primary">
-                    {conn.name}
+      {connections.length > 0 ? (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          {connections.map((conn) => (
+            <Panel key={conn.id}>
+              <div className="flex items-start justify-between border-b border-white/5 p-4">
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5 flex h-8 w-8 items-center justify-center rounded border border-white/10 bg-white/5 font-mono text-xs font-bold text-accent">
+                    <Server className="h-4 w-4" />
                   </div>
-                  <div className="mt-0.5 flex items-center gap-2 font-mono text-[10px] text-ink-secondary">
-                    <span>{conn.sourceType === 'native_mcp' ? 'Native MCP' : 'OpenAPI Proxy'}</span>
-                    <span>·</span>
-                    <span>{conn.toolCount || (conn.tools ? conn.tools.length : 0)} tools</span>
-                    {conn.lastSync && (
-                      <>
-                        <span>·</span>
-                        <span>synced {formatRelative(conn.lastSync)}</span>
-                      </>
+                  <div>
+                    <div className="font-mono text-sm font-semibold text-ink-primary">
+                      {conn.name}
+                    </div>
+                    <div className="mt-0.5 flex items-center gap-2 font-mono text-[10px] text-ink-secondary">
+                      <span>{conn.sourceType === 'native_mcp' ? 'Native MCP' : 'OpenAPI Proxy'}</span>
+                      <span>·</span>
+                      <span>{conn.toolCount || (conn.tools ? conn.tools.length : 0)} tools</span>
+                      {conn.lastSync && (
+                        <>
+                          <span>·</span>
+                          <span>synced {formatRelative(conn.lastSync)}</span>
+                        </>
+                      )}
+                    </div>
+                    {conn.mcpUrl && (
+                      <div className="mt-1 font-mono text-[11px] text-ink-secondary/70 truncate max-w-sm">
+                        {conn.mcpUrl}
+                      </div>
+                    )}
+                    {conn.baseUrl && !conn.mcpUrl && (
+                      <div className="mt-1 font-mono text-[11px] text-ink-secondary/70 truncate max-w-sm">
+                        REST: {conn.baseUrl}
+                      </div>
                     )}
                   </div>
-                  {conn.mcpUrl && (
-                    <div className="mt-1 font-mono text-[11px] text-ink-secondary/70 truncate max-w-sm">
-                      {conn.mcpUrl}
-                    </div>
-                  )}
-                  {conn.baseUrl && !conn.mcpUrl && (
-                    <div className="mt-1 font-mono text-[11px] text-ink-secondary/70 truncate max-w-sm">
-                      REST: {conn.baseUrl}
-                    </div>
-                  )}
                 </div>
+                <StatusBadge status={conn.status} />
               </div>
-              <StatusBadge status={conn.status} />
-            </div>
 
-            {(conn.tools?.length ?? 0) > 0 ? (
-              <div className="p-3">
-                <div className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary mb-2">
-                  Exposed MCP Tools ({conn.tools?.filter((t) => t.exposed).length} / {conn.tools?.length})
+              {(conn.tools?.length ?? 0) > 0 ? (
+                <div className="p-3">
+                  <div className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary mb-2">
+                    Exposed MCP Tools ({conn.tools?.filter((t) => t.exposed).length} / {conn.tools?.length})
+                  </div>
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                    {conn.tools?.map((tool) => (
+                      <div key={tool.id} className="flex items-center gap-2 border border-white/5 bg-white/[0.02] p-1.5 rounded">
+                        <span className={cn('rounded px-1.5 py-0.5 font-mono text-[9px] font-semibold', methodColor(tool.method || 'GET'))}>
+                          {tool.method || 'MCP'}
+                        </span>
+                        <span className="font-mono text-xs text-ink-primary font-medium">{tool.name}</span>
+                        <span className="truncate font-mono text-[10px] text-ink-secondary flex-1">{tool.path || tool.description}</span>
+                        <button
+                          onClick={async () => {
+                            try {
+                              await api.updateTool(Number(tool.id), { exposed: !tool.exposed });
+                              if (onRefresh) onRefresh();
+                            } catch (err: any) {
+                              alert(`Failed to update tool: ${err.message || 'Unknown error'}`);
+                            }
+                          }}
+                          className={cn(
+                            'px-2 py-0.5 rounded font-mono text-[9px] uppercase tracking-wider transition-colors cursor-pointer',
+                            tool.exposed
+                              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-rose-500/20 hover:text-rose-400'
+                              : 'bg-white/5 text-ink-secondary border border-white/10 hover:bg-emerald-500/20 hover:text-emerald-400'
+                          )}
+                          title={tool.exposed ? 'Click to disable tool' : 'Click to expose tool'}
+                        >
+                          {tool.exposed ? 'EXPOSED' : 'DISABLED'}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-                  {conn.tools?.map((tool) => (
-                    <div key={tool.id} className="flex items-center gap-2 border border-white/5 bg-white/[0.02] p-1.5 rounded">
-                      <span className={cn('rounded px-1.5 py-0.5 font-mono text-[9px] font-semibold', methodColor(tool.method || 'GET'))}>
-                        {tool.method || 'MCP'}
-                      </span>
-                      <span className="font-mono text-xs text-ink-primary font-medium">{tool.name}</span>
-                      <span className="truncate font-mono text-[10px] text-ink-secondary flex-1">{tool.path || tool.description}</span>
-                      <button
-                        onClick={async () => {
-                          await api.updateTool(Number(tool.id), { exposed: !tool.exposed });
-                          if (onRefresh) onRefresh();
-                        }}
-                        className={cn(
-                          'px-2 py-0.5 rounded font-mono text-[9px] uppercase tracking-wider transition-colors cursor-pointer',
-                          tool.exposed
-                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-rose-500/20 hover:text-rose-400'
-                            : 'bg-rose-500/20 text-rose-400 border border-rose-500/30 hover:bg-emerald-500/20 hover:text-emerald-400'
-                        )}
-                        title={tool.exposed ? 'Click to disable tool' : 'Click to expose tool'}
-                      >
-                        {tool.exposed ? 'EXPOSED' : 'DISABLED'}
-                      </button>
-                    </div>
-                  ))}
+              ) : (
+                <div className="p-6 text-center font-mono text-xs text-ink-secondary">
+                  {conn.status === 'pending'
+                    ? 'Awaiting configuration — complete setup to expose tools.'
+                    : 'No tools registered for this server.'}
                 </div>
-              </div>
-            ) : (
-              <div className="p-6 text-center font-mono text-xs text-ink-secondary">
-                {conn.status === 'pending'
-                  ? 'Awaiting configuration — complete setup to expose tools.'
-                  : 'No tools registered for this server.'}
-              </div>
-            )}
+              )}
 
-            <div className="flex items-center justify-end border-t border-white/5 p-2 bg-white/[0.01]">
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 px-2 font-mono text-[10px] uppercase tracking-widest text-rose-400 hover:bg-rose-500/10 cursor-pointer"
-                  >
-                    <Trash2 className="mr-1 h-3 w-3" /> Remove Server Connection
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent className="border-white/10 bg-slate-950 text-white">
-                  <AlertDialogHeader>
-                    <AlertDialogTitle className="font-mono text-sm uppercase tracking-widest text-rose-400">
-                      Remove Connection '{conn.name}'?
-                    </AlertDialogTitle>
-                    <AlertDialogDescription className="font-sans text-xs text-ink-secondary">
-                      This will permanently remove this MCP connection registration and unregister all associated tools from the gateway proxy.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel className="border-white/10 bg-transparent text-ink-secondary font-mono text-xs">
-                      Cancel
-                    </AlertDialogCancel>
-                    <AlertDialogAction
-                      onClick={async () => {
-                        await api.deleteBankConnection(conn.id);
-                        if (onRefresh) onRefresh();
-                      }}
-                      className="bg-rose-600 text-white hover:bg-rose-500 font-mono text-xs"
+              <div className="flex items-center justify-end border-t border-white/5 p-2 bg-white/[0.01]">
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 font-mono text-[10px] uppercase tracking-widest text-rose-400 hover:bg-rose-500/10 cursor-pointer"
                     >
-                      Remove Connection
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            </div>
-          </Panel>
-        ))}
-      </div>
+                      <Trash2 className="mr-1 h-3 w-3" /> Remove Server Connection
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent className="border-white/10 bg-slate-950 text-white">
+                    <AlertDialogHeader>
+                      <AlertDialogTitle className="font-mono text-sm uppercase tracking-widest text-rose-400">
+                        Remove Connection '{conn.name}'?
+                      </AlertDialogTitle>
+                      <AlertDialogDescription className="font-sans text-xs text-ink-secondary">
+                        This will permanently remove this MCP connection registration and unregister all associated tools from the gateway proxy.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel className="border-white/10 bg-transparent text-ink-secondary font-mono text-xs">
+                        Cancel
+                      </AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={async () => {
+                          try {
+                            await api.deleteBankConnection(conn.id);
+                            if (onRefresh) onRefresh();
+                          } catch (err: any) {
+                            alert(`Failed to delete connection: ${err.message || 'Unknown error'}`);
+                          }
+                        }}
+                        className="bg-rose-600 text-white hover:bg-rose-500 font-mono text-xs"
+                      >
+                        Remove Connection
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
+            </Panel>
+          ))}
+        </div>
+      ) : (
+        <Panel className="p-12 text-center">
+          <Server className="mx-auto h-8 w-8 text-ink-secondary/40 mb-3" />
+          <h3 className="font-mono text-sm uppercase tracking-widest text-ink-primary font-semibold">
+            No Bank Connections Registered
+          </h3>
+          <p className="mt-1 font-sans text-xs text-ink-secondary max-w-sm mx-auto">
+            Connect a native Model Context Protocol (MCP) server or virtualize an existing OpenAPI REST API to start exposing tool endpoints.
+          </p>
+          <Button
+            onClick={() => setShowWizard(true)}
+            className="mt-4 border border-accent/30 bg-accent/10 text-accent hover:bg-accent/20 font-mono text-xs"
+          >
+            <Plus className="mr-1.5 h-4 w-4" />
+            Add Connection
+          </Button>
+        </Panel>
+      )}
 
       <Dialog open={showWizard} onOpenChange={setShowWizard}>
         <DialogContent className="max-w-2xl border-white/10 bg-slate-950 text-white">
@@ -301,7 +328,7 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
 
     setLoading(true);
     try {
-      await api.registerOpenAPISpec(connId, specText, apiBaseUrl || undefined);
+      await api.registerOpenAPISpec(connId, specText, apiBaseUrl || undefined, apiName || undefined);
       onComplete();
     } catch (err: any) {
       setError(err.message || 'Failed to register OpenAPI spec');

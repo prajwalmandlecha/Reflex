@@ -225,9 +225,14 @@ export function EmergencyStopView({
                         </Button>
                       )}
                       {inst.status === 'revoked' && (
-                        <span className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
-                          Use agent detail to manage
-                        </span>
+                        <Button
+                          variant="ghost"
+                          onClick={() => onResumeInstance(inst.id)}
+                          className="h-7 px-2 font-mono text-[10px] uppercase tracking-widest text-signal-healthy hover:bg-signal-healthy/10"
+                        >
+                          <Play className="mr-1 h-3 w-3" />
+                          Reactivate
+                        </Button>
                       )}
                     </td>
                   </tr>

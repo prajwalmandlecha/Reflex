@@ -165,10 +165,10 @@ export const api = {
     await request('/api/v1/connections/all', { method: 'DELETE' });
   },
 
-  async registerOpenAPISpec(connectionId: string, spec: string, baseUrl?: string): Promise<{ tool_count: number }> {
+  async registerOpenAPISpec(connectionId: string, spec: string, baseUrl?: string, name?: string): Promise<{ tool_count: number }> {
     return request<{ tool_count: number }>(`/api/v1/connections/${connectionId}/openapi`, {
       method: 'POST',
-      body: JSON.stringify({ spec, base_url: baseUrl }),
+      body: JSON.stringify({ spec, base_url: baseUrl, name }),
     });
   },
 
@@ -203,6 +203,10 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(policy),
     });
+  },
+
+  async deletePolicy(id: string): Promise<void> {
+    await request(`/api/v1/policies/${id}`, { method: 'DELETE' });
   },
 
   async validatePolicy(regoSource: string): Promise<{ valid: boolean; errors?: string[] }> {

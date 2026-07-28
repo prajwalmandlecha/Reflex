@@ -152,6 +152,28 @@ async def activate_policy(policy_id: int):
     return await update_policy(policy_id, PolicyUpdate(status="active"))
 
 
+@router.delete("/{policy_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_policy(policy_id: int):
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM policies WHERE id = $1", policy_id)
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Policy ID {policy_id} not found")
+
+        await conn.execute("DELETE FROM policies WHERE id = $1", policy_id)
+
+        await conn.execute(
+            """
+            INSERT INTO policy_changelog (policy_id, changed_by, change_type, old_value)
+            VALUES ($1, 'operator', 'delete', $2::jsonb)
+            """,
+            None, json.dumps({"id": policy_id, "name": row["name"], "status": row["status"]}),
+        )
+
+    await cache_active_policies()
+    await publish_config_update("policy", str(policy_id))
+
+
 @router.post("/validate", response_model=PolicyValidateResponse)
 async def validate_policy(req: PolicyValidateRequest):
     valid, errors = await validate_rego(req.rego_source)
