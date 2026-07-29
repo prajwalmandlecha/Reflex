@@ -9,16 +9,16 @@ import type {
   FleetStatusResponse,
   MetricsSnapshot,
   BankTool,
-} from './types';
+} from "./types";
 
 // Empty base = same-origin requests; nginx proxies /api/ and /ws/ to the backend.
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
       ...options?.headers,
     },
   });
@@ -26,67 +26,80 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     const errorText = await res.text();
     throw new Error(`API ${path} failed (${res.status}): ${errorText}`);
   }
-  return res.json();
+  // 204 No Content (or any empty body) has no JSON to parse.
+  if (res.status === 204) {
+    return undefined as T;
+  }
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }
 
 export const api = {
   // --- Agent Classes ---
   async getAgentClasses(): Promise<AgentClass[]> {
-    const raw = await request<any[]>('/api/v1/classes');
+    const raw = await request<any[]>("/api/v1/classes");
     return raw.map((c) => ({
       id: c.id,
       name: c.name,
-      description: c.description || '',
+      description: c.description || "",
       allowedTools: c.default_allowed_tools || c.allowedTools || [],
       defaultAllowedTools: c.default_allowed_tools || [],
       defaultConstraints: c.default_constraints || c.defaultConstraints || {},
-      defaultCap: c.default_caps?.hourly ? { amount: (c.default_caps.hourly.amount_cents || 0) / 100, window: 'day' } : { amount: 500, window: 'day' },
+      defaultCap: c.default_caps?.hourly
+        ? {
+            amount: (c.default_caps.hourly.amount_cents || 0) / 100,
+            window: "day",
+          }
+        : { amount: 500, window: "day" },
       defaultCaps: c.default_caps || {},
       instanceCount: c.instance_count ?? 0,
-      status: c.status || 'active',
+      status: c.status || "active",
       created_at: c.created_at,
       updated_at: c.updated_at,
     }));
   },
 
   async createAgentClass(cls: Partial<AgentClass>): Promise<AgentClass> {
-    return request<AgentClass>('/api/v1/classes', {
-      method: 'POST',
+    return request<AgentClass>("/api/v1/classes", {
+      method: "POST",
       body: JSON.stringify(cls),
     });
   },
 
-  async updateAgentClass(id: string, cls: Partial<AgentClass>): Promise<AgentClass> {
+  async updateAgentClass(
+    id: string,
+    cls: Partial<AgentClass>,
+  ): Promise<AgentClass> {
     return request<AgentClass>(`/api/v1/classes/${id}`, {
-      method: 'PUT',
+      method: "PUT",
       body: JSON.stringify(cls),
     });
   },
 
   async revokeAgentClass(id: string): Promise<void> {
-    await request(`/api/v1/classes/${id}/revoke`, { method: 'POST' });
+    await request(`/api/v1/classes/${id}/revoke`, { method: "POST" });
   },
 
   async reviveAgentClass(id: string): Promise<void> {
-    await request(`/api/v1/classes/${id}/revoke`, { method: 'DELETE' });
+    await request(`/api/v1/classes/${id}/revoke`, { method: "DELETE" });
   },
 
   async deleteAgentClass(id: string): Promise<void> {
-    await request(`/api/v1/classes/${id}`, { method: 'DELETE' });
+    await request(`/api/v1/classes/${id}`, { method: "DELETE" });
   },
 
   // --- Agent Instances ---
   async getAgentInstances(): Promise<AgentInstance[]> {
-    const raw = await request<any[]>('/api/v1/agents');
+    const raw = await request<any[]>("/api/v1/agents");
     return raw.map((i) => ({
       id: i.id,
       classId: i.class_id || i.classId,
       class_id: i.class_id,
-      status: i.status || 'active',
+      status: i.status || "active",
       spendToday: i.spend_today ?? 0,
       capToday: i.cap_today ?? 500,
-      lastAction: i.last_action || 'Idle',
-      lastSeen: i.last_seen || 'Just now',
+      lastAction: i.last_action || "Idle",
+      lastSeen: i.last_seen || "Just now",
       className: i.class_name || i.className || i.class_id,
       class_name: i.class_name,
       constraint_overrides: i.constraint_overrides || {},
@@ -95,149 +108,177 @@ export const api = {
     }));
   },
 
-  async registerAgentInstance(inst: Partial<AgentInstance>): Promise<AgentInstance> {
-    return request<AgentInstance>('/api/v1/agents', {
-      method: 'POST',
+  async registerAgentInstance(
+    inst: Partial<AgentInstance>,
+  ): Promise<AgentInstance> {
+    return request<AgentInstance>("/api/v1/agents", {
+      method: "POST",
       body: JSON.stringify(inst),
     });
   },
 
   async revokeAgent(agentId: string): Promise<void> {
-    await request(`/api/v1/agents/${agentId}/revoke`, { method: 'POST' });
+    await request(`/api/v1/agents/${agentId}/revoke`, { method: "POST" });
   },
 
   async reviveAgent(agentId: string): Promise<void> {
-    await request(`/api/v1/agents/${agentId}/revoke`, { method: 'DELETE' });
+    await request(`/api/v1/agents/${agentId}/revoke`, { method: "DELETE" });
   },
 
   async deleteAgentInstance(agentId: string): Promise<void> {
-    await request(`/api/v1/agents/${agentId}`, { method: 'DELETE' });
+    await request(`/api/v1/agents/${agentId}`, { method: "DELETE" });
   },
 
   async getAgentSpend(agentId: string): Promise<Record<string, number>> {
-    const res = await request<{ spend_counters: Record<string, number> }>(`/api/v1/agents/${agentId}/spend`);
+    const res = await request<{ spend_counters: Record<string, number> }>(
+      `/api/v1/agents/${agentId}/spend`,
+    );
     return res.spend_counters;
   },
 
   // --- Bank Connections & Tools ---
   async getBankConnections(): Promise<BankConnection[]> {
-    const raw = await request<any[]>('/api/v1/connections');
+    const raw = await request<any[]>("/api/v1/connections");
     return raw.map((b) => ({
       id: b.id,
       name: b.name,
-      sourceType: b.source_type || b.sourceType || 'native_mcp',
+      sourceType: b.source_type || b.sourceType || "native_mcp",
       source_type: b.source_type,
       mcpUrl: b.mcp_url || b.mcpUrl,
       baseUrl: b.base_url || b.baseUrl,
       openapiSpec: b.openapi_spec || b.openapiSpec,
       toolCount: b.tool_count ?? b.toolCount ?? (b.tools ? b.tools.length : 0),
       tool_count: b.tool_count,
-      status: b.status || 'connected',
+      status: b.status || "connected",
       tools: b.tools || [],
-      authType: b.credential_type || 'bearer',
+      authType: b.credential_type || "bearer",
     }));
   },
 
   async getAllTools(): Promise<BankTool[]> {
-    const raw = await request<any[]>('/api/v1/tools');
+    const raw = await request<any[]>("/api/v1/tools");
     return raw.map((t) => ({
       id: String(t.id),
       name: t.name,
-      description: t.description || '',
+      description: t.description || "",
       exposed: t.exposed,
       input_schema: t.input_schema || {},
       bank_connection_id: t.bank_connection_id,
     }));
   },
 
-  async createBankConnection(conn: Partial<BankConnection>): Promise<BankConnection> {
-    return request<BankConnection>('/api/v1/connections', {
-      method: 'POST',
+  async createBankConnection(
+    conn: Partial<BankConnection>,
+  ): Promise<BankConnection> {
+    return request<BankConnection>("/api/v1/connections", {
+      method: "POST",
       body: JSON.stringify(conn),
     });
   },
 
   async deleteBankConnection(id: string): Promise<void> {
-    await request(`/api/v1/connections/${id}`, { method: 'DELETE' });
+    await request(`/api/v1/connections/${id}`, { method: "DELETE" });
   },
 
   async clearAllConnections(): Promise<void> {
-    await request('/api/v1/connections/all', { method: 'DELETE' });
+    await request("/api/v1/connections/all", { method: "DELETE" });
   },
 
-  async registerOpenAPISpec(connectionId: string, spec: string, baseUrl?: string, name?: string): Promise<{ tool_count: number }> {
-    return request<{ tool_count: number }>(`/api/v1/connections/${connectionId}/openapi`, {
-      method: 'POST',
-      body: JSON.stringify({ spec, base_url: baseUrl, name }),
-    });
+  async registerOpenAPISpec(
+    connectionId: string,
+    spec: string,
+    baseUrl?: string,
+    name?: string,
+  ): Promise<{ tool_count: number }> {
+    return request<{ tool_count: number }>(
+      `/api/v1/connections/${connectionId}/openapi`,
+      {
+        method: "POST",
+        body: JSON.stringify({ spec, base_url: baseUrl, name }),
+      },
+    );
   },
 
   // --- Policies ---
   async getPolicies(): Promise<Policy[]> {
-    const raw = await request<any[]>('/api/v1/policies');
+    const raw = await request<any[]>("/api/v1/policies");
     return raw.map((p) => ({
       id: strId(p.id),
       name: p.name,
-      scope: p.scope || 'global',
-      type: p.type || 'rego',
+      scope: p.scope || "global",
+      type: p.type || "rego",
       version: p.version || 1,
-      regoSource: p.rego_source || p.regoSource || '',
+      regoSource: p.rego_source || p.regoSource || "",
       rego_source: p.rego_source,
       visualRules: p.visual_rules || p.visualRules || [],
       visual_rules: p.visual_rules,
-      status: p.status || 'active',
+      status: p.status || "active",
       created_at: p.created_at,
       updated_at: p.updated_at,
     }));
   },
 
   async createPolicy(policy: Partial<Policy>): Promise<Policy> {
-    return request<Policy>('/api/v1/policies', {
-      method: 'POST',
+    return request<Policy>("/api/v1/policies", {
+      method: "POST",
       body: JSON.stringify(policy),
     });
   },
 
   async updatePolicy(id: string, policy: Partial<Policy>): Promise<Policy> {
     return request<Policy>(`/api/v1/policies/${id}`, {
-      method: 'PUT',
+      method: "PUT",
       body: JSON.stringify(policy),
     });
   },
 
   async deletePolicy(id: string): Promise<void> {
-    await request(`/api/v1/policies/${id}`, { method: 'DELETE' });
+    await request(`/api/v1/policies/${id}`, { method: "DELETE" });
   },
 
-  async validatePolicy(regoSource: string): Promise<{ valid: boolean; errors?: string[] }> {
-    return request<{ valid: boolean; errors?: string[] }>('/api/v1/policies/validate', {
-      method: 'POST',
-      body: JSON.stringify({ rego_source: regoSource }),
-    });
+  async validatePolicy(
+    regoSource: string,
+  ): Promise<{ valid: boolean; errors?: string[] }> {
+    return request<{ valid: boolean; errors?: string[] }>(
+      "/api/v1/policies/validate",
+      {
+        method: "POST",
+        body: JSON.stringify({ rego_source: regoSource }),
+      },
+    );
   },
 
   async compileVisualRules(rules: any[]): Promise<{ rego_source: string }> {
-    return request<{ rego_source: string }>('/api/v1/policies/compile-visual', {
-      method: 'POST',
+    return request<{ rego_source: string }>("/api/v1/policies/compile-visual", {
+      method: "POST",
       body: JSON.stringify(rules),
     });
   },
 
-  async testPolicyInput(payload: { rego_source?: string; visual_rules?: any[]; input_payload: any }): Promise<{
+  async testPolicyInput(payload: {
+    rego_source?: string;
+    visual_rules?: any[];
+    input_payload: any;
+  }): Promise<{
     allowed: boolean;
     decision: string;
     reasons: string[];
     rego_source: string;
   }> {
-    return request<any>('/api/v1/policies/test-input', {
-      method: 'POST',
+    return request<any>("/api/v1/policies/test-input", {
+      method: "POST",
       body: JSON.stringify(payload),
     });
   },
 
   // --- Audit Log ---
-  async verifyAuditLog(): Promise<{ valid: boolean; total_records: number; verified_until_id: number; error_message?: string }> {
-    return request<any>('/api/v1/audit/verify');
+  async verifyAuditLog(): Promise<{
+    valid: boolean;
+    total_records: number;
+    verified_until_id: number;
+    error_message?: string;
+  }> {
+    return request<any>("/api/v1/audit/verify");
   },
 
   async getAuditLog(params?: {
@@ -248,27 +289,27 @@ export const api = {
     limit?: number;
   }): Promise<AuditLogEntry[]> {
     const query = new URLSearchParams();
-    if (params?.agentId) query.set('agent_id', params.agentId);
-    if (params?.agentClassId) query.set('agent_class_id', params.agentClassId);
-    if (params?.action) query.set('action', params.action);
-    if (params?.decision) query.set('decision', params.decision);
-    if (params?.limit) query.set('limit', params.limit.toString());
+    if (params?.agentId) query.set("agent_id", params.agentId);
+    if (params?.agentClassId) query.set("agent_class_id", params.agentClassId);
+    if (params?.action) query.set("action", params.action);
+    if (params?.decision) query.set("decision", params.decision);
+    if (params?.limit) query.set("limit", params.limit.toString());
 
     const raw = await request<any[]>(`/api/v1/audit?${query.toString()}`);
     return raw.map((a) => ({
       id: String(a.id),
       timestamp: a.ts || a.timestamp,
       agentId: a.agent_id || a.agentId,
-      agentClass: a.agent_class_id || a.agentClassId || a.agentClass || '',
-      agentClassId: a.agent_class_id || a.agentClassId || '',
+      agentClass: a.agent_class_id || a.agentClassId || a.agentClass || "",
+      agentClassId: a.agent_class_id || a.agentClassId || "",
       action: a.action,
-      bankConnectionId: a.bank_connection_id || a.bankConnectionId || '',
+      bankConnectionId: a.bank_connection_id || a.bankConnectionId || "",
       params: a.params || {},
       responseData: a.response_data || a.responseData || a.result || null,
       response_data: a.response_data || a.responseData || a.result || null,
       decision: a.decision,
-      denyStage: a.deny_stage || a.denyStage || '',
-      reason: a.reason || '',
+      denyStage: a.deny_stage || a.denyStage || "",
+      reason: a.reason || "",
       spendDeltaCents: a.spend_delta || a.spendDeltaCents || 0,
       latencyMs: a.total_latency_ms || a.totalLatencyMs || 0,
       totalLatencyMs: a.total_latency_ms || a.totalLatencyMs || 0,
@@ -278,42 +319,54 @@ export const api = {
       constraint_latency_ms: a.constraint_latency_ms || 0,
       downstream_latency_ms: a.downstream_latency_ms || 0,
       governance_overhead_ms: a.governance_overhead_ms || 0,
-      governanceOverheadMs: a.governance_overhead_ms || a.governanceOverheadMs || 0,
-      prev_hash: a.prev_hash || a.prevHash || '',
-      entry_hash: a.entry_hash || a.entryHash || '',
+      governanceOverheadMs:
+        a.governance_overhead_ms || a.governanceOverheadMs || 0,
+      prev_hash: a.prev_hash || a.prevHash || "",
+      entry_hash: a.entry_hash || a.entryHash || "",
     }));
   },
 
-  async verifyAuditChain(): Promise<{ valid: boolean; total_records: number; verified_until_id: number }> {
-    return request<{ valid: boolean; total_records: number; verified_until_id: number }>('/api/v1/audit/verify');
+  async verifyAuditChain(): Promise<{
+    valid: boolean;
+    total_records: number;
+    verified_until_id: number;
+  }> {
+    return request<{
+      valid: boolean;
+      total_records: number;
+      verified_until_id: number;
+    }>("/api/v1/audit/verify");
   },
 
   // --- Emergency Stop & Fleet Control ---
   async haltFleet(reason?: string): Promise<FleetStatusResponse> {
-    return request<FleetStatusResponse>('/api/v1/fleet/halt', {
-      method: 'POST',
-      body: JSON.stringify({ reason: reason || 'Manual emergency stop triggered via operator console' }),
+    return request<FleetStatusResponse>("/api/v1/fleet/halt", {
+      method: "POST",
+      body: JSON.stringify({
+        reason:
+          reason || "Manual emergency stop triggered via operator console",
+      }),
     });
   },
 
   async resumeFleet(): Promise<FleetStatusResponse> {
-    return request<FleetStatusResponse>('/api/v1/fleet/halt', {
-      method: 'DELETE',
+    return request<FleetStatusResponse>("/api/v1/fleet/halt", {
+      method: "DELETE",
     });
   },
 
   async getFleetStatus(): Promise<FleetStatusResponse> {
-    return request<FleetStatusResponse>('/api/v1/fleet/status');
+    return request<FleetStatusResponse>("/api/v1/fleet/status");
   },
 
   // --- Metrics Snapshot ---
   async getMetricsSnapshot(): Promise<MetricsSnapshot> {
-    return request<MetricsSnapshot>('/api/v1/metrics/snapshot');
+    return request<MetricsSnapshot>("/api/v1/metrics/snapshot");
   },
 
   // --- Dashboard Summary & Activity ---
   async getDashboardSummary(): Promise<any> {
-    return request<any>('/api/v1/dashboard/summary');
+    return request<any>("/api/v1/dashboard/summary");
   },
 
   async getDashboardActivity(limit = 50): Promise<any[]> {
@@ -326,12 +379,12 @@ export const api = {
 
   async updateTool(toolId: number, data: Partial<BankTool>): Promise<BankTool> {
     return request<BankTool>(`/api/v1/tools/${toolId}`, {
-      method: 'PUT',
+      method: "PUT",
       body: JSON.stringify(data),
     });
   },
 };
 
 function strId(id: any): string {
-  return id != null ? String(id) : '';
+  return id != null ? String(id) : "";
 }
