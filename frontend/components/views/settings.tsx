@@ -1,10 +1,54 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { Panel } from '@/components/gov/panel';
 import { Label } from '@/components/ui/label';
-import { User, Mail, Shield, Server, Database, Lock, CheckCircle2, Cpu } from 'lucide-react';
+import { api } from '@/lib/api';
+import { User, Mail, Shield, Server, Database, CheckCircle2, XCircle, Cpu } from 'lucide-react';
+
+type SystemHealth = { gateway: string; redis: string; opa: string; database: string };
+
+function EngineStatus({ status }: { status?: string }) {
+  if (!status) {
+    return (
+      <span className="font-mono text-[10px] uppercase text-ink-secondary font-semibold">Checking…</span>
+    );
+  }
+  const down = status === 'unreachable';
+  return (
+    <span
+      className={`flex items-center gap-1 font-mono text-[10px] uppercase font-semibold ${
+        down ? 'text-signal-stopped' : 'text-signal-healthy'
+      }`}
+    >
+      {down ? <XCircle className="h-3.5 w-3.5" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+      {status}
+    </span>
+  );
+}
 
 export function SettingsView({ operator }: { operator: string }) {
+  const [health, setHealth] = useState<SystemHealth | null>(null);
+
+  // Engine badges reflect live probes (DB ping, Redis ping, gateway /health),
+  // refreshed while the view is open — never static text.
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      api.getSystemHealth().then((h) => {
+        if (!cancelled) setHealth(h);
+      }).catch(() => {
+        if (!cancelled) setHealth({ gateway: 'unreachable', redis: 'unreachable', opa: 'unreachable', database: 'unreachable' });
+      });
+    };
+    load();
+    const timer = setInterval(load, 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
+
   return (
     <div className="flex flex-col gap-4 p-4">
       <div>
@@ -64,12 +108,10 @@ export function SettingsView({ operator }: { operator: string }) {
                 <Server className="h-4 w-4 text-accent" />
                 <div>
                   <div className="font-mono text-xs text-ink-primary font-medium">AGP Gateway Proxy Engine</div>
-                  <div className="font-mono text-[10px] text-ink-secondary">Go Interceptor (Sub-5ms Execution)</div>
+                  <div className="font-mono text-[10px] text-ink-secondary">Go Interceptor</div>
                 </div>
               </div>
-              <span className="flex items-center gap-1 font-mono text-[10px] uppercase text-signal-healthy font-semibold">
-                <CheckCircle2 className="h-3.5 w-3.5" /> Healthy
-              </span>
+              <EngineStatus status={health?.gateway} />
             </div>
 
             <div className="flex items-center justify-between border border-border bg-slate-950 p-3">
@@ -80,9 +122,7 @@ export function SettingsView({ operator }: { operator: string }) {
                   <div className="font-mono text-[10px] text-ink-secondary">Pub/Sub Real-time Synced</div>
                 </div>
               </div>
-              <span className="flex items-center gap-1 font-mono text-[10px] uppercase text-signal-healthy font-semibold">
-                <CheckCircle2 className="h-3.5 w-3.5" /> Active
-              </span>
+              <EngineStatus status={health?.redis} />
             </div>
 
             <div className="flex items-center justify-between border border-border bg-slate-950 p-3">
@@ -93,9 +133,7 @@ export function SettingsView({ operator }: { operator: string }) {
                   <div className="font-mono text-[10px] text-ink-secondary">Embedded Rego Evaluator</div>
                 </div>
               </div>
-              <span className="flex items-center gap-1 font-mono text-[10px] uppercase text-signal-healthy font-semibold">
-                <CheckCircle2 className="h-3.5 w-3.5" /> Operational
-              </span>
+              <EngineStatus status={health?.opa} />
             </div>
           </div>
         </Panel>
@@ -121,7 +159,7 @@ export function SettingsView({ operator }: { operator: string }) {
 
             <div className="border border-white/5 bg-slate-950 p-3">
               <div className="font-mono text-xs text-ink-primary font-semibold">Killswitch Propagation</div>
-              <div className="mt-1 font-mono text-[11px] text-accent font-bold uppercase">Sub-5ms Sync Latency</div>
+              <div className="mt-1 font-mono text-[11px] text-accent font-bold uppercase">Redis Pub/Sub Fan-out</div>
               <p className="mt-1 font-sans text-[11px] text-ink-secondary">
                 Emergency agent revocations propagate instantly across Gateway nodes via Redis Pub/Sub.
               </p>

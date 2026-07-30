@@ -4,7 +4,7 @@ import json
 from fastapi import APIRouter, HTTPException, status
 from app.crypto import encrypt
 from app.database import get_pool
-from app.models.bank_connection import BankConnectionCreate, BankConnectionResponse, BankConnectionUpdate
+from app.models.bank_connection import BankConnectionCreate, BankConnectionResponse
 from app.services.config_propagation import cache_bank_connections, cache_tool_routing, publish_config_update
 from app.services.mcp_discovery import fetch_mcp_tools
 from app.services.openapi_ingestion import parse_openapi_spec
@@ -47,7 +47,7 @@ async def list_bank_connections():
                 BankConnectionResponse(
                     id=r["id"], name=r["name"], source_type=r["source_type"],
                     mcp_url=r["mcp_url"], base_url=r["base_url"], openapi_spec=r["openapi_spec"],
-                    credential_type=r["credential_type"], status=r["status"] or "connected",
+                    credential_type=r["credential_type"], status=r["status"] or "pending",
                     created_at=r["created_at"], updated_at=r["updated_at"], tool_count=r["tool_count"],
                     tools=tools_list,
                 )
@@ -55,10 +55,66 @@ async def list_bank_connections():
     return res
 
 
+async def _replace_tools(conn, connection_id: str, tools: list[dict], with_ops: bool = False) -> list[dict]:
+    """Replace a connection's tools with a freshly discovered set.
+
+    Only wipes existing tools when the replacement set is non-empty, so a failed
+    discovery doesn't silently delete previously-discovered tools (G16)."""
+    inserted = []
+    if not tools:
+        return inserted
+    await conn.execute("DELETE FROM tools WHERE bank_connection_id = $1", connection_id)
+    for t in tools:
+        if with_ops:
+            t_row = await conn.fetchrow(
+                """
+                INSERT INTO tools (bank_connection_id, name, description, input_schema, underlying_ops, exposed)
+                VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6)
+                ON CONFLICT DO NOTHING
+                RETURNING id, name, description, input_schema, exposed
+                """,
+                connection_id, t["name"], t["description"], json.dumps(t["input_schema"]),
+                json.dumps(t["underlying_ops"]), t.get("exposed", True),
+            )
+        else:
+            t_row = await conn.fetchrow(
+                """
+                INSERT INTO tools (bank_connection_id, name, description, input_schema, exposed)
+                VALUES ($1, $2, $3, $4::jsonb, $5)
+                ON CONFLICT DO NOTHING
+                RETURNING id, name, description, input_schema, exposed
+                """,
+                connection_id, t["name"], t["description"], json.dumps(t["input_schema"]), t.get("exposed", True),
+            )
+        if t_row:
+            inserted.append({
+                "id": str(t_row["id"]),
+                "name": t_row["name"],
+                "description": t_row["description"] or "",
+                "input_schema": json.loads(t_row["input_schema"]) if isinstance(t_row["input_schema"], str) else (t_row["input_schema"] or {}),
+                "exposed": t_row["exposed"],
+            })
+    return inserted
+
+
 @router.post("", response_model=BankConnectionResponse, status_code=status.HTTP_201_CREATED)
 async def create_bank_connection(b: BankConnectionCreate):
     pool = get_pool()
     enc_creds = encrypt(b.credentials) if b.credentials else None
+
+    # Derive status from a real discovery probe instead of trusting the client:
+    # 'connected' only when the upstream actually answered / the spec parsed.
+    mcp_tools: list[dict] | None = None
+    openapi_tools: list[dict] = []
+    if b.source_type == "native_mcp" and b.mcp_url:
+        mcp_tools = await fetch_mcp_tools(b.mcp_url)
+        status_val = "connected" if mcp_tools is not None else "error"
+    elif b.source_type == "openapi" and b.openapi_spec:
+        _, openapi_tools = parse_openapi_spec(b.openapi_spec)
+        status_val = "connected" if openapi_tools else "error"
+    else:
+        status_val = "pending"
+
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
@@ -76,60 +132,15 @@ async def create_bank_connection(b: BankConnectionCreate):
                 updated_at = NOW()
             RETURNING id, name, source_type, mcp_url, base_url, openapi_spec, credential_type, status, created_at, updated_at
             """,
-            b.id, b.name, b.source_type, b.mcp_url, b.base_url, b.openapi_spec, b.credential_type, enc_creds, b.status,
+            b.id, b.name, b.source_type, b.mcp_url, b.base_url, b.openapi_spec, b.credential_type, enc_creds, status_val,
         )
 
-        # Auto-discover tools if native_mcp or openapi.
-        # Discover FIRST; only wipe existing tools after we have a non-empty
-        # replacement set, so a failed discovery doesn't silently delete the
-        # previously-discovered tools (G16).
-        discovered_tools = []
-
-        if b.source_type == "native_mcp" and b.mcp_url:
-
-            mcp_tools = await fetch_mcp_tools(b.mcp_url)
-            if mcp_tools:
-                await conn.execute("DELETE FROM tools WHERE bank_connection_id = $1", b.id)
-            for t in mcp_tools:
-                t_row = await conn.fetchrow(
-                    """
-                    INSERT INTO tools (bank_connection_id, name, description, input_schema, exposed)
-                    VALUES ($1, $2, $3, $4::jsonb, $5)
-                    ON CONFLICT DO NOTHING
-                    RETURNING id, name, description, input_schema, exposed
-                    """,
-                    b.id, t["name"], t["description"], json.dumps(t["input_schema"]), t.get("exposed", True),
-                )
-                if t_row:
-                    discovered_tools.append({
-                        "id": str(t_row["id"]),
-                        "name": t_row["name"],
-                        "description": t_row["description"] or "",
-                        "input_schema": json.loads(t_row["input_schema"]) if isinstance(t_row["input_schema"], str) else (t_row["input_schema"] or {}),
-                        "exposed": t_row["exposed"],
-                    })
-        elif b.source_type == "openapi" and b.openapi_spec:
-            _, openapi_tools = parse_openapi_spec(b.openapi_spec)
-            if openapi_tools:
-                await conn.execute("DELETE FROM tools WHERE bank_connection_id = $1", b.id)
-            for t in openapi_tools:
-                t_row = await conn.fetchrow(
-                    """
-                    INSERT INTO tools (bank_connection_id, name, description, input_schema, underlying_ops, exposed)
-                    VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6)
-                    ON CONFLICT DO NOTHING
-                    RETURNING id, name, description, input_schema, exposed
-                    """,
-                    b.id, t["name"], t["description"], json.dumps(t["input_schema"]), json.dumps(t["underlying_ops"]), t.get("exposed", True),
-                )
-                if t_row:
-                    discovered_tools.append({
-                        "id": str(t_row["id"]),
-                        "name": t_row["name"],
-                        "description": t_row["description"] or "",
-                        "input_schema": json.loads(t_row["input_schema"]) if isinstance(t_row["input_schema"], str) else (t_row["input_schema"] or {}),
-                        "exposed": t_row["exposed"],
-                    })
+        if mcp_tools:
+            discovered_tools = await _replace_tools(conn, b.id, mcp_tools)
+        elif openapi_tools:
+            discovered_tools = await _replace_tools(conn, b.id, openapi_tools, with_ops=True)
+        else:
+            discovered_tools = []
 
     await cache_bank_connections()
     await cache_tool_routing()
@@ -140,6 +151,70 @@ async def create_bank_connection(b: BankConnectionCreate):
         mcp_url=row["mcp_url"], base_url=row["base_url"], openapi_spec=row["openapi_spec"],
         credential_type=row["credential_type"], status=row["status"],
         created_at=row["created_at"], updated_at=row["updated_at"],
+        tool_count=len(discovered_tools), tools=discovered_tools,
+    )
+
+
+@router.post("/{connection_id}/sync", response_model=BankConnectionResponse)
+async def sync_bank_connection(connection_id: str):
+    """Re-probe the upstream and refresh the connection's tools and status.
+
+    This is how a stale 'connected' row gets corrected: status reflects the
+    live probe result, never a stored assertion."""
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id, name, source_type, mcp_url, base_url, openapi_spec, credential_type FROM bank_connections WHERE id = $1",
+            connection_id,
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Bank connection '{connection_id}' not found")
+
+        discovered_tools = []
+        if row["source_type"] == "native_mcp" and row["mcp_url"]:
+            mcp_tools = await fetch_mcp_tools(row["mcp_url"])
+            status_val = "connected" if mcp_tools is not None else "error"
+            if mcp_tools:
+                discovered_tools = await _replace_tools(conn, connection_id, mcp_tools)
+        elif row["source_type"] == "openapi" and row["openapi_spec"]:
+            _, openapi_tools = parse_openapi_spec(row["openapi_spec"])
+            status_val = "connected" if openapi_tools else "error"
+            if openapi_tools:
+                discovered_tools = await _replace_tools(conn, connection_id, openapi_tools, with_ops=True)
+        else:
+            status_val = "pending"
+
+        updated = await conn.fetchrow(
+            "UPDATE bank_connections SET status = $2, updated_at = NOW() WHERE id = $1 RETURNING created_at, updated_at",
+            connection_id, status_val,
+        )
+
+        if not discovered_tools:
+            # Probe failed or returned nothing — report the tools we still have.
+            tools_rows = await conn.fetch(
+                "SELECT id, name, description, input_schema, exposed FROM tools WHERE bank_connection_id = $1",
+                connection_id,
+            )
+            discovered_tools = [
+                {
+                    "id": str(t["id"]),
+                    "name": t["name"],
+                    "description": t["description"] or "",
+                    "input_schema": json.loads(t["input_schema"]) if isinstance(t["input_schema"], str) else (t["input_schema"] or {}),
+                    "exposed": t["exposed"],
+                }
+                for t in tools_rows
+            ]
+
+    await cache_bank_connections()
+    await cache_tool_routing()
+    await publish_config_update("connection", connection_id)
+
+    return BankConnectionResponse(
+        id=row["id"], name=row["name"], source_type=row["source_type"],
+        mcp_url=row["mcp_url"], base_url=row["base_url"], openapi_spec=row["openapi_spec"],
+        credential_type=row["credential_type"], status=status_val,
+        created_at=updated["created_at"], updated_at=updated["updated_at"],
         tool_count=len(discovered_tools), tools=discovered_tools,
     )
 
@@ -188,13 +263,18 @@ async def register_openapi_spec(connection_id: str, payload: dict):
             name = connection_id.replace("-", " ").title()
 
         base_url = payload.get("base_url", "http://localhost:8080")
+        # Status is earned by a successful parse, not asserted.
+        status_val = "connected" if extracted_tools else "error"
         await conn.execute(
             """
             INSERT INTO bank_connections (id, name, source_type, base_url, openapi_spec, status)
-            VALUES ($1, $2, 'openapi', $3, $4, 'connected')
-            ON CONFLICT (id) DO UPDATE SET openapi_spec = EXCLUDED.openapi_spec
+            VALUES ($1, $2, 'openapi', $3, $4, $5)
+            ON CONFLICT (id) DO UPDATE SET
+                openapi_spec = EXCLUDED.openapi_spec,
+                status = EXCLUDED.status,
+                updated_at = NOW()
             """,
-            connection_id, name, base_url, spec_text,
+            connection_id, name, base_url, spec_text, status_val,
         )
 
         inserted_tools = []

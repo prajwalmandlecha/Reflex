@@ -50,7 +50,7 @@ export const api = {
             amount: (c.default_caps.hourly.amount_cents || 0) / 100,
             window: "day",
           }
-        : { amount: 500, window: "day" },
+        : { amount: 0, window: "day" },
       defaultCaps: c.default_caps || {},
       instanceCount: c.instance_count ?? 0,
       status: c.status || "active",
@@ -97,7 +97,8 @@ export const api = {
       class_id: i.class_id,
       status: i.status || "active",
       spendToday: i.spend_today ?? 0,
-      capToday: i.cap_today ?? 500,
+      // 0 renders as "N/A" in SpendBar — honest when the backend sends no cap.
+      capToday: i.cap_today ?? 0,
       lastAction: i.last_action || "Idle",
       lastSeen: i.last_seen || "Just now",
       className: i.class_name || i.className || i.class_id,
@@ -142,16 +143,18 @@ export const api = {
     return raw.map((b) => ({
       id: b.id,
       name: b.name,
-      sourceType: b.source_type || b.sourceType || "native_mcp",
+      sourceType: b.source_type || b.sourceType,
       source_type: b.source_type,
       mcpUrl: b.mcp_url || b.mcpUrl,
       baseUrl: b.base_url || b.baseUrl,
       openapiSpec: b.openapi_spec || b.openapiSpec,
       toolCount: b.tool_count ?? b.toolCount ?? (b.tools ? b.tools.length : 0),
       tool_count: b.tool_count,
-      status: b.status || "connected",
+      // No silent "connected" fallback — status is derived server-side from a real probe.
+      status: b.status || "pending",
       tools: b.tools || [],
-      authType: b.credential_type || "bearer",
+      authType: b.credential_type || undefined,
+      lastSync: b.updated_at || undefined,
     }));
   },
 
@@ -178,6 +181,12 @@ export const api = {
 
   async deleteBankConnection(id: string): Promise<void> {
     await request(`/api/v1/connections/${id}`, { method: "DELETE" });
+  },
+
+  async syncBankConnection(id: string): Promise<BankConnection> {
+    return request<BankConnection>(`/api/v1/connections/${id}/sync`, {
+      method: "POST",
+    });
   },
 
   async clearAllConnections(): Promise<void> {
@@ -357,6 +366,15 @@ export const api = {
 
   async getFleetStatus(): Promise<FleetStatusResponse> {
     return request<FleetStatusResponse>("/api/v1/fleet/status");
+  },
+
+  async getSystemHealth(): Promise<{
+    gateway: string;
+    redis: string;
+    opa: string;
+    database: string;
+  }> {
+    return request<any>("/api/v1/fleet/system-health");
   },
 
   // --- Metrics Snapshot ---

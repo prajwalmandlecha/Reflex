@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS bank_connections (
     openapi_spec            TEXT,                   -- raw OpenAPI spec (stored for re-parsing)
     credential_type         VARCHAR(32),            -- 'api_key','bearer','basic','oauth2_cc'
     encrypted_creds         TEXT,                   -- Fernet-encrypted credential blob
-    status                  VARCHAR(32) DEFAULT 'connected',  -- connected / error / pending
+    status                  VARCHAR(32) DEFAULT 'pending',  -- connected / error / pending (derived from discovery probe)
     created_at              TIMESTAMPTZ DEFAULT NOW(),
     updated_at              TIMESTAMPTZ DEFAULT NOW()
 );

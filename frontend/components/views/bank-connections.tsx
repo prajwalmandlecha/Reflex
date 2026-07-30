@@ -51,6 +51,19 @@ export function BankConnectionsView({
   onRefresh?: () => void;
 }) {
   const [showWizard, setShowWizard] = useState(false);
+  const [syncingId, setSyncingId] = useState<string | null>(null);
+
+  const handleSync = async (id: string) => {
+    setSyncingId(id);
+    try {
+      await api.syncBankConnection(id);
+      if (onRefresh) onRefresh();
+    } catch (err: any) {
+      alert(`Failed to re-sync connection: ${err.message || 'Unknown error'}`);
+    } finally {
+      setSyncingId(null);
+    }
+  };
 
   return (
     <div className="flex flex-col gap-4 p-4">
@@ -108,7 +121,17 @@ export function BankConnectionsView({
                     )}
                   </div>
                 </div>
-                <StatusBadge status={conn.status} />
+                <div className="flex items-center gap-2">
+                  <button
+                    disabled={syncingId === conn.id}
+                    onClick={() => handleSync(conn.id)}
+                    className="flex h-7 w-7 items-center justify-center rounded border border-white/10 bg-white/5 text-ink-secondary transition-colors hover:border-accent/30 hover:bg-accent/10 hover:text-accent cursor-pointer disabled:opacity-50"
+                    title="Reload — re-probe the server and re-discover tools & status"
+                  >
+                    <RefreshCw className={cn('h-3.5 w-3.5', syncingId === conn.id && 'animate-spin')} />
+                  </button>
+                  <StatusBadge status={conn.status} />
+                </div>
               </div>
 
               {(conn.tools?.length ?? 0) > 0 ? (
@@ -151,6 +174,8 @@ export function BankConnectionsView({
                 <div className="p-6 text-center font-mono text-xs text-ink-secondary">
                   {conn.status === 'pending'
                     ? 'Awaiting configuration — complete setup to expose tools.'
+                    : conn.status === 'error'
+                    ? 'Upstream unreachable — check the server URL and re-sync.'
                     : 'No tools registered for this server.'}
                 </div>
               )}
@@ -276,6 +301,7 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
     }
     setLoading(true);
     try {
+      // Status is derived by the backend from a live discovery probe — never asserted here.
       await api.createBankConnection({
         id: mcpId.trim().toLowerCase().replace(/\s+/g, '-'),
         name: mcpName,
@@ -284,7 +310,7 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
         mcp_url: mcpUrl.trim(),
         mcpUrl: mcpUrl.trim(),
         credential_type: mcpAuthType,
-        status: 'connected',
+        credentials: mcpAuthType !== 'none' && mcpToken ? mcpToken : undefined,
       } as any);
       onComplete();
     } catch (err: any) {

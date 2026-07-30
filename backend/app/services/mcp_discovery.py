@@ -7,12 +7,16 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
-async def fetch_mcp_tools(mcp_url: str) -> list[dict]:
+async def fetch_mcp_tools(mcp_url: str) -> list[dict] | None:
     """Perform MCP JSON-RPC initialize and tools/list request to discover tools and input schemas.
+
+    Returns the discovered tool list on success (possibly empty), or None when the
+    server is unreachable / the probe fails — callers use this to derive a real
+    connection status instead of asserting 'connected'.
 
     Async: uses httpx.AsyncClient so it never blocks the event loop (G8)."""
     if not mcp_url:
-        return []
+        return None
 
     try:
         headers = {
@@ -68,5 +72,5 @@ async def fetch_mcp_tools(mcp_url: str) -> list[dict]:
                 })
             return res
     except Exception as e:
-        logger.warning("MCP discovery failed for URL %s: %s", mcp_url, e)
-        return []
+        logger.warning("MCP discovery failed for URL %s: %r", mcp_url, e)
+        return None

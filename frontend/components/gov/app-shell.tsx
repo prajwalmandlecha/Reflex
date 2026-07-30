@@ -110,9 +110,8 @@ export function AppShell() {
     localStorage.setItem('reflex_help_dismissed', hide ? '1' : '0');
   };
 
-  const { isConnected: isFleetWsConnected } = useWebSocket('/ws/fleet');
   const { history: wsAlerts } = useWebSocket<AlertItem>('/ws/alerts');
-  const { history: wsActivities } = useWebSocket<ActivityEvent>('/ws/activity');
+  const { history: wsActivities, isConnected: isActivityWsConnected } = useWebSocket<ActivityEvent>('/ws/activity');
 
   useEffect(() => {
     if (wsAlerts.length > 0) {
@@ -192,7 +191,7 @@ export function AppShell() {
           if (sum) {
             setFleetSpend({
               spent: sum.spend_today_usd ?? sum.spend_today ?? 0,
-              cap: sum.total_cap_usd ?? 100000,
+              cap: sum.total_cap_usd ?? 0,
             });
             setDenialsLastHour(sum.denials_last_hour ?? 0);
           }
@@ -245,7 +244,7 @@ export function AppShell() {
       if (sum) {
         setFleetSpend({
           spent: sum.spend_today_usd ?? sum.spend_today ?? 0,
-          cap: sum.total_cap_usd ?? 100000,
+          cap: sum.total_cap_usd ?? 0,
         });
         setDenialsLastHour(sum.denials_last_hour ?? 0);
       }
@@ -349,7 +348,14 @@ export function AppShell() {
 
         <div className="p-3 border-t border-[#232B35] text-[11px] font-mono text-[#8B96A3] flex justify-between items-center bg-[#0B0F14]/50">
           <span>Operator: <strong className="text-[#E4E9EE]">{operator}</strong></span>
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" title="System Online" />
+          {/* Reflects live fleet status — not an unconditional green light */}
+          <span
+            className={cn(
+              'w-2 h-2 rounded-full animate-pulse',
+              fleetStatus === 'healthy' ? 'bg-emerald-500' : fleetStatus === 'degraded' ? 'bg-amber-400' : 'bg-rose-500'
+            )}
+            title={`Fleet ${fleetStatus}`}
+          />
         </div>
       </aside>
 
@@ -362,24 +368,6 @@ export function AppShell() {
             <div className="h-4 w-[1px] bg-[#232B35]" />
             <div className="text-xs font-mono text-[#8B96A3]">
               Active Fleet: <span className="text-[#E4E9EE] font-semibold">{instances.filter(i => i.status === 'active').length}</span> / {instances.length}
-            </div>
-            <div className="h-4 w-[1px] bg-[#232B35]" />
-            {/* Live Stream Heartbeat Indicator */}
-            <div
-              className={cn(
-                'flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-mono border transition-colors',
-                isFleetWsConnected
-                  ? 'bg-[#3DDC84]/10 border-[#3DDC84]/20 text-[#3DDC84]'
-                  : 'bg-amber-500/10 border-amber-500/20 text-amber-400'
-              )}
-            >
-              <span
-                className={cn(
-                  'w-1.5 h-1.5 rounded-full animate-pulse',
-                  isFleetWsConnected ? 'bg-[#3DDC84]' : 'bg-amber-400'
-                )}
-              />
-              <span>{isFleetWsConnected ? 'STREAM ACTIVE' : 'STREAM POLLING'}</span>
             </div>
           </div>
 
@@ -439,7 +427,7 @@ export function AppShell() {
           {view === 'classes' && <AgentClassesView classes={classes} instances={instances} onRefresh={reloadData} />}
           {view === 'policies' && <PoliciesView policies={policies} classes={classes} instances={instances} onRefresh={reloadData} />}
           {view === 'bank' && <BankConnectionsView connections={connections} onRefresh={reloadData} />}
-          {view === 'activity' && <ActivityView activityFeed={activityFeed} classes={classes} />}
+          {view === 'activity' && <ActivityView activityFeed={activityFeed} classes={classes} isStreamConnected={isActivityWsConnected} />}
           {view === 'performance' && <PerformanceView />}
           {view === 'audit' && <AuditLogView entries={auditEntries} />}
           {view === 'estop' && (

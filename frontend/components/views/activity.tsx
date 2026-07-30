@@ -18,9 +18,11 @@ import { Search, ChevronDown, ChevronRight, Activity, Terminal, Shield, Zap } fr
 export function ActivityView({
   activityFeed,
   classes,
+  isStreamConnected = false,
 }: {
   activityFeed: ActivityEvent[];
   classes: AgentClass[];
+  isStreamConnected?: boolean;
 }) {
   const [search, setSearch] = useState('');
   const [classFilter, setClassFilter] = useState('all');
@@ -66,9 +68,22 @@ export function ActivityView({
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <span className="flex items-center gap-1.5 rounded border border-signal-healthy/20 bg-signal-healthy/10 px-2.5 py-1 font-mono text-[10px] uppercase tracking-widest text-signal-healthy font-semibold">
-            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-signal-healthy" />
-            Live Pulse · Stream Active
+          {/* Bound to the real /ws/activity socket state — not a hardcoded pulse */}
+          <span
+            className={cn(
+              'flex items-center gap-1.5 rounded border px-2.5 py-1 font-mono text-[10px] uppercase tracking-widest font-semibold',
+              isStreamConnected
+                ? 'border-signal-healthy/20 bg-signal-healthy/10 text-signal-healthy'
+                : 'border-signal-caution/20 bg-signal-caution/10 text-signal-caution'
+            )}
+          >
+            <span
+              className={cn(
+                'inline-block h-1.5 w-1.5 animate-pulse rounded-full',
+                isStreamConnected ? 'bg-signal-healthy' : 'bg-signal-caution'
+              )}
+            />
+            {isStreamConnected ? 'Live Pulse · Stream Active' : 'Stream Disconnected · Polling'}
           </span>
         </div>
       </div>

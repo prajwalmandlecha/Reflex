@@ -75,7 +75,7 @@ async def init_db_schema():
         openapi_spec            TEXT,
         credential_type         VARCHAR(32),
         encrypted_creds         TEXT,
-        status                  VARCHAR(32) DEFAULT 'connected',
+        status                  VARCHAR(32) DEFAULT 'pending',
         created_at              TIMESTAMPTZ DEFAULT NOW(),
         updated_at              TIMESTAMPTZ DEFAULT NOW()
     );

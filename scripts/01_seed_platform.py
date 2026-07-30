@@ -44,22 +44,19 @@ def main():
             "id": "bank-identity",
             "name": "Bank of Anthos - Identity and User Auth Service",
             "source_type": "native_mcp",
-            "mcp_url": "http://20.2.83.126:31100/mcp",
-            "status": "connected"
+            "mcp_url": "http://20.2.83.126:31100/mcp"
         },
         {
             "id": "bank-payments",
             "name": "Bank of Anthos - Payments and Transfers Service",
             "source_type": "native_mcp",
-            "mcp_url": "http://20.2.83.126:31200/mcp",
-            "status": "connected"
+            "mcp_url": "http://20.2.83.126:31200/mcp"
         },
         {
             "id": "bank-financial",
             "name": "Bank of Anthos - Financial Insights Service",
             "source_type": "native_mcp",
-            "mcp_url": "http://20.2.83.126:31300/mcp",
-            "status": "connected"
+            "mcp_url": "http://20.2.83.126:31300/mcp"
         }
     ]
 

@@ -68,7 +68,7 @@ export function CommandCenterView({
         <StatTile
           label="Spend Today"
           value={formatCurrency(fleetSpend.spent)}
-          sub={`of ${formatCurrency(fleetSpend.cap)} total cap`}
+          sub={fleetSpend.cap > 0 ? `of ${formatCurrency(fleetSpend.cap)} total cap` : 'no fleet-wide cap configured'}
           accent={fleetSpend.cap > 0 && fleetSpend.spent / fleetSpend.cap > 0.8 ? 'caution' : 'accent'}
         />
         <StatTile
