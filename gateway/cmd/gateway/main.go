@@ -80,7 +80,7 @@ func main() {
 	}
 
 	spendLimiter := spend.NewLimiter(rdb)
-	constraintChecker := constraints.NewChecker(rdb)
+	constraintChecker := constraints.NewChecker()
 	cfgCache := configcache.New(ctx, rdb, cfg.BackendURL, logger)
 
 	auditor, err := audit.NewLogger(ctx, pool, logger, cfg.AuditBatchSize, cfg.AuditFlushInterval)

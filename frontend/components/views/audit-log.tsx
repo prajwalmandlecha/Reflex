@@ -61,6 +61,15 @@ export function AuditLogView({ entries }: { entries: AuditLogEntry[] }) {
     }
   };
 
+  // The backend integrity error names a specific record, e.g.
+  // "Hash chain mismatch at row ID 42: ...". Extract that ID so we can point
+  // the operator at the exact row in the table below.
+  const failedRecordId = useMemo(() => {
+    if (!verifyResult || verifyResult.valid) return null;
+    const m = verifyResult.error_message?.match(/row ID (\d+)/i);
+    return m ? m[1] : null;
+  }, [verifyResult]);
+
   const filtered = useMemo(() => {
     return entries.filter((e) => {
       if (search) {
@@ -102,8 +111,9 @@ export function AuditLogView({ entries }: { entries: AuditLogEntry[] }) {
           <div className="flex items-center gap-2">
             <Button
               onClick={() => {
-                const headers = ['Timestamp', 'Type', 'Agent', 'Action', 'Outcome', 'Reason', 'Operator'];
+                const headers = ['ID', 'Timestamp', 'Type', 'Agent', 'Action', 'Outcome', 'Reason', 'Operator'];
                 const rows = filtered.map((e) => [
+                  e.id,
                   e.timestamp,
                   e.entryType || 'action',
                   e.agentId,
@@ -159,6 +169,11 @@ export function AuditLogView({ entries }: { entries: AuditLogEntry[] }) {
                   ? `Successfully validated SHA-256 hash signatures across all ${verifyResult.total_records} database records.`
                   : verifyResult.error_message || 'Database records have been tampered with or modified.'}
               </div>
+              {!verifyResult.valid && failedRecordId && (
+                <div className="mt-1 font-mono text-[11px] font-bold uppercase tracking-wider">
+                  First broken record: #{failedRecordId} — highlighted in the table below.
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -196,7 +211,7 @@ export function AuditLogView({ entries }: { entries: AuditLogEntry[] }) {
           <table className="w-full">
             <thead className="sticky top-0 bg-[rgba(14,20,28,0.9)] backdrop-blur-xl">
               <tr className="border-b border-white/5">
-                {['Timestamp', 'Agent', 'Action', 'Outcome', 'Reason / Change', 'Latency'].map(
+                {['ID', 'Timestamp', 'Agent', 'Action', 'Outcome', 'Reason / Change', 'Latency'].map(
                   (h) => (
                     <th
                       key={h}
@@ -212,8 +227,16 @@ export function AuditLogView({ entries }: { entries: AuditLogEntry[] }) {
               {filtered.map((entry) => (
                 <tr
                   key={entry.id}
-                  className="border-b border-white/5 transition-colors hover:bg-white/5"
+                  className={cn(
+                    'border-b border-white/5 transition-colors hover:bg-white/5',
+                    failedRecordId &&
+                      entry.id === failedRecordId &&
+                      'bg-signal-stopped/10 ring-1 ring-inset ring-signal-stopped/50'
+                  )}
                 >
+                  <td className="whitespace-nowrap px-4 py-2 font-mono text-[10px] tabular text-ink-secondary/70">
+                    #{entry.id}
+                  </td>
                   <td className="whitespace-nowrap px-4 py-2 font-mono text-[10px] text-ink-secondary tabular">
                     {formatTimestamp(entry.timestamp)}
                     <div className="text-[9px] text-ink-secondary/60">

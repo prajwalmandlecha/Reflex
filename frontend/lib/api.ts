@@ -24,7 +24,23 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const errorText = await res.text();
-    throw new Error(`API ${path} failed (${res.status}): ${errorText}`);
+    // FastAPI returns { "detail": ... }. For our constraint validator, detail
+    // is { message, errors: [...] } — surface those so the class editor can
+    // tell the operator exactly which tool/key/money field was rejected.
+    let message = errorText;
+    try {
+      const parsed = JSON.parse(errorText);
+      const detail = parsed?.detail;
+      if (typeof detail === "string") {
+        message = detail;
+      } else if (detail && typeof detail === "object") {
+        const parts = [detail.message, ...(Array.isArray(detail.errors) ? detail.errors : [])].filter(Boolean);
+        message = parts.join(": ") || errorText;
+      }
+    } catch {
+      // Non-JSON body — fall back to the raw text.
+    }
+    throw new Error(`${message} (${res.status})`);
   }
   // 204 No Content (or any empty body) has no JSON to parse.
   if (res.status === 204) {

@@ -91,7 +91,10 @@ def main():
             "default_allowed_tools": ["login", "get_balance", "deposit_funds", "transfer_money", "get_transaction_history"],
             "default_constraints": {
                 "deposit_funds": {"rate_limit": {"max_calls": 30, "window_seconds": 3600}},
-                "transfer_money": {"max_amount": 1000.00, "allowed_currencies": ["USD"]}
+                "transfer_money": {
+                    "money_params": ["amount_cents"],
+                    "cumulative_spend_cap": {"max_daily_cents": 500000}
+                }
             },
             "default_caps": {
                 "hourly": {"amount_cents": 500000, "count": 50},

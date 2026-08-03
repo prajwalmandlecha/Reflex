@@ -628,6 +628,7 @@ function ClassForm({ classData, onComplete }: { classData: AgentClass | null; on
       {/* Visual Dynamic Tool Constraints Configurator */}
       <VisualConstraintEditor
         selectedTools={selectedTools}
+        tools={tools}
         constraintsJson={constraintsJson}
         setConstraintsJson={setConstraintsJson}
       />
@@ -655,26 +656,55 @@ function ClassForm({ classData, onComplete }: { classData: AgentClass | null; on
 
 function VisualConstraintEditor({
   selectedTools,
+  tools,
   constraintsJson,
   setConstraintsJson,
 }: {
   selectedTools: string[];
+  tools: BankTool[];
   constraintsJson: string;
   setConstraintsJson: (s: string) => void;
 }) {
   const [editorMode, setEditorMode] = useState<'visual' | 'json'>('visual');
-  const [targetTool, setTargetTool] = useState<string>(selectedTools[0] || 'transfer_money');
+  const [targetTool, setTargetTool] = useState<string>(selectedTools[0] || '');
   const [maxCalls, setMaxCalls] = useState<string>('60');
   const [windowSec, setWindowSec] = useState<string>('3600');
   const [startTime, setStartTime] = useState<string>('09:00');
   const [endTime, setEndTime] = useState<string>('17:00');
-  const [maxAmount, setMaxAmount] = useState<string>('1000');
+  const [moneyField, setMoneyField] = useState<string>('');
+  const [dailyCap, setDailyCap] = useState<string>('');
 
   useEffect(() => {
     if (selectedTools.length > 0 && !selectedTools.includes(targetTool)) {
       setTargetTool(selectedTools[0]);
     }
   }, [selectedTools]);
+
+  // Numeric parameters declared in the selected tool's input_schema. These are
+  // the candidate "money fields" a spend cap can meter on (e.g. amount_cents,
+  // dest_amount, attendee_share) — sourced straight from tools.input_schema.
+  const targetToolMeta = useMemo(
+    () => tools.find((t) => t.name === targetTool),
+    [tools, targetTool]
+  );
+  const numericParams = useMemo(() => {
+    const schema = (targetToolMeta?.input_schema || {}) as Record<string, any>;
+    const props = (schema.properties || {}) as Record<string, any>;
+    return Object.entries(props)
+      .filter(([, def]) => {
+        const type = (def && (def as any).type) || '';
+        return type === 'number' || type === 'integer';
+      })
+      .map(([name]) => name);
+  }, [targetToolMeta]);
+
+  // Reset the money-field pick whenever the tool (and thus its param list)
+  // changes, so a stale field from another tool can't leak into the rule.
+  useEffect(() => {
+    if (moneyField && !numericParams.includes(moneyField)) {
+      setMoneyField('');
+    }
+  }, [numericParams]);
 
   const parsedObj = useMemo(() => {
     try {
@@ -705,8 +735,17 @@ function VisualConstraintEditor({
       };
     }
 
-    if (maxAmount.trim()) {
-      toolRule.max_amount = parseFloat(maxAmount) || 1000.0;
+    // Declare which request field carries money so the gateway meters the
+    // right value and fails closed when it is missing (P0 spend-cap fix).
+    if (moneyField.trim()) {
+      toolRule.money_params = [moneyField.trim()];
+    }
+
+    // Cumulative daily spend cap, stored in cents to match the gateway.
+    if (dailyCap.trim() !== '') {
+      toolRule.cumulative_spend_cap = {
+        max_daily_cents: Math.max(0, Math.round((parseFloat(dailyCap) || 0) * 100)),
+      };
     }
 
     current[targetTool] = toolRule;
@@ -725,7 +764,7 @@ function VisualConstraintEditor({
         <div className="flex items-center gap-2">
           <Clock className="h-4 w-4 text-cyan-400" />
           <span className="font-mono text-[10px] uppercase tracking-widest text-ink-primary font-semibold">
-            Dynamic Operational Constraints (Rate Limits & Time Windows)
+            Dynamic Operational Constraints (Rate Limits, Time Windows & Spend Caps)
           </span>
         </div>
         <div className="flex items-center border border-white/10 bg-slate-900 p-0.5 font-mono text-[10px]">
@@ -768,8 +807,11 @@ function VisualConstraintEditor({
                       {conf.time_window && (
                         <span>Hours: <strong className="text-amber-300">{conf.time_window.start} - {conf.time_window.end} UTC</strong></span>
                       )}
-                      {conf.max_amount != null && (
-                        <span>Max Amount: <strong className="text-emerald-400">${conf.max_amount}</strong></span>
+                      {Array.isArray(conf.money_params) && conf.money_params.length > 0 && (
+                        <span>Money Field: <strong className="text-cyan-300">{conf.money_params.join(', ')}</strong></span>
+                      )}
+                      {conf.cumulative_spend_cap?.max_daily_cents != null && (
+                        <span>Daily Spend Cap: <strong className="text-emerald-400">${(conf.cumulative_spend_cap.max_daily_cents / 100).toLocaleString()}</strong></span>
                       )}
                     </div>
                   </div>
@@ -809,21 +851,48 @@ function VisualConstraintEditor({
                       <option key={t} value={t}>{t}</option>
                     ))
                   ) : (
-                    <option value="transfer_money">transfer_money</option>
+                    <option value="">Select allowed tools above first</option>
                   )}
                 </select>
               </div>
 
               <div>
-                <Label className="font-mono text-[10px] text-ink-secondary">Max Call Amount ($)</Label>
+                <Label className="font-mono text-[10px] text-ink-secondary">Money Field (from tool schema)</Label>
+                <select
+                  value={moneyField}
+                  onChange={(e) => setMoneyField(e.target.value)}
+                  disabled={numericParams.length === 0}
+                  className="mt-1 h-8 w-full border border-white/10 bg-slate-900 px-2 font-mono text-xs text-white rounded disabled:opacity-50"
+                >
+                  <option value="">
+                    {!targetToolMeta
+                      ? 'Tool not registered — connect its MCP server'
+                      : numericParams.length === 0
+                        ? 'No numeric params in schema'
+                        : 'None (no spend metering)'}
+                  </option>
+                  {numericParams.map((p) => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label className="font-mono text-[10px] text-ink-secondary">Daily Spend Cap ($)</Label>
                 <Input
                   type="number"
-                  value={maxAmount}
-                  onChange={(e) => setMaxAmount(e.target.value)}
+                  value={dailyCap}
+                  onChange={(e) => setDailyCap(e.target.value)}
                   placeholder="e.g. 1000"
                   className="mt-1 h-8 border-white/10 bg-slate-900 font-mono text-xs text-white"
                 />
+                <p className="mt-1 font-mono text-[9px] text-ink-secondary/60 leading-tight">
+                  Metered on the money field above. Calls missing it are denied (fail-closed).
+                </p>
               </div>
+              <div />
             </div>
 
             <div className="grid grid-cols-2 gap-2">
@@ -885,7 +954,7 @@ function VisualConstraintEditor({
         <textarea
           value={constraintsJson}
           onChange={(e) => setConstraintsJson(e.target.value)}
-          placeholder={`{\n  "transfer_money": {\n    "rate_limit": {"max_calls": 60, "window_seconds": 3600},\n    "time_window": {"start": "09:00", "end": "17:00", "tz": "UTC"}\n  }\n}`}
+          placeholder={`{\n  "transfer_money": {\n    "money_params": ["amount_cents"],\n    "cumulative_spend_cap": {"max_daily_cents": 100000},\n    "rate_limit": {"max_calls": 60, "window_seconds": 3600},\n    "time_window": {"start": "09:00", "end": "17:00", "tz": "UTC"}\n  }\n}`}
           className="mt-1 h-36 w-full border border-white/10 bg-slate-900 p-2 font-mono text-[11px] leading-relaxed rounded text-white focus:outline-none focus:border-cyan-500"
         />
       )}

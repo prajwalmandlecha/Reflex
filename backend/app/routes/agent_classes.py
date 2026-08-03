@@ -6,6 +6,7 @@ from app.database import get_pool
 from app.models.agent_class import AgentClassCreate, AgentClassResponse, AgentClassUpdate
 from app.redis_client import get_redis
 from app.services.config_propagation import cache_agent_class, publish_config_update
+from app.services.constraint_validation import validate_class_config
 
 router = APIRouter(prefix="/api/v1/classes", tags=["Agent Classes"])
 
@@ -47,6 +48,12 @@ async def list_agent_classes():
 
 @router.post("", response_model=AgentClassResponse, status_code=status.HTTP_201_CREATED)
 async def create_agent_class(cls: AgentClassCreate):
+    validation_errors = await validate_class_config(cls.default_allowed_tools, cls.default_constraints)
+    if validation_errors:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"message": "Invalid constraint configuration", "errors": validation_errors},
+        )
     pool = get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -123,6 +130,20 @@ async def update_agent_class(class_id: str, cls: AgentClassUpdate):
         constraints = json.dumps(cls.default_constraints) if cls.default_constraints is not None else row["default_constraints"]
         caps = json.dumps(cls.default_caps) if cls.default_caps is not None else row["default_caps"]
         status_val = cls.status if cls.status is not None else row["status"]
+
+        # Validate the effective constraints being written (whichever of the
+        # incoming payload or the existing stored config applies).
+        effective_constraints = (
+            cls.default_constraints
+            if cls.default_constraints is not None
+            else (json.loads(row["default_constraints"]) if isinstance(row["default_constraints"], str) else (row["default_constraints"] or {}))
+        )
+        validation_errors = await validate_class_config(tools, effective_constraints)
+        if validation_errors:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"message": "Invalid constraint configuration", "errors": validation_errors},
+            )
 
         updated = await conn.fetchrow(
             """

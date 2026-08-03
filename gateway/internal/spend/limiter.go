@@ -1,123 +1,118 @@
-// Package spend provides atomic, hierarchical spend-cap enforcement via Redis Lua scripts.
+// Package spend provides atomic enforcement of ALL stateful governance counters
+// (hierarchical spend caps, per-tool rate limits, cumulative daily spend) via a
+// single Redis Lua script.
 //
-// A single Lua script atomically increments all applicable scope counters and rolls back
-// if any scope's cap is exceeded — no separate read-then-write step, so concurrent
-// requests cannot both slip under the limit.
+// One script atomically increments every applicable counter and rolls all of
+// them back if any cap is exceeded — no separate read-then-write step and no
+// partially-committed state, so denied calls never consume budget (G4) and
+// concurrent requests cannot both slip under a limit (no TOCTOU window).
 package spend
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
-// Scope defines a single spend-cap scope (agent, category, fleet, global).
-type Scope struct {
-	Key string `json:"key"` // Redis key, e.g. "spend:agent:pay-agent-01:hourly"
-	Cap int64  `json:"cap"` // Cap in the smallest currency unit (e.g. cents)
+// Entry is one stateful counter to commit: increment Key by Amount, enforce
+// Cap (0 = uncapped), and set TTLSeconds when the key is first created.
+type Entry struct {
+	Key        string  `json:"key"`
+	Amount     float64 `json:"amount"`
+	Cap        float64 `json:"cap"`
+	TTLSeconds int64   `json:"ttl"`
+	Label      string  `json:"label,omitempty"` // human-readable description used in deny reasons
 }
 
-// CheckResult is the outcome of a spend-cap check.
-type CheckResult struct {
-	Allowed     bool   `json:"allowed"`
-	ExceededKey string `json:"exceeded,omitempty"`
-	Current     int64  `json:"current,omitempty"`
+// CommitResult is the outcome of an atomic counter commit.
+type CommitResult struct {
+	Allowed  bool    `json:"allowed"`
+	Exceeded string  `json:"exceeded,omitempty"` // Redis key of the breached counter
+	Label    string  `json:"label,omitempty"`
+	Current  float64 `json:"current,omitempty"` // counter value BEFORE this call's increment
+	Cap      float64 `json:"cap,omitempty"`
 }
 
-// luaSpendCheck is the Lua script that atomically checks and increments all scope counters.
-// If any scope exceeds its cap after increment, all already-incremented scopes are rolled back.
-var luaSpendCheck = redis.NewScript(`
-local scopes = cjson.decode(ARGV[1])
-local amount = tonumber(ARGV[2])
-local incremented = {}
+// luaCommit atomically increments all counters; if any counter exceeds its cap
+// after increment, every already-applied increment (including the breaching
+// one) is rolled back before returning the breach.
+var luaCommit = redis.NewScript(`
+local entries = cjson.decode(ARGV[1])
+local applied = {}
 
-for i, scope in ipairs(scopes) do
-    local new_val = redis.call('INCRBY', scope.key, amount)
+for i, e in ipairs(entries) do
+    local new_val = tonumber(redis.call('INCRBYFLOAT', e.key, e.amount))
+    table.insert(applied, e)
     -- Set a TTL on first creation so windowed counters don't leak forever (G13).
-    -- 48h comfortably covers both hourly and daily bucket keys.
-    if new_val == amount then
-        redis.call('EXPIRE', scope.key, 172800)
+    if new_val == e.amount and e.ttl > 0 then
+        redis.call('EXPIRE', e.key, e.ttl)
     end
-    table.insert(incremented, scope.key)
-    if new_val > tonumber(scope.cap) then
-        -- rollback all already-incremented keys
-        for _, k in ipairs(incremented) do
-            redis.call('DECRBY', k, amount)
+    if e.cap > 0 and new_val > e.cap then
+        -- rollback ALL already-applied increments
+        for _, a in ipairs(applied) do
+            redis.call('INCRBYFLOAT', a.key, -a.amount)
         end
-        return cjson.encode({allowed=false, exceeded=scope.key, current=new_val - amount})
+        return cjson.encode({allowed=false, exceeded=e.key, label=e.label, current=new_val - e.amount, cap=e.cap})
     end
 end
 
 return cjson.encode({allowed=true})
 `)
 
-// Limiter enforces hierarchical spend caps using Redis.
+// Limiter commits governance counters atomically using Redis.
 type Limiter struct {
 	rdb *redis.Client
 }
 
-// NewLimiter creates a spend limiter backed by the given Redis client.
+// NewLimiter creates a limiter backed by the given Redis client.
 func NewLimiter(rdb *redis.Client) *Limiter {
 	return &Limiter{rdb: rdb}
 }
 
-// Check atomically verifies and increments spend counters for the given amount across all scopes.
-// If any scope would be exceeded, all increments are rolled back and the result indicates the breach.
-func (l *Limiter) Check(ctx context.Context, amount int64, scopes []Scope) (*CheckResult, error) {
-	if len(scopes) == 0 {
-		return &CheckResult{Allowed: true}, nil
+// Commit atomically increments every entry's counter with all-or-nothing
+// semantics: if any cap would be breached, no counter retains an increment.
+// Entries with a non-positive Amount are skipped.
+func (l *Limiter) Commit(ctx context.Context, entries []Entry) (*CommitResult, error) {
+	active := make([]Entry, 0, len(entries))
+	for _, e := range entries {
+		if e.Amount > 0 {
+			active = append(active, e)
+		}
 	}
-	if amount <= 0 {
-		return &CheckResult{Allowed: true}, nil
+	if len(active) == 0 {
+		return &CommitResult{Allowed: true}, nil
 	}
 
-	scopesJSON, err := json.Marshal(scopes)
+	payload, err := json.Marshal(active)
 	if err != nil {
-		return nil, fmt.Errorf("marshaling scopes: %w", err)
+		return nil, fmt.Errorf("marshaling counter entries: %w", err)
 	}
 
-	// All scope keys passed for Redis cluster compat (unused in single-node mode)
-	keys := make([]string, len(scopes))
-	for i, s := range scopes {
-		keys[i] = s.Key
+	// All keys passed for Redis cluster compat (unused in single-node mode)
+	keys := make([]string, len(active))
+	for i, e := range active {
+		keys[i] = e.Key
 	}
 
-	result, err := luaSpendCheck.Run(ctx, l.rdb, keys, string(scopesJSON), amount).Text()
+	raw, err := luaCommit.Run(ctx, l.rdb, keys, string(payload)).Text()
 	if err != nil {
-		return nil, fmt.Errorf("executing spend check: %w", err)
+		return nil, fmt.Errorf("executing counter commit: %w", err)
 	}
 
-	var cr CheckResult
-	if err := json.Unmarshal([]byte(result), &cr); err != nil {
-		return nil, fmt.Errorf("parsing spend check result: %w", err)
+	var cr CommitResult
+	if err := json.Unmarshal([]byte(raw), &cr); err != nil {
+		return nil, fmt.Errorf("parsing commit result: %w", err)
 	}
-
 	return &cr, nil
 }
 
-// SetTTL sets the TTL on a spend counter key (call after the first increment in a new window).
-func (l *Limiter) SetTTL(ctx context.Context, key string, seconds int64) error {
-	return l.rdb.Expire(ctx, key, time.Duration(seconds)*time.Second).Err()
-}
-
-// GetCurrentSpend returns the current value of a spend counter.
-func (l *Limiter) GetCurrentSpend(ctx context.Context, key string) (int64, error) {
-	val, err := l.rdb.Get(ctx, key).Int64()
+// GetCurrentSpend returns the current value of a counter key (0 when absent).
+func (l *Limiter) GetCurrentSpend(ctx context.Context, key string) (float64, error) {
+	val, err := l.rdb.Get(ctx, key).Float64()
 	if err == redis.Nil {
 		return 0, nil
 	}
 	return val, err
-}
-
-// BuildScopeKeys constructs the hierarchical scope keys for a given agent action.
-func BuildScopeKeys(agentID, category, window string) []string {
-	return []string{
-		fmt.Sprintf("spend:agent:%s:%s", agentID, window),
-		fmt.Sprintf("spend:category:%s:%s", category, window),
-		fmt.Sprintf("spend:fleet:%s", window),
-		fmt.Sprintf("spend:global:%s", window),
-	}
 }

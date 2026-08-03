@@ -351,9 +351,9 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		toolName, _ := params["name"].(string)
 		args, _ := params["arguments"].(map[string]any)
 
-		amount := extractAmount(args)
+		amount, amountFound := p.extractAmount(agentCfg, toolName, args)
 
-		allowed, denyStage, reason, timings := p.governCall(r.Context(), agentID, classID, agentKind, toolName, amount, allowedTools, agentCfg, args)
+		allowed, denyStage, reason, timings := p.governCall(r.Context(), agentID, classID, agentKind, toolName, amount, amountFound, allowedTools, agentCfg, args)
 
 		downstreamStart := time.Now()
 		if allowed {
@@ -439,6 +439,7 @@ func (p *MCPProxy) governCall(
 	ctx context.Context,
 	agentID, classID, agentKind, toolName string,
 	amount float64,
+	amountFound bool,
 	allowedTools []string,
 	cfg *configcache.AgentConfig,
 	args map[string]any,
@@ -460,10 +461,29 @@ func (p *MCPProxy) governCall(
 		return false, "killswitch", ksRes.Reason, t
 	}
 
-	// Stage 2: Dynamic Per-Tool Constraints (DRY-RUN — read-only, no counter
-	// increments yet, so a deny at a later stage never consumes budget; G4)
+	// Stage 2: Static Per-Tool Constraints (stateless checks: time windows).
+	// Stateful counters (rate limit, cumulative spend) are committed atomically
+	// in Stage 4 — no dry-run/commit split, so there's no TOCTOU window.
 	cStart := time.Now()
-	cOk, cReason := p.constraintCheck.Check(ctx, cfg, toolName, args, false)
+
+	// Stage 2a: Declared money-field enforcement (FAIL CLOSED). A money-moving
+	// tool — one that declares money_params or configures a cumulative_spend_cap
+	// — MUST carry a parseable value in a declared field. If it doesn't, the
+	// spend cap cannot be enforced, so the call is DENIED rather than silently
+	// passed through as $0 (which is exactly how a renamed/omitted money field
+	// would otherwise bypass every cap).
+	if required, mp := p.constraintCheck.RequiresAmount(cfg, toolName); required && !amountFound {
+		t.ConstraintMs = ms(time.Since(cStart))
+		metrics.ConstraintCheckDuration.WithLabelValues(toolName).Observe(t.ConstraintMs / 1000.0)
+		t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs
+		reason := fmt.Sprintf("action '%s' denied: missing or unparseable declared money field", toolName)
+		if len(mp) > 0 {
+			reason = fmt.Sprintf("action '%s' denied: no parseable value in declared money field(s) %v — spend cap cannot be enforced", toolName, mp)
+		}
+		return false, "constraint", reason, t
+	}
+
+	cOk, cReason := p.constraintCheck.CheckStatic(cfg, toolName)
 	t.ConstraintMs = ms(time.Since(cStart))
 	metrics.ConstraintCheckDuration.WithLabelValues(toolName).Observe(t.ConstraintMs / 1000.0)
 
@@ -494,83 +514,97 @@ func (p *MCPProxy) governCall(
 		return false, "policy", decision.Reason, t
 	}
 
-	// Stage 4: Hierarchical Spend Caps
+	// Stage 4 (final): Atomic commit of ALL stateful counters — per-tool rate
+	// limit, cumulative daily spend, and hierarchical spend caps — in a single
+	// Redis Lua script. All-or-nothing: if any cap would be breached, every
+	// increment is rolled back inside the script, so denied calls never consume
+	// budget (G4) and concurrent calls cannot race between a read and a write.
 	spendStart := time.Now()
+	entries := p.constraintCheck.CounterEntries(cfg, toolName, args)
 	spendDelta := int64(amount * 100)
 	if spendDelta > 0 {
-		dynamicScopes := p.buildDynamicScopes(agentID, classID, cfg.EffectiveCaps)
-		spendRes, err := p.spendLimiter.Check(ctx, spendDelta, dynamicScopes)
-		t.SpendCheckMs = ms(time.Since(spendStart))
-		metrics.SpendCheckDuration.Observe(t.SpendCheckMs / 1000.0)
-
-		if err != nil {
-			t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs + t.PolicyMs + t.SpendCheckMs
-			return false, "spend", "internal error: spend limit check failed", t
-		}
-		if !spendRes.Allowed {
-			t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs + t.PolicyMs + t.SpendCheckMs
-			return false, "spend", fmt.Sprintf("spend cap exceeded on scope %s (current: %d cents)", spendRes.ExceededKey, spendRes.Current), t
-		}
-	} else {
-		t.SpendCheckMs = ms(time.Since(spendStart))
+		entries = append(entries, p.buildDynamicScopes(agentID, classID, cfg.EffectiveCaps, float64(spendDelta))...)
 	}
 
-	// Stage 5: Commit stateful constraint counters (rate limit, cumulative spend)
-	// now that ALL governance stages have passed. This is the only place these
-	// counters are incremented, so denied calls never consume budget (G4). If the
-	// commit itself reports a breach (lost a race against a concurrent call), deny.
-	commitOk, commitReason := p.constraintCheck.Check(ctx, cfg, toolName, args, true)
-	if !commitOk {
+	commitRes, err := p.spendLimiter.Commit(ctx, entries)
+	t.SpendCheckMs = ms(time.Since(spendStart))
+	metrics.SpendCheckDuration.Observe(t.SpendCheckMs / 1000.0)
+
+	if err != nil {
 		t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs + t.PolicyMs + t.SpendCheckMs
-		return false, "constraint", commitReason, t
+		return false, "spend", "internal error: governance counter commit failed", t
+	}
+	if !commitRes.Allowed {
+		stage := "spend"
+		if strings.HasPrefix(commitRes.Exceeded, "ratelimit:") || strings.HasPrefix(commitRes.Exceeded, "spendcap:") {
+			stage = "constraint"
+		}
+		reason := commitRes.Label
+		if reason == "" {
+			reason = fmt.Sprintf("spend cap exceeded on scope %s", commitRes.Exceeded)
+		}
+		reason = fmt.Sprintf("%s (current: %.0f / cap: %.0f)", reason, commitRes.Current, commitRes.Cap)
+		t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs + t.PolicyMs + t.SpendCheckMs
+		return false, stage, reason, t
 	}
 
 	t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs + t.PolicyMs + t.SpendCheckMs
 	return true, "", decision.Reason, t
 }
 
-func (p *MCPProxy) buildDynamicScopes(agentID, classID string, caps map[string]map[string]any) []spend.Scope {
-	scopes := []spend.Scope{}
+// buildDynamicScopes expresses the hierarchical spend caps (instance hourly,
+// class daily, fleet daily) as counter entries for the atomic commit.
+func (p *MCPProxy) buildDynamicScopes(agentID, classID string, caps map[string]map[string]any, amountCents float64) []spend.Entry {
+	entries := []spend.Entry{}
 	now := time.Now().UTC()
 
 	// Default fallback caps if not set in config
-	hourlyCap := int64(500000)
-	dailyCap := int64(5000000)
+	hourlyCap := float64(500000)
+	dailyCap := float64(5000000)
 
 	if caps != nil {
 		if h, ok := caps["hourly"]; ok {
 			if amt, ok := h["amount_cents"].(float64); ok && amt > 0 {
-				hourlyCap = int64(amt)
+				hourlyCap = amt
 			}
 		}
 		if d, ok := caps["daily"]; ok {
 			if amt, ok := d["amount_cents"].(float64); ok && amt > 0 {
-				dailyCap = int64(amt)
+				dailyCap = amt
 			}
 		}
 	}
 
 	// Instance-level hourly scope
-	scopes = append(scopes, spend.Scope{
-		Key: fmt.Sprintf("spend:agent:%s:%s", agentID, now.Format("2006010215")),
-		Cap: hourlyCap,
+	entries = append(entries, spend.Entry{
+		Key:        fmt.Sprintf("spend:agent:%s:%s", agentID, now.Format("2006010215")),
+		Amount:     amountCents,
+		Cap:        hourlyCap,
+		TTLSeconds: 172800,
+		Label:      fmt.Sprintf("hourly spend cap exceeded for agent '%s' ($%.2f hourly cap)", agentID, hourlyCap/100.0),
 	})
 
 	// Class-level daily scope
 	if classID != "" {
-		scopes = append(scopes, spend.Scope{
-			Key: fmt.Sprintf("spend:class:%s:%s", classID, now.Format("20060102")),
-			Cap: dailyCap,
+		entries = append(entries, spend.Entry{
+			Key:        fmt.Sprintf("spend:class:%s:%s", classID, now.Format("20060102")),
+			Amount:     amountCents,
+			Cap:        dailyCap,
+			TTLSeconds: 172800,
+			Label:      fmt.Sprintf("daily spend cap exceeded for agent class '%s' ($%.2f daily cap)", classID, dailyCap/100.0),
 		})
 	}
 
 	// Fleet-level daily scope
-	scopes = append(scopes, spend.Scope{
-		Key: fmt.Sprintf("spend:fleet:all:%s", now.Format("20060102")),
-		Cap: 50000000,
+	entries = append(entries, spend.Entry{
+		Key:        fmt.Sprintf("spend:fleet:all:%s", now.Format("20060102")),
+		Amount:     amountCents,
+		Cap:        50000000,
+		TTLSeconds: 172800,
+		Label:      "fleet-wide daily spend cap exceeded ($500000.00 daily cap)",
 	})
 
-	return scopes
+	return entries
 }
 
 func (p *MCPProxy) handleOpenAPIRequest(
@@ -653,12 +687,12 @@ func (p *MCPProxy) handleOpenAPIRequest(
 		toolName, _ := params["name"].(string)
 		args, _ := params["arguments"].(map[string]any)
 
-		// Use the shared extractor (handles float/int/string for amount and
-		// amount_cents) so caps and the $1000 bound aren't bypassed by
-		// non-float64 JSON number encodings (G12).
-		amount := extractAmount(args)
+		// Use the shared extractor (declared money_params, else legacy amount/
+		// amount_cents; handles float/int/string) so caps and the $1000 bound
+		// aren't bypassed by non-float64 encodings or renamed money fields (G12).
+		amount, amountFound := p.extractAmount(agentCfg, toolName, args)
 
-		allowed, denyStage, reason, timings := p.governCall(r.Context(), agentID, classID, agentKind, toolName, amount, allowedTools, agentCfg, args)
+		allowed, denyStage, reason, timings := p.governCall(r.Context(), agentID, classID, agentKind, toolName, amount, amountFound, allowedTools, agentCfg, args)
 
 		downstreamStart := time.Now()
 		var mcpResult map[string]any
@@ -1280,43 +1314,15 @@ func ms(d time.Duration) float64 {
 	return float64(d.Microseconds()) / 1000.0
 }
 
-func extractAmount(args map[string]any) float64 {
-	if args == nil {
-		return 0.0
-	}
-	if v, ok := args["amount"]; ok {
-		switch val := v.(type) {
-		case float64:
-			return val
-		case float32:
-			return float64(val)
-		case int:
-			return float64(val)
-		case int64:
-			return float64(val)
-		case string:
-			var f float64
-			if _, err := fmt.Sscanf(val, "%f", &f); err == nil {
-				return f
-			}
-		}
-	}
-	if v, ok := args["amount_cents"]; ok {
-		switch val := v.(type) {
-		case float64:
-			return val / 100.0
-		case float32:
-			return float64(val) / 100.0
-		case int:
-			return float64(val) / 100.0
-		case int64:
-			return float64(val) / 100.0
-		case string:
-			var f float64
-			if _, err := fmt.Sscanf(val, "%f", &f); err == nil {
-				return f / 100.0
-			}
-		}
-	}
-	return 0.0
+// extractAmount resolves a call's monetary value in major currency units using
+// the tool's DECLARED money_params (falling back to the legacy amount/
+// amount_cents heuristic when none are declared). found reports whether a
+// parseable amount was present, letting governCall fail closed on money-moving
+// tools that omit their declared field instead of treating them as $0. All
+// money extraction routes through constraints.ExtractAmountCents so the proxy
+// (OPA input, metrics, hierarchical caps) and the spend-cap counter can never
+// disagree on the amount.
+func (p *MCPProxy) extractAmount(cfg *configcache.AgentConfig, toolName string, args map[string]any) (float64, bool) {
+	cents, found := constraints.ExtractAmountCents(args, p.constraintCheck.MoneyParams(cfg, toolName))
+	return cents / 100.0, found
 }
