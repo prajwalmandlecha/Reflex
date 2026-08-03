@@ -1012,6 +1012,10 @@ func (p *MCPProxy) handleFilteredToolsList(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	for k, vv := range r.Header {
+		// Never leak the agent's Authorization header to downstream bank servers.
+		if strings.EqualFold(k, "Authorization") {
+			continue
+		}
 		for _, v := range vv {
 			outReq.Header.Add(k, v)
 		}
@@ -1201,8 +1205,10 @@ func (p *MCPProxy) doProxyRequest(r *http.Request, targetURL string, bodyBytes [
 	}
 
 	for k, vv := range r.Header {
-		// Don't forward the client's session ID — the gateway manages downstream sessions
-		if strings.EqualFold(k, "Mcp-Session-Id") {
+		// Don't forward the client's session ID — the gateway manages downstream sessions.
+		// Don't forward the agent's Authorization header either: the JWT is the
+		// gateway's trust boundary and must never leak to downstream bank servers.
+		if strings.EqualFold(k, "Mcp-Session-Id") || strings.EqualFold(k, "Authorization") {
 			continue
 		}
 		for _, v := range vv {
