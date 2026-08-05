@@ -101,22 +101,6 @@ func NewMCPProxy(
 	}
 }
 
-func (p *MCPProxy) RegisterOpenAPISpec(serviceName string, baseURL string, specData []byte) error {
-	doc, err := adapter.LoadSpec(specData)
-	if err != nil {
-		return fmt.Errorf("failed to parse openapi spec for service '%s': %w", serviceName, err)
-	}
-
-	p.openAPIMux.Lock()
-	defer p.openAPIMux.Unlock()
-	p.openAPITargets[serviceName] = &OpenAPISpecTarget{
-		BaseURL: baseURL,
-		Doc:     doc,
-	}
-	p.logger.Info("registered openapi target endpoint", "service", serviceName, "base_url", baseURL)
-	return nil
-}
-
 // connectionEntry mirrors a single bank_connections row as cached in Redis
 // under agp:connections by the backend.
 type connectionEntry struct {
@@ -998,101 +982,6 @@ func (p *MCPProxy) doFetchTools(r *http.Request, targetURL string, bodyBytes []b
 		return nil, false
 	}
 	return tools, false
-}
-
-func (p *MCPProxy) handleFilteredToolsList(w http.ResponseWriter, r *http.Request, targetBaseURL string, bodyBytes []byte, allowedTools []string) {
-	targetURL := targetBaseURL
-	if !strings.HasSuffix(targetBaseURL, "/mcp") {
-		targetURL = strings.TrimSuffix(targetBaseURL, "/") + "/mcp"
-	}
-
-	outReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, bytes.NewReader(bodyBytes))
-	if err != nil {
-		http.Error(w, "proxy error", http.StatusInternalServerError)
-		return
-	}
-	for k, vv := range r.Header {
-		// Never leak the agent's Authorization header to downstream bank servers.
-		if strings.EqualFold(k, "Authorization") {
-			continue
-		}
-		for _, v := range vv {
-			outReq.Header.Add(k, v)
-		}
-	}
-
-	if outReq.Header.Get("Mcp-Session-Id") == "" {
-		if sessID := p.getOrCreateDownstreamSession(r.Context(), targetURL); sessID != "" {
-			outReq.Header.Set("Mcp-Session-Id", sessID)
-		}
-	}
-
-	resp, err := p.client.Do(outReq)
-	if err != nil {
-		http.Error(w, "downstream unreachable", http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	respBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		http.Error(w, "error reading downstream response", http.StatusInternalServerError)
-		return
-	}
-
-	rawStr := strings.TrimSpace(string(respBytes))
-	isSSE := strings.HasPrefix(rawStr, "event: message")
-	rawJSON := respBytes
-	if isSSE {
-		idx := strings.Index(rawStr, "data: ")
-		if idx != -1 {
-			rawJSON = []byte(strings.TrimSpace(rawStr[idx+6:]))
-		}
-	}
-
-	var jsonResp map[string]any
-	if err := json.Unmarshal(rawJSON, &jsonResp); err == nil {
-		if result, ok := jsonResp["result"].(map[string]any); ok {
-			if tools, ok := result["tools"].([]any); ok {
-				allowedSet := make(map[string]bool)
-				for _, t := range allowedTools {
-					allowedSet[t] = true
-				}
-
-				filteredTools := []any{}
-				for _, tool := range tools {
-					if toolMap, ok := tool.(map[string]any); ok {
-						name, _ := toolMap["name"].(string)
-						if allowedSet[name] {
-							filteredTools = append(filteredTools, tool)
-						}
-					}
-				}
-				result["tools"] = filteredTools
-			}
-		}
-	}
-
-	filteredBytes, _ := json.Marshal(jsonResp)
-
-	for k, vv := range resp.Header {
-		if k == "Content-Length" {
-			continue
-		}
-		for _, v := range vv {
-			w.Header().Add(k, v)
-		}
-	}
-
-	if isSSE || strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.WriteHeader(resp.StatusCode)
-		fmt.Fprintf(w, "event: message\ndata: %s\n\n", string(filteredBytes))
-	} else {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(resp.StatusCode)
-		w.Write(filteredBytes)
-	}
 }
 
 func (p *MCPProxy) getOrCreateDownstreamSession(ctx context.Context, targetURL string) string {
