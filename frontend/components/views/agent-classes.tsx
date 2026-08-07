@@ -67,6 +67,7 @@ export function AgentClassesView({
           {classes.map((cls) => {
             const clsInstances = instances.filter((i) => i.classId === cls.id);
             const activeCount = clsInstances.filter((i) => i.status === 'active').length;
+            const unreachable = cls.unreachableTools || [];
             return (
               <Panel key={cls.id}>
                 <div className="border-b border-white/5 p-4">
@@ -82,9 +83,16 @@ export function AgentClassesView({
                         {cls.description}
                       </p>
                     </div>
-                    <span className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
-                      {activeCount}/{cls.instanceCount || clsInstances.length} active
-                    </span>
+                    <div className="flex flex-col items-end gap-1">
+                      <span className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
+                        {activeCount}/{cls.instanceCount || clsInstances.length} active
+                      </span>
+                      {unreachable.length > 0 && (
+                        <span className="inline-flex items-center rounded-full border border-signal-caution/20 bg-signal-caution/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-signal-caution">
+                          {unreachable.length} tool{unreachable.length !== 1 ? 's' : ''} unreachable
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -97,14 +105,21 @@ export function AgentClassesView({
                       </span>
                     </div>
                     <div className="mt-1.5 flex flex-wrap gap-1">
-                      {(cls.allowedTools || cls.defaultAllowedTools || []).map((t) => (
-                        <span
-                          key={t}
-                          className="border border-cyan-500/20 bg-cyan-500/10 px-1.5 py-0.5 font-mono text-[10px] text-cyan-400 rounded"
-                        >
-                          {t}
-                        </span>
-                      ))}
+                      {(cls.allowedTools || cls.defaultAllowedTools || []).map((t) => {
+                        const isDown = unreachable.includes(t);
+                        return (
+                          <span
+                            key={t}
+                            title={isDown ? 'Currently unreachable (bank connection down)' : undefined}
+                            className={isDown
+                              ? 'border border-signal-caution/30 bg-signal-caution/10 px-1.5 py-0.5 font-mono text-[10px] text-signal-caution rounded line-through decoration-signal-caution/60'
+                              : 'border border-cyan-500/20 bg-cyan-500/10 px-1.5 py-0.5 font-mono text-[10px] text-cyan-400 rounded'
+                            }
+                          >
+                            {t}
+                          </span>
+                        );
+                      })}
                     </div>
                   </div>
                   <div className="bg-white/[0.02] p-3">

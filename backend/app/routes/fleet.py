@@ -82,10 +82,30 @@ async def get_fleet_status():
     async with pool.acquire() as conn:
         total_instances = await conn.fetchval("SELECT COUNT(*) FROM agent_instances")
         revoked_instances = await conn.fetchval("SELECT COUNT(*) FROM agent_instances WHERE status = 'revoked'")
+        # Instances with at least one unreachable tool (no catalog entry, or on a
+        # bank connection that isn't 'connected'). Drives fleet degradation.
+        degraded_instances = await conn.fetchval(
+            """
+            SELECT COUNT(*) FROM agent_instances i
+            LEFT JOIN agent_classes c ON i.class_id = c.id
+            WHERE EXISTS (
+                SELECT 1
+                FROM unnest(COALESCE(i.tool_overrides, c.default_allowed_tools, '{}')) AS eff(tool_name)
+                LEFT JOIN tools t ON t.name = eff.tool_name
+                LEFT JOIN bank_connections bc ON bc.id = t.bank_connection_id
+                WHERE t.id IS NULL OR bc.status <> 'connected'
+            )
+            """
+        )
 
     fleet_halted = bool(await redis.get("agp:kill:fleet"))
 
-    status_str = "stopped" if fleet_halted else ("degraded" if revoked_instances > 0 else "healthy")
+    if fleet_halted:
+        status_str = "stopped"
+    elif (revoked_instances or 0) > 0 or (degraded_instances or 0) > 0:
+        status_str = "degraded"
+    else:
+        status_str = "healthy"
 
     return {
         "status": status_str,
@@ -93,6 +113,7 @@ async def get_fleet_status():
         "total_instances": total_instances or 0,
         "active_instances": (total_instances or 0) - (revoked_instances or 0),
         "revoked_instances": revoked_instances or 0,
+        "degraded_instances": degraded_instances or 0,
     }
 
 

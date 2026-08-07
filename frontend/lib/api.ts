@@ -75,6 +75,8 @@ export const api = {
       status: c.status || "active",
       created_at: c.created_at,
       updated_at: c.updated_at,
+      unreachableTools: c.unreachable_tools || c.unreachableTools || [],
+      unreachable_tools: c.unreachable_tools,
     }));
   },
 
@@ -125,6 +127,9 @@ export const api = {
       constraint_overrides: i.constraint_overrides || {},
       cap_overrides: i.cap_overrides || {},
       tool_overrides: i.tool_overrides || [],
+      degraded: i.degraded ?? false,
+      unreachableTools: i.unreachable_tools || i.unreachableTools || [],
+      unreachable_tools: i.unreachable_tools,
     }));
   },
 

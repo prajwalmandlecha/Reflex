@@ -167,7 +167,17 @@ export function AgentsView({
                       {cls?.name ?? inst.className ?? inst.classId}
                     </div>
                   </div>
-                  <StatusBadge status={inst.status} />
+                  <div className="flex flex-col items-end gap-1">
+                    <StatusBadge status={inst.status} />
+                    {inst.degraded && (
+                      <span
+                        title={`Unreachable tools: ${(inst.unreachableTools || []).join(', ') || 'unknown'}`}
+                        className="inline-flex items-center rounded-full border border-signal-caution/20 bg-signal-caution/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-signal-caution"
+                      >
+                        degraded
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <div className="p-4 space-y-3">
@@ -478,14 +488,27 @@ function AgentDetail({
       <SheetHeader>
         <SheetTitle className="font-mono text-sm uppercase tracking-widest text-ink-primary flex items-center justify-between">
           <span>{agent.id}</span>
-          <StatusBadge status={agent.status} />
+          <div className="flex items-center gap-2">
+            {agent.degraded && (
+              <span className="inline-flex items-center rounded-full border border-signal-caution/20 bg-signal-caution/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-signal-caution">
+                degraded
+              </span>
+            )}
+            <StatusBadge status={agent.status} />
+          </div>
         </SheetTitle>
       </SheetHeader>
 
-      <div className="border-b border-white/5 pb-4">
+      <div className="border-b border-white/5 pb-4 space-y-1.5">
         <div className="font-mono text-xs text-ink-secondary">
           Class: <span className="text-cyan-400 font-semibold">{cls?.name ?? agent.classId}</span>
         </div>
+        {agent.degraded && (agent.unreachableTools || []).length > 0 && (
+          <div className="font-mono text-[11px] text-signal-caution">
+            {(agent.unreachableTools || []).length} tool{(agent.unreachableTools || []).length !== 1 ? 's' : ''} unreachable
+            <span className="text-ink-secondary"> — {(agent.unreachableTools || []).join(', ')}</span>
+          </div>
+        )}
       </div>
 
       {/* Instance Governance Overrides Summary Card */}

@@ -20,10 +20,20 @@ async def list_agent_classes():
             """
             SELECT c.id, c.name, c.description, c.default_allowed_tools, c.default_constraints,
                    c.default_caps, c.status, c.created_at, c.updated_at,
-                   COUNT(i.id)::int AS instance_count
+                   COUNT(i.id)::int AS instance_count,
+                   COALESCE(down.unreachable_tools, '{}') AS unreachable_tools
             FROM agent_classes c
             LEFT JOIN agent_instances i ON c.id = i.class_id
-            GROUP BY c.id
+            -- Derived health: each default tool is unreachable when it has no catalog
+            -- entry (bank never discovered) or sits on a non-'connected' connection.
+            LEFT JOIN LATERAL (
+                SELECT ARRAY_AGG(eff.tool_name ORDER BY eff.tool_name) AS unreachable_tools
+                FROM unnest(COALESCE(c.default_allowed_tools, '{}')) AS eff(tool_name)
+                LEFT JOIN tools t ON t.name = eff.tool_name
+                LEFT JOIN bank_connections bc ON bc.id = t.bank_connection_id
+                WHERE t.id IS NULL OR bc.status <> 'connected'
+            ) down ON true
+            GROUP BY c.id, down.unreachable_tools
             ORDER BY c.name ASC
             """
         )
@@ -43,6 +53,7 @@ async def list_agent_classes():
             created_at=r["created_at"],
             updated_at=r["updated_at"],
             instance_count=r["instance_count"],
+            unreachable_tools=list(r["unreachable_tools"] or []),
         ))
     return res
 

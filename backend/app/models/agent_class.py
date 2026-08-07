@@ -32,3 +32,7 @@ class AgentClassResponse(AgentClassBase):
     created_at: datetime
     updated_at: datetime
     instance_count: int = 0
+    # Derived health: which of this class's default_allowed_tools are currently
+    # unreachable (no catalog entry, or on a bank connection that isn't 'connected').
+    # Computed at read time; identical for all instances that inherit the class tools.
+    unreachable_tools: list[str] = Field(default_factory=list)

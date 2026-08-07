@@ -80,7 +80,20 @@ export function CommandCenterView({
         <StatTile
           label="Fleet Status"
           value={<StatusBadge status={fleetStatus} size="md" />}
-          sub={fleetStatus === 'healthy' ? 'all systems nominal' : fleetStatus === 'degraded' ? 'revoked agents present' : 'agents killed'}
+          sub={
+            fleetStatus === 'healthy'
+              ? 'all systems nominal'
+              : fleetStatus === 'stopped'
+                ? 'agents killed'
+                : (() => {
+                    const degraded = instances.filter((i) => i.degraded).length;
+                    const revoked = instances.filter((i) => i.status === 'revoked').length;
+                    const parts: string[] = [];
+                    if (degraded > 0) parts.push(`${degraded} degraded`);
+                    if (revoked > 0) parts.push(`${revoked} revoked`);
+                    return parts.length > 0 ? parts.join(' · ') : 'degraded';
+                  })()
+          }
           accent={fleetStatus === 'healthy' ? 'healthy' : fleetStatus === 'degraded' ? 'caution' : 'stopped'}
         />
       </div>

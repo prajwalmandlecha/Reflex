@@ -98,6 +98,7 @@ export function FleetMonitor({
   const activeCount = instances.filter((i) => i.status === 'active').length;
   const revokedCount = instances.filter((i) => i.status === 'revoked').length;
   const killedCount = instances.filter((i) => i.status === 'killed').length;
+  const degradedCount = instances.filter((i) => i.degraded).length;
   const recentDenies = activityFeed.filter((e) => e.decision === 'deny').length;
 
   return (
@@ -223,6 +224,12 @@ export function FleetMonitor({
             <span className="font-mono text-xl text-signal-stopped tabular">{killedCount}</span>
           </div>
           <div className="glass glass-edge relative flex flex-col gap-1 rounded-2xl p-4">
+            <span className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Degraded</span>
+            <span className={cn('font-mono text-xl tabular', degradedCount > 0 ? 'text-signal-caution' : 'text-ink-secondary')}>
+              {degradedCount}
+            </span>
+          </div>
+          <div className="glass glass-edge relative flex flex-col gap-1 rounded-2xl p-4">
             <span className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Denies</span>
             <span className="font-mono text-xl text-ink-primary tabular">{recentDenies}</span>
           </div>
@@ -251,6 +258,14 @@ export function FleetMonitor({
                     )}
                   >
                     <StatusBadge status={inst.status} size="sm" />
+                    {inst.degraded && (
+                      <span
+                        title={`Unreachable tools: ${(inst.unreachableTools || []).join(', ') || 'unknown'}`}
+                        className="inline-flex items-center rounded-full border border-signal-caution/20 bg-signal-caution/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-signal-caution"
+                      >
+                        degraded
+                      </span>
+                    )}
                     <span className="flex-1 truncate font-mono text-[11px] text-ink-primary group-hover:text-accent">
                       {inst.id}
                     </span>

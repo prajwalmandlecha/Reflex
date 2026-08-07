@@ -14,6 +14,9 @@ export type AgentClass = {
   status?: string;
   created_at?: string;
   updated_at?: string;
+  // Derived health: which of this class's default tools are currently unreachable.
+  unreachableTools?: string[];
+  unreachable_tools?: string[];
 };
 
 export type AgentStatus = 'active' | 'revoked' | 'killed';
@@ -36,6 +39,11 @@ export type AgentInstance = {
   constraint_overrides?: Record<string, unknown>;
   cap_overrides?: Record<string, unknown>;
   tool_overrides?: string[];
+  // Derived health (separate from lifecycle status): true when any of the
+  // agent's tools is on a bank connection that is currently unreachable.
+  degraded?: boolean;
+  unreachableTools?: string[];
+  unreachable_tools?: string[];
 };
 
 export type BankConnection = {

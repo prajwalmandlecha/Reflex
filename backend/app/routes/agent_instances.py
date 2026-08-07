@@ -24,8 +24,10 @@ async def list_agent_instances():
             SELECT i.id, i.class_id, i.status, i.constraint_overrides, i.cap_overrides, i.tool_overrides,
                    i.created_at, i.updated_at, c.name AS class_name,
                    c.default_caps AS class_caps,
+                   c.default_allowed_tools AS class_tools,
                    COALESCE(sp.spend_cents, 0) AS spend_today_cents,
-                   la.action AS last_action
+                   la.action AS last_action,
+                   COALESCE(down.unreachable_tools, '{}') AS unreachable_tools
             FROM agent_instances i
             LEFT JOIN agent_classes c ON i.class_id = c.id
             LEFT JOIN LATERAL (
@@ -40,6 +42,19 @@ async def list_agent_instances():
                 ORDER BY a2.ts DESC
                 LIMIT 1
             ) la ON true
+            -- Derived health: each tool this agent may call (instance override wins,
+            -- else class default) is UNREACHABLE when either
+            --   (a) it has no catalog entry at all (its bank connection was never
+            --       successfully discovered, so the gateway can't route it), or
+            --   (b) its catalog entry sits on a connection that is not 'connected'.
+            -- Empty array = fully reachable.
+            LEFT JOIN LATERAL (
+                SELECT ARRAY_AGG(eff.tool_name ORDER BY eff.tool_name) AS unreachable_tools
+                FROM unnest(COALESCE(i.tool_overrides, c.default_allowed_tools, '{}')) AS eff(tool_name)
+                LEFT JOIN tools t ON t.name = eff.tool_name
+                LEFT JOIN bank_connections bc ON bc.id = t.bank_connection_id
+                WHERE t.id IS NULL OR bc.status <> 'connected'
+            ) down ON true
             ORDER BY i.id ASC
             """
         )
@@ -73,6 +88,8 @@ async def list_agent_instances():
             if (class_killed or agent_killed) and status_val == "active":
                 status_val = "killed"
 
+        unreachable = list(r["unreachable_tools"] or [])
+
         res.append(AgentInstanceResponse(
             id=r["id"],
             class_id=r["class_id"],
@@ -87,6 +104,8 @@ async def list_agent_instances():
             last_action=r["last_action"] or "",
             last_seen=last_seen_val,
             class_name=r["class_name"] or r["class_id"],
+            degraded=len(unreachable) > 0,
+            unreachable_tools=unreachable,
         ))
     return res
 

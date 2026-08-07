@@ -35,3 +35,8 @@ class AgentInstanceResponse(AgentInstanceBase):
     last_seen: str = ""
     class_name: str = ""
     jwt_token: str | None = None
+    # Derived health (NOT lifecycle): True when any of the agent's tools sits on a
+    # bank connection whose status != 'connected'. Never written to the DB —
+    # computed at read time so it tracks connection probes automatically.
+    degraded: bool = False
+    unreachable_tools: list[str] = Field(default_factory=list)
