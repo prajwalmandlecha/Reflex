@@ -16,6 +16,13 @@ import urllib.error
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 
+# External Bank-of-Anthos demo MCP servers. Configurable via env so the stack
+# isn't hardcoded to one live IP. These are EXTERNAL dependencies.
+BANK_HOST = os.getenv("BANK_HOST", "20.2.83.126")
+BANK_IDENTITY_PORT = os.getenv("BANK_IDENTITY_PORT", "31100")
+BANK_PAYMENTS_PORT = os.getenv("BANK_PAYMENTS_PORT", "31200")
+BANK_FINANCIAL_PORT = os.getenv("BANK_FINANCIAL_PORT", "31300")
+
 def req(path: str, method: str = "GET", data: dict = None):
     url = f"{BACKEND_URL}{path}"
     headers = {"Content-Type": "application/json"}
@@ -44,19 +51,19 @@ def main():
             "id": "bank-identity",
             "name": "Bank of Anthos - Identity and User Auth Service",
             "source_type": "native_mcp",
-            "mcp_url": "http://20.2.83.126:31100/mcp"
+            "mcp_url": f"http://{BANK_HOST}:{BANK_IDENTITY_PORT}/mcp"
         },
         {
             "id": "bank-payments",
             "name": "Bank of Anthos - Payments and Transfers Service",
             "source_type": "native_mcp",
-            "mcp_url": "http://20.2.83.126:31200/mcp"
+            "mcp_url": f"http://{BANK_HOST}:{BANK_PAYMENTS_PORT}/mcp"
         },
         {
             "id": "bank-financial",
             "name": "Bank of Anthos - Financial Insights Service",
             "source_type": "native_mcp",
-            "mcp_url": "http://20.2.83.126:31300/mcp"
+            "mcp_url": f"http://{BANK_HOST}:{BANK_FINANCIAL_PORT}/mcp"
         }
     ]
 

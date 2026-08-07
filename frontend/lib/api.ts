@@ -34,7 +34,10 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
       if (typeof detail === "string") {
         message = detail;
       } else if (detail && typeof detail === "object") {
-        const parts = [detail.message, ...(Array.isArray(detail.errors) ? detail.errors : [])].filter(Boolean);
+        const parts = [
+          detail.message,
+          ...(Array.isArray(detail.errors) ? detail.errors : []),
+        ].filter(Boolean);
         message = parts.join(": ") || errorText;
       }
     } catch {

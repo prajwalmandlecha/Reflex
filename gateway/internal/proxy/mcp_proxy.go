@@ -60,6 +60,8 @@ type MCPProxy struct {
 	envTargets      map[string]string // static MCP_TARGETS from env, never reloaded
 	openAPITargets  map[string]*OpenAPISpecTarget
 	openAPIMux      sync.RWMutex
+	connAuth        map[string]*downstreamAuth // connection_id → downstream creds
+	connAuthMux     sync.RWMutex
 	toolRouting     map[string]string // tool_name → service/connection_id
 	toolRoutingMux  sync.RWMutex
 	ks              *killswitch.Switch
@@ -90,6 +92,7 @@ func NewMCPProxy(
 		targets:         targets,
 		envTargets:      targets,
 		openAPITargets:  make(map[string]*OpenAPISpecTarget),
+		connAuth:        make(map[string]*downstreamAuth),
 		toolRouting:     make(map[string]string),
 		ks:              ks,
 		policyEngine:    policyEngine,
@@ -107,12 +110,21 @@ func NewMCPProxy(
 // connectionEntry mirrors a single bank_connections row as cached in Redis
 // under agp:connections by the backend.
 type connectionEntry struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	SourceType  string `json:"source_type"`
-	MCPURL      string `json:"mcp_url"`
-	BaseURL     string `json:"base_url"`
-	OpenAPISpec string `json:"openapi_spec"`
+	ID             string          `json:"id"`
+	Name           string          `json:"name"`
+	SourceType     string          `json:"source_type"`
+	MCPURL         string          `json:"mcp_url"`
+	BaseURL        string          `json:"base_url"`
+	OpenAPISpec    string          `json:"openapi_spec"`
+	DownstreamAuth *downstreamAuth `json:"downstream_auth"`
+}
+
+// downstreamAuth carries a connection's decrypted credentials so the gateway
+// can authenticate to the downstream bank server. The backend decrypts (it owns
+// FERNET_KEY) and hands the ready-to-use secret via Redis.
+type downstreamAuth struct {
+	Type   string `json:"type"` // bearer | api_key | basic | header
+	Secret string `json:"secret"`
 }
 
 // LoadOpenAPISpecs reads the bank-connection cache from Redis and registers an
@@ -154,6 +166,74 @@ func (p *MCPProxy) LoadOpenAPISpecs(ctx context.Context) {
 	p.openAPITargets = newTargets
 	p.openAPIMux.Unlock()
 	p.logger.Info("loaded openapi virtual targets", "count", len(newTargets))
+}
+
+// LoadConnectionAuth is the exported entrypoint for initial load at startup.
+func (p *MCPProxy) LoadConnectionAuth(ctx context.Context) {
+	p.loadConnectionAuth(ctx)
+}
+
+// loadConnectionAuth rebuilds the per-connection downstream-auth map from
+// agp:connections. Called whenever connections are reloaded so newly-registered
+// or rotated credentials take effect without a restart.
+func (p *MCPProxy) loadConnectionAuth(ctx context.Context) {
+	if p.rdb == nil {
+		return
+	}
+	raw, err := p.rdb.Get(ctx, "agp:connections").Result()
+	if err != nil || raw == "" {
+		return
+	}
+	var mapping map[string]connectionEntry
+	if err := json.Unmarshal([]byte(raw), &mapping); err != nil {
+		p.logger.Warn("failed to parse agp:connections for downstream auth", "error", err)
+		return
+	}
+
+	newAuth := make(map[string]*downstreamAuth)
+	for id, conn := range mapping {
+		if conn.DownstreamAuth != nil && conn.DownstreamAuth.Secret != "" {
+			newAuth[id] = conn.DownstreamAuth
+		}
+	}
+
+	p.connAuthMux.Lock()
+	p.connAuth = newAuth
+	p.connAuthMux.Unlock()
+	p.logger.Info("loaded downstream connection auth", "count", len(newAuth))
+}
+
+// authForConnection returns the downstream-auth descriptor for a connection, or nil.
+func (p *MCPProxy) authForConnection(connectionID string) *downstreamAuth {
+	p.connAuthMux.RLock()
+	defer p.connAuthMux.RUnlock()
+	return p.connAuth[connectionID]
+}
+
+// injectDownstreamAuth sets the appropriate auth header on an outbound request
+// to a downstream bank server, based on the connection's credential type. The
+// agent's own JWT is never forwarded (stripped earlier); this is the bank's
+// OWN credential, which is a separate trust boundary.
+func injectDownstreamAuth(req *http.Request, auth *downstreamAuth) {
+	if auth == nil || auth.Secret == "" {
+		return
+	}
+	switch auth.Type {
+	case "bearer":
+		req.Header.Set("Authorization", "Bearer "+auth.Secret)
+	case "basic":
+		req.SetBasicAuth("", auth.Secret) // secret is the password; username unused
+	case "api_key":
+		req.Header.Set("X-API-Key", auth.Secret)
+	case "header":
+		// secret is expected as "Header-Name: value"
+		if parts := strings.SplitN(auth.Secret, ":", 2); len(parts) == 2 {
+			req.Header.Set(strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
+		}
+	default:
+		// Unknown type: default to bearer.
+		req.Header.Set("Authorization", "Bearer "+auth.Secret)
+	}
 }
 
 // LoadNativeTargets rebuilds the effective native-MCP target map by merging the
@@ -267,6 +347,7 @@ func (p *MCPProxy) SubscribeConnectionUpdates(ctx context.Context) {
 			p.LoadOpenAPISpecs(ctx)
 			p.LoadToolRouting(ctx)
 			p.LoadNativeTargets(ctx)
+			p.loadConnectionAuth(ctx)
 		}
 	}
 }
@@ -393,7 +474,7 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		downstreamStart := time.Now()
 		if allowed {
-			if !p.proxyToTarget(w, r, targetURL, bodyBytes) {
+			if !p.proxyToTarget(w, r, targetURL, bodyBytes, serviceName) {
 				// Downstream unreachable/5xx AFTER governance committed counters:
 				// refund the budget and record a downstream-stage failure.
 				p.rollbackCommittedEntries(r.Context(), committedEntries, agentID, toolName)
@@ -496,7 +577,7 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		downstreamStart := time.Now()
 		if allowed {
-			if !p.proxyToTarget(w, r, targetURL, bodyBytes) {
+			if !p.proxyToTarget(w, r, targetURL, bodyBytes, serviceName) {
 				p.rollbackCommittedEntries(r.Context(), committedEntries, agentID, actionName)
 				allowed = false
 				denyStage = "downstream"
@@ -572,7 +653,7 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p.proxyToTarget(w, r, targetURL, bodyBytes)
+	p.proxyToTarget(w, r, targetURL, bodyBytes, serviceName)
 }
 
 // handleAggregatedList fans a resources/list or prompts/list request out to all
@@ -734,9 +815,9 @@ func (p *MCPProxy) governCall(
 	// prompts don't move money.
 	if kind == callKindTool {
 		if required, mp := p.constraintCheck.RequiresAmount(cfg, toolName); required && !amountFound {
-		t.ConstraintMs = ms(time.Since(cStart))
-		metrics.ConstraintCheckDuration.WithLabelValues(toolName).Observe(t.ConstraintMs / 1000.0)
-		t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs
+			t.ConstraintMs = ms(time.Since(cStart))
+			metrics.ConstraintCheckDuration.WithLabelValues(toolName).Observe(t.ConstraintMs / 1000.0)
+			t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs
 			reason := fmt.Sprintf("action '%s' denied: missing or unparseable declared money field", toolName)
 			if len(mp) > 0 {
 				reason = fmt.Sprintf("action '%s' denied: no parseable value in declared money field(s) %v — spend cap cannot be enforced", toolName, mp)
@@ -991,6 +1072,8 @@ func (p *MCPProxy) handleOpenAPIRequest(
 				p.sendErrorResponse(w, r, reqID, reason)
 			} else {
 				restReq = restReq.WithContext(r.Context())
+				// Inject the downstream bank's OWN credentials (never the agent's JWT).
+				injectDownstreamAuth(restReq, p.authForConnection(serviceName))
 				resp, err := p.client.Do(restReq)
 				if err != nil {
 					p.rollbackCommittedEntries(r.Context(), committedEntries, agentID, toolName)
@@ -1357,7 +1440,7 @@ func (p *MCPProxy) getOrCreateDownstreamSession(ctx context.Context, targetURL s
 // Returns false when the downstream exchange failed (unreachable, read error,
 // or 5xx) so callers can roll back any governance counters committed in
 // governCall — a failed downstream call must not consume budget.
-func (p *MCPProxy) proxyToTarget(w http.ResponseWriter, r *http.Request, targetBaseURL string, bodyBytes []byte) bool {
+func (p *MCPProxy) proxyToTarget(w http.ResponseWriter, r *http.Request, targetBaseURL string, bodyBytes []byte, serviceName ...string) bool {
 	targetURL := targetBaseURL
 	if !strings.HasSuffix(targetBaseURL, "/mcp") {
 		targetURL = strings.TrimSuffix(targetBaseURL, "/") + "/mcp"
@@ -1366,7 +1449,12 @@ func (p *MCPProxy) proxyToTarget(w http.ResponseWriter, r *http.Request, targetB
 		targetURL += "?" + r.URL.RawQuery
 	}
 
-	resp := p.doProxyRequest(r, targetURL, bodyBytes, false)
+	connID := ""
+	if len(serviceName) > 0 {
+		connID = serviceName[0]
+	}
+
+	resp := p.doProxyRequest(r, targetURL, bodyBytes, false, connID)
 	if resp == nil {
 		p.logger.Error("failed to reach target MCP Server", "target", targetBaseURL)
 		p.sendErrorResponse(w, r, nil, fmt.Sprintf("downstream MCP Server (%s) unreachable", targetBaseURL))
@@ -1387,7 +1475,7 @@ func (p *MCPProxy) proxyToTarget(w http.ResponseWriter, r *http.Request, targetB
 		p.invalidateDownstreamSession(r.Context(), targetURL)
 		resp.Body.Close()
 
-		resp2 := p.doProxyRequest(r, targetURL, bodyBytes, true)
+		resp2 := p.doProxyRequest(r, targetURL, bodyBytes, true, connID)
 		if resp2 == nil {
 			p.sendErrorResponse(w, r, nil, fmt.Sprintf("downstream MCP Server (%s) unreachable", targetBaseURL))
 			return false
@@ -1420,7 +1508,9 @@ func (p *MCPProxy) proxyToTarget(w http.ResponseWriter, r *http.Request, targetB
 
 // doProxyRequest forwards the request to the downstream target, managing the
 // downstream session. If forceNewSession is true, skips the cached session.
-func (p *MCPProxy) doProxyRequest(r *http.Request, targetURL string, bodyBytes []byte, forceNewSession bool) *http.Response {
+// connID identifies the bank connection so its downstream credentials (if any)
+// can be injected — the agent's JWT is stripped, the bank's OWN auth is added.
+func (p *MCPProxy) doProxyRequest(r *http.Request, targetURL string, bodyBytes []byte, forceNewSession bool, connID string) *http.Response {
 	outReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil
@@ -1438,6 +1528,11 @@ func (p *MCPProxy) doProxyRequest(r *http.Request, targetURL string, bodyBytes [
 		}
 	}
 	outReq.Header.Set("X-Forwarded-By", "agp-gateway")
+
+	// Inject the downstream bank server's OWN credentials (never the agent's JWT).
+	if connID != "" {
+		injectDownstreamAuth(outReq, p.authForConnection(connID))
+	}
 
 	if forceNewSession {
 		if sessID := p.createDownstreamSession(r.Context(), targetURL); sessID != "" {
@@ -1551,14 +1646,14 @@ func (p *MCPProxy) trackSession(ctx context.Context, sessionID, agentID, agentKi
 // sensitiveParamKeys are argument keys whose values must never be persisted to
 // the audit log or published to the event stream (credentials, tokens, secrets).
 var sensitiveParamKeys = map[string]bool{
-	"bearer_token": true,
-	"token":        true,
-	"password":     true,
-	"secret":       true,
-	"api_key":      true,
-	"apikey":       true,
+	"bearer_token":  true,
+	"token":         true,
+	"password":      true,
+	"secret":        true,
+	"api_key":       true,
+	"apikey":        true,
 	"authorization": true,
-	"private_key":  true,
+	"private_key":   true,
 	"client_secret": true,
 }
 

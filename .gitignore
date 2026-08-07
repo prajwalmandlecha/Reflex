@@ -26,3 +26,7 @@ venv/
 *.log
 tmp/
 .DS_Store
+
+# Secrets & minted credentials — never commit
+.env
+scripts/agent_tokens.json

@@ -159,6 +159,8 @@ async def init_db_schema():
     CREATE INDEX IF NOT EXISTS idx_audit_decision ON audit_log(decision);
     CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action);
     CREATE INDEX IF NOT EXISTS idx_audit_class ON audit_log(agent_class_id);
+    -- Class name is the unique human-facing governance identity (G15).
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_classes_name ON agent_classes(name);
     """
     async with pool.acquire() as conn:
         await conn.execute(schema_sql)

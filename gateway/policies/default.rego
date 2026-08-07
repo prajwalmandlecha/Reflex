@@ -96,6 +96,18 @@ allow if {
 	}
 }
 
+# Rule 6: Restricted Custom Alpha Agent (Read balance + limited transfers)
+allow if {
+	count(input.allowed_tools) == 0
+	input.agent_kind == "custom_alpha"
+	input.action in {
+		"login",
+		"create_user",
+		"get_balance",
+		"transfer_money"
+	}
+}
+
 # Catch-all deny reason if no rule matched
 reason := sprintf("agent kind '%s' is not allowed to perform action '%s'", [input.agent_kind, input.action]) if {
 	count(input.allowed_tools) == 0

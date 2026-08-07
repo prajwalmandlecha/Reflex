@@ -144,6 +144,24 @@ async def cache_active_policies():
         await redis.set("agp:policy:active", combined)
 
 
+def _build_downstream_auth(credential_type: str | None, encrypted_creds: str | None) -> dict | None:
+    """Decrypt a connection's stored credentials into a downstream-auth descriptor
+    the gateway can inject at proxy time. Returns None when no creds are set.
+
+    The gateway never sees FERNET_KEY — the backend decrypts here and hands the
+    gateway the ready-to-use secret via Redis (which is already the trusted
+    config channel)."""
+    if not encrypted_creds or not credential_type:
+        return None
+    try:
+        from app.crypto import decrypt
+        secret = decrypt(encrypted_creds)
+    except Exception as e:
+        logger.error("failed to decrypt creds for downstream auth (skipping): %s", e)
+        return None
+    return {"type": credential_type, "secret": secret}
+
+
 @_non_fatal_cache
 async def cache_bank_connections():
     """Cache bank connection endpoints map in Redis."""
@@ -151,7 +169,7 @@ async def cache_bank_connections():
     redis = get_redis()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id, name, source_type, mcp_url, base_url, openapi_spec, status FROM bank_connections WHERE status = 'connected'"
+            "SELECT id, name, source_type, mcp_url, base_url, openapi_spec, credential_type, encrypted_creds, status FROM bank_connections WHERE status = 'connected'"
         )
         mapping = {}
         for r in rows:
@@ -164,6 +182,8 @@ async def cache_bank_connections():
                 # Include the raw spec so the gateway can virtualize OpenAPI
                 # connections into MCP tools (G7).
                 "openapi_spec": r["openapi_spec"],
+                # Decrypted downstream credentials for the gateway to inject.
+                "downstream_auth": _build_downstream_auth(r["credential_type"], r["encrypted_creds"]),
             }
         await redis.set("agp:connections", json.dumps(mapping))
 

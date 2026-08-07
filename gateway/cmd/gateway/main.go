@@ -120,6 +120,7 @@ func main() {
 	mcpInterceptor.LoadOpenAPISpecs(ctx)
 	mcpInterceptor.LoadToolRouting(ctx)
 	mcpInterceptor.LoadNativeTargets(ctx)
+	mcpInterceptor.LoadConnectionAuth(ctx)
 	go mcpInterceptor.SubscribeConnectionUpdates(ctx)
 
 	// --- Chi Router ---

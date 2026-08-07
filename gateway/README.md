@@ -4,168 +4,114 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue.svg)](https://postgresql.org)
 [![Redis](https://img.shields.io/badge/Redis-7.2-red.svg)](https://redis.io)
 [![OPA](https://img.shields.io/badge/OPA-v1.0-blueviolet.svg)](https://openpolicyagent.org)
-[![Goose](https://img.shields.io/badge/Goose-v3.27-brightgreen.svg)](https://pressly.github.io/goose)
 [![sqlc](https://img.shields.io/badge/sqlc-v1.31-orange.svg)](https://sqlc.dev)
 
-An enterprise-grade **In-Flight Security Interceptor & Transparent Reverse Proxy** for AI agents operating in financial environments. Reflex Gateway enforces granular per-agent permission profiles, real-time spend limits, instant killswitches, cryptographic audit trails, and dynamic tool schema filtering over the **Model Context Protocol (MCP)**.
+An **In-Flight Security Interceptor & Transparent Reverse Proxy** for AI agents operating in financial environments. Reflex Gateway enforces per-agent tool whitelists, real-time spend limits, instant killswitches, OPA/Rego policy checks, and a SHA-256 hash-chained audit ledger over the **Model Context Protocol (MCP)**.
+
+> **Control plane lives elsewhere.** Operator actions (minting tokens, revoking agents, fleet halt, policy CRUD, audit export) are served by the **Python FastAPI backend** on `:8000` (`/api/v1/...`), not by this gateway. The gateway is the **data plane**: it proxies and governs agent MCP traffic.
 
 ---
 
 ## 🏛️ Architecture Overview
 
-Reflex Gateway sits transparently between **AI Agents** (LangChain, CrewAI, AutoGen, VS Code Copilot, Claude Desktop) and **Downstream Target Services** (Core Banking, Payments, Risk Ops):
-
-<p align="center">
-  <img src="../docs/Architecture-Diagram.png" alt="Reflex Gateway Architecture Diagram" width="100%" />
-</p>
-
-### Pipeline Execution Flow
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  AI AGENTS (VS Code Copilot, Claude Desktop, CrewAI, etc.)  │
 └──────────────────────────────┬──────────────────────────────┘
-                               │ MCP JSON-RPC over HTTP
+                               │ MCP JSON-RPC over HTTP (Bearer JWT)
                                ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  REFLEX GATEWAY (:8080)                                     │
+│  REFLEX GATEWAY (:8080)  — single /mcp endpoint             │
 │                                                             │
-│  1. Identify Agent (JWT / X-Agent-ID Headers)               │
-│  2. Dynamic Discovery Schema Filtering (`tools/list`)       │
-│  3. In-Flight Governance Gauntlet (`tools/call`):           │
-│     ├── [A] Sub-ms Redis Killswitch & Fleet Halt Check      │
-│     ├── [B] Embedded OPA Rego Policy Engine Check (ABAC)    │
-│     ├── [C] Atomic Redis Lua Spend Cap Check                │
-│     └── [D] SHA-256 Hash-Chained Audit Ledger Log           │
-│                                                             │
-│  4. Transparent Forwarding to Downstream Target Server      │
+│  1. Authenticate agent (mandatory Bearer JWT; X-Agent-ID    │
+│     header is only an optional cross-check)                 │
+│  2. Route tools/call → downstream via tool_name             │
+│     (agp:tool_routing in Redis)                             │
+│  3. Governance gauntlet (tools/call, resources/read,        │
+│     prompts/get):                                           │
+│     ├── [1] Sub-ms Redis Killswitch / fleet-halt check      │
+│     ├── [2] Static constraints (time windows) + fail-closed │
+│     │       money-field enforcement (tools only)            │
+│     ├── [3] Embedded OPA Rego policy engine (ABAC)          │
+│     └── [4] Atomic Redis Lua commit: rate limit + spend caps│
+│  4. SHA-256 hash-chained audit ledger (batched to Postgres) │
+│  5. Transparent forwarding to downstream target             │
 └─────────────┬─────────────────┬─────────────────┬───────────┘
               │                 │                 │
               ▼                 ▼                 ▼
    ┌──────────────────┐┌──────────────────┐┌──────────────────┐
    │ Bank Identity    ││ Bank Payments    ││ Bank Risk        │
    │ MCP Server       ││ MCP Server       ││ MCP Server       │
-   │ (:31100)         ││ (:31200)         ││ (:31400)         │
    └──────────────────┘└──────────────────┘└──────────────────┘
 ```
+
+Downstream targets are a mix of **native MCP servers** (from `MCP_TARGETS` env + runtime-registered `native_mcp` bank connections) and **OpenAPI specs virtualized as MCP tools** (from `openapi` bank connections). Both are hot-reloaded from Redis on `config:updates`.
 
 ---
 
 ## ✨ Key Features
 
-1. **Transparent MCP Reverse Proxy (Multi-Server Routing):**
-   Proxies standard MCP JSON-RPC endpoints to multiple downstream target servers (`bank-identity`, `bank-payments`, `bank-financial`, `bank-risk`).
-
-2. **Attribute-Based Agent Profiles & Tool Whitelisting (ABAC):**
-   Decouples Agent Profiles (templates/classes) from Agent Instances (deployed bots). Profiles define explicit tool call whitelists (`allowed_tools`) and spend limits.
-
-3. **Dynamic Discovery Schema Filtering (`tools/list`):**
-   When an agent connects and sends `tools/list`, the Gateway filters the returned schema so the agent **only sees authorized tools**. Prevents LLM hallucinations and unauthorized tool invocation attempts.
-
-4. **OpenAPI-to-MCP Virtualization:**
-   Ingests legacy OpenAPI/Swagger specs (`swagger.json`/`openapi.yaml`) and dynamically virtualizes REST APIs as AI-callable MCP tools without requiring separate server wrappers.
-
-5. **Sub-Millisecond Emergency Killswitch & Fleet Halt:**
-   Per-agent revocations (`POST /v1/agents/{id}/revoke`) and fleet-wide panic button (`POST /v1/fleet/halt`) backed by Redis pipelines (<1ms latency impact).
-
-6. **Embedded OPA Rego Policy Engine:**
-   Lock-free, in-memory OPA evaluation engine with atomic hot-reloading from PostgreSQL.
-
-7. **Atomic Real-Time Spend Limit Engine:**
-   Atomic Redis Lua scripts prevent race conditions when enforcing hourly and daily budget ceilings across agent instances.
-
-8. **Cryptographic SHA-256 Audit Ledger:**
-   Append-only hash-chained audit log stored in PostgreSQL (`entry_hash = SHA-256(prev_hash || row_json)`). Built-in verification endpoint (`GET /v1/audit/verify`).
-
-9. **Goose Migrations & Type-Safe sqlc Data Layer:**
-   Version-controlled schema migrations managed via **Goose** (`migrations/001_init.sql`) and compile-time type-safe Go query code generated via **sqlc** (`internal/db/`).
-
-10. **Prometheus Telemetry Stream:**
-    Real-time decision counters and latency histograms exported at `:9090/metrics`.
+1. **Transparent MCP reverse proxy** — single `/mcp` endpoint; routes `tools/call` to the correct downstream by tool name.
+2. **Governed tools, resources & prompts** — `tools/call`, `resources/read`, and `prompts/get` all pass through the governance pipeline. `resources/list` / `prompts/list` / `tools/list` are aggregated across targets, deduped, and filtered by the agent's whitelist.
+3. **Mandatory JWT authn** — HS256 Bearer tokens validated with issuer check; `X-Agent-ID` header is a cross-check only, never sufficient alone.
+4. **Embedded OPA/Rego authz** — per-policy modules + aggregator (deny > allow > default-deny), hot-reloaded from Postgres/Redis.
+5. **Atomic spend & rate limiting** — a single Redis Lua script commits rate-limit (sliding-window sub-buckets) and hierarchical spend caps (agent-hourly / class-daily / fleet-daily) all-or-nothing; committed budget is **rolled back** if the downstream call fails.
+6. **Sub-ms killswitch** — fleet / class / agent halt via Redis keys.
+7. **SHA-256 hash-chained audit ledger** — batched transactional writes via sqlc; chain re-anchors on flush failure so a transient DB error can't fork the chain. Sensitive params (tokens, secrets) are redacted before logging.
+8. **OpenAPI virtualization** — OpenAPI specs become MCP tools automatically.
+9. **Prometheus telemetry** — decision counters and per-stage latency histograms at `:9090/metrics`.
 
 ---
 
 ## 📡 API Reference
 
-### 1. Agent-Facing MCP Proxy Endpoints (`:8080`)
+### Agent-facing MCP proxy (`:8080`)
 
-All MCP agents send JSON-RPC HTTP POST requests to these endpoints:
+| Route       | Description                                                                                                                                                                                                 |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /mcp` | Single MCP JSON-RPC endpoint. Handles `initialize`, `tools/list`, `tools/call`, `resources/list`, `resources/read`, `prompts/list`, `prompts/get`, `notifications/*`. Routing is by tool name, not by path. |
 
-| Route Path | Downstream Target Server | Description |
-|---|---|---|
-| `/mcp` | Default MCP Target | Multi-purpose MCP proxy route |
-| `/mcp/bank-identity` | `http://20.2.83.126:31100/mcp` | Bank Identity & Contacts MCP |
-| `/mcp/bank-payments` | `http://20.2.83.126:31200/mcp` | Bank Payments & Wire Ledger MCP |
-| `/mcp/bank-financial` | `http://20.2.83.126:31300/mcp` | Bank Financial Insights & Budgets MCP |
-| `/mcp/bank-risk` | `http://20.2.83.126:31400/mcp` | Bank Fraud & Risk Ops MCP |
+**Required headers:**
 
-**Required Agent Identity Headers:**
-* `X-Agent-ID`: `pay-agent-01` *(or any unique agent instance ID)*
-* `X-Agent-Kind`: `payments` *(options: `conversational`, `payments`, `trading`, `ops`, `custom`)*
-* *(Or Bearer Token: `Authorization: Bearer <minted_jwt>`)*
+- `Authorization: Bearer <minted_jwt>` — **required**. Minted by the backend (`POST :8000/api/v1/tokens`).
+- `X-Agent-ID: <agent_id>` — optional cross-check; rejected if it disagrees with the JWT.
 
----
+### Operator endpoints on the gateway (`:8080`)
 
-### 2. Operator Control Plane REST Endpoints (`:8080/v1`)
+| Method | Endpoint           | Description                                                                        |
+| ------ | ------------------ | ---------------------------------------------------------------------------------- |
+| `GET`  | `/health`          | Health check. Returns `{"status":"ok","service":"agp-gateway"}`                    |
+| `GET`  | `/v1/audit/verify` | Verify the SHA-256 audit ledger (recomputes every `entry_hash` and checks linkage) |
+| `GET`  | `:9090/metrics`    | Prometheus metrics exposition                                                      |
 
-| Method | Endpoint | Description | Sample Request Payload / Parameters |
-|---|---|---|---|
-| `POST` | `/v1/token` | Mint JWT Bearer Token for an Agent | `?agent_id=agent-01&agent_kind=payments` |
-| `POST` | `/v1/agents/{id}/revoke` | Revoke individual agent instance | *(No body required)* |
-| `DELETE` | `/v1/agents/{id}/revoke` | Revive individual agent instance | *(No body required)* |
-| `POST` | `/v1/fleet/halt` | Fleet-wide Emergency Stop (Panic Button) | *(No body required)* |
-| `DELETE` | `/v1/fleet/halt` | Resume Fleet Operations | *(No body required)* |
-| `GET` | `/v1/profiles` | List all agent profiles & tool whitelists | *(No body required)* |
-| `POST` | `/v1/profiles` | Create or update agent profile | `{"profile_id":"custom_v1","profile_name":"Custom Bot","allowed_tools":["get_balance"],"hourly_spend_cap_cents":100000}` |
-| `POST` | `/v1/instances` | Register bot instance attached to profile | `{"agent_id":"bot-01","profile_id":"custom_v1","status":"active"}` |
-| `POST` | `/v1/openapi/register` | Dynamically registers an OpenAPI spec as a virtual MCP server | `{"name":"bank-api","spec_url":"..."}` |
-| `GET` | `/v1/audit/verify` | Verify cryptographic SHA-256 audit ledger | *(No body required)* |
-| `GET` | `/health` | Health Check Endpoint | Returns `{"status":"ok"}` |
-| `GET` | `:9090/metrics` | Prometheus Metrics Endpoint | Returns Prometheus telemetry exposition |
+> All other operator actions (token minting, agent/fleet control, policies, connections, dashboard, audit list/export) are on the **backend** at `:8000/api/v1/...`. See the root README.
 
 ---
 
-## 🚀 How to Run & Test
+## 🚀 Running
 
-### 1. Start the Gateway Stack
-
-Run this command to build and launch the Gateway container stack:
+The gateway runs as part of the full stack from the repo root:
 
 ```bash
 docker compose up -d --build
 ```
 
-This starts:
-* **Gateway Container:** `http://localhost:8080` (MCP Proxy & Control Plane)
-* **Prometheus Metrics:** `http://localhost:9090/metrics`
-* **PostgreSQL 16:** `localhost:5433` (DB: `agp`, User: `agp`, Pass: `agp`)
-* **Redis 7.2:** `localhost:6379` (Killswitch & Spend Caps)
+- Gateway MCP proxy: `http://localhost:8080/mcp`
+- Audit verify: `http://localhost:8080/v1/audit/verify`
+- Metrics: `http://localhost:9090/metrics`
 
----
+Configuration is via environment variables (see `docker-compose.yml` and `.env.example`):
 
-### 2. Control Plane API Examples (`curl`)
-
-```bash
-# 1. Mint a JWT Token
-curl -X POST "http://localhost:8080/v1/token?agent_id=pay-agent-01&agent_kind=payments"
-
-# 2. Revoke an agent instantly (<1ms)
-curl -X POST "http://localhost:8080/v1/agents/pay-agent-01/revoke"
-
-# 3. Revive the agent
-curl -X DELETE "http://localhost:8080/v1/agents/pay-agent-01/revoke"
-
-# 4. Trigger Fleet-Wide Emergency Stop (Panic Button)
-curl -X POST "http://localhost:8080/v1/fleet/halt"
-
-# 5. Resume Fleet Operations
-curl -X DELETE "http://localhost:8080/v1/fleet/halt"
-
-# 6. Verify Audit Ledger Cryptographic Integrity
-curl "http://localhost:8080/v1/audit/verify"
-
-# 7. View Agent Profiles
-curl "http://localhost:8080/v1/profiles"
-```
+| Var                                 | Default                                 | Notes                                                                                                             |
+| ----------------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `GATEWAY_MCP_PORT`                  | `8080`                                  | Agent-facing port                                                                                                 |
+| `GATEWAY_METRICS_PORT`              | `9090`                                  | Metrics port                                                                                                      |
+| `REDIS_ADDR`                        | `localhost:6379`                        |                                                                                                                   |
+| `POSTGRES_DSN`                      | `postgres://agp:agp@localhost:5433/agp` |                                                                                                                   |
+| `BACKEND_URL`                       | `http://localhost:8000`                 | Config-cache fallback                                                                                             |
+| `GATEWAY_JWT_SECRET` / `JWT_SECRET` | —                                       | **Required.** Must match the backend. Gateway refuses to boot with the built-in dev default unless `AGP_ENV=dev`. |
+| `GATEWAY_JWT_ISSUER` / `JWT_ISSUER` | `agp-gateway`                           | Validated on every token                                                                                          |
+| `MCP_TARGETS`                       | —                                       | JSON map of static native-MCP targets; merged with runtime `native_mcp` connections                               |
 
 ---
 
@@ -173,32 +119,29 @@ curl "http://localhost:8080/v1/profiles"
 
 ```
 gateway/
-├── cmd/                        <-- Entry points & CLI test runners
-│   ├── gateway/main.go         <-- Main Gateway Server
-│   ├── test-all/main.go        <-- 8-feature automated verification suite
-│   ├── test-anthos/main.go     <-- Downstream MCP test client
-│   └── test-custom/main.go     <-- Agent Profile & Schema Filter test client
+├── cmd/
+│   ├── gateway/main.go         <-- Main gateway server (chi router, hardened HTTP)
+│   └── inspect-bank/main.go    <-- Dev/debug CLI: probe a downstream MCP server
 │
-├── db/                         <-- Standard Database Root Directory
-│   ├── migrations/             <-- Goose versioned SQL migrations (001_init.sql)
-│   └── queries/                <-- SQL query definitions for sqlc
+├── db/
+│   ├── schema.sql              <-- Sanitized copy of the schema for sqlc
+│   └── queries/                <-- sqlc query definitions (audit, policies)
 │
-├── internal/                   <-- Core application packages
-│   ├── agent/store.go          <-- Agent Profile/Instance Store (Redis <-> Postgres)
-│   ├── audit/                  <-- SHA-256 Hash-chained audit logger & verifier
-│   ├── authn/jwt.go            <-- JWT Token authentication manager
-│   ├── authz/engine.go         <-- Embedded OPA Rego policy engine
-│   ├── config/config.go        <-- Target routing & config parser
-│   ├── db/                     <-- sqlc auto-generated Go query package
-│   ├── killswitch/switch.go    <-- Redis sub-ms Killswitch & Fleet Halt
-│   ├── metrics/metrics.go      <-- Prometheus metrics collector
-│   ├── proxy/mcp_proxy.go      <-- Multi-target MCP security proxy & schema filter
-│   └── spend/limiter.go        <-- Atomic Redis Lua spend limiter
+├── internal/
+│   ├── adapter/openapi.go      <-- OpenAPI spec → MCP tool virtualization
+│   ├── audit/                  <-- Hash-chained logger + integrity verifier
+│   ├── authn/jwt.go            <-- JWT mint/validate (issuer-checked)
+│   ├── authz/engine.go         <-- Embedded OPA Rego engine (hot-reload)
+│   ├── config/config.go        <-- Env config parser
+│   ├── configcache/cache.go    <-- Agent config cache (memory → Redis → backend)
+│   ├── constraints/checker.go  <-- Time windows, rate limits, money-field extraction
+│   ├── db/                     <-- sqlc-generated query package
+│   ├── killswitch/switch.go    <-- Redis fleet/class/agent killswitch
+│   ├── metrics/metrics.go      <-- Prometheus instruments
+│   ├── proxy/mcp_proxy.go      <-- Governance pipeline + MCP proxy
+│   └── spend/limiter.go        <-- Atomic Redis Lua spend/rate commit + rollback
 │
-├── policies/                   <-- OPA Rego policy rules
-│   └── default.rego
-│
-├── docker-compose.yml          <-- Multi-container Docker orchestration
-├── Dockerfile                  <-- Multi-stage Docker build file
-└── sqlc.yaml                   <-- sqlc generator configuration
+├── policies/default.rego       <-- Reference default policy (runtime fallback is inline)
+├── Dockerfile
+└── sqlc.yaml
 ```
