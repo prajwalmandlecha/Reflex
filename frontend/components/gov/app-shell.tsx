@@ -90,6 +90,14 @@ export function AppShell() {
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [hideHelpOnStartup, setHideHelpOnStartup] = useState(false);
   const [isVisible, setIsVisible] = useState(true);
+  const [apiError, setApiError] = useState<string | null>(null);
+
+  // Record an API failure so the operator sees it instead of a silent empty
+  // dashboard. Stores a readable message; cleared on the next successful load.
+  const noteApiError = useCallback((source: string) => (err: unknown) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    setApiError(`${source}: ${msg}`);
+  }, []);
 
   // Show the getting-started guide on load unless the operator opted out
   useEffect(() => {
@@ -229,17 +237,20 @@ export function AppShell() {
   }, []);
 
   const reloadData = useCallback(() => {
-    api.getAgentInstances().then(setInstances).catch(() => {});
-    api.getAgentClasses().then(setClasses).catch(() => {});
-    api.getBankConnections().then(setConnections).catch(() => {});
-    api.getPolicies().then(setPolicies).catch(() => {});
-    api.getAuditLog().then(setAuditEntries).catch(() => {});
+    // The fleet-status probe doubles as the liveness signal: if it succeeds the
+    // backend is reachable, so clear any prior error; if it fails, surface it.
     api.getFleetStatus().then((res) => {
       if (res && res.status) setFleetStatus(res.status);
-    }).catch(() => {});
+      setApiError(null);
+    }).catch(noteApiError('Backend unreachable'));
+    api.getAgentInstances().then(setInstances).catch(noteApiError('Failed to load agents'));
+    api.getAgentClasses().then(setClasses).catch(noteApiError('Failed to load classes'));
+    api.getBankConnections().then(setConnections).catch(noteApiError('Failed to load connections'));
+    api.getPolicies().then(setPolicies).catch(noteApiError('Failed to load policies'));
+    api.getAuditLog().then(setAuditEntries).catch(noteApiError('Failed to load audit log'));
     api.getDashboardActivity().then((act) => {
       if (Array.isArray(act)) setActivityFeed(act);
-    }).catch(() => {});
+    }).catch(noteApiError('Failed to load activity'));
     api.getDashboardSummary().then((sum) => {
       if (sum) {
         setFleetSpend({
@@ -248,11 +259,11 @@ export function AppShell() {
         });
         setDenialsLastHour(sum.denials_last_hour ?? 0);
       }
-    }).catch(() => {});
+    }).catch(noteApiError('Failed to load summary'));
     api.getStopEvents().then((evs) => {
       if (Array.isArray(evs)) setStopEvents(evs);
-    }).catch(() => {});
-  }, []);
+    }).catch(noteApiError('Failed to load stop events'));
+  }, [noteApiError]);
 
   // ── Smart Polling ──────────────────────────────────────────────────
   // Initial full load (runs once on mount to populate all views)
@@ -397,6 +408,20 @@ export function AppShell() {
           </div>
         </header>
 
+        {/* API error banner — surfaces backend outages instead of a silent empty dashboard */}
+        {apiError && (
+          <div className="flex items-center gap-2 border-b border-rose-500/30 bg-rose-500/10 px-6 py-2">
+            <span className="inline-block h-2 w-2 rounded-full bg-rose-500 animate-pulse" />
+            <span className="font-mono text-[11px] text-rose-300">{apiError}</span>
+            <button
+              onClick={() => setApiError(null)}
+              className="ml-auto font-mono text-[10px] text-rose-400/70 hover:text-rose-300"
+            >
+              dismiss
+            </button>
+          </div>
+        )}
+
         {/* View Router */}
         <main className="flex-1 overflow-y-auto p-6">
           {view === 'command' && (
@@ -421,6 +446,7 @@ export function AppShell() {
               activityFeed={activityFeed}
               selectedAgentId={selectedAgentId}
               onSelectAgent={setSelectedAgentId}
+              initialFilter={agentsFilter}
               onRefresh={reloadData}
             />
           )}

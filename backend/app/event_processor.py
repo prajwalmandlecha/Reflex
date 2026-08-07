@@ -108,15 +108,29 @@ class EventProcessor:
         self.redis = redis
         self.metrics_buffer = MetricsBuffer()
         self._running = False
+        self._tasks: list[asyncio.Task] = []
 
     async def start(self):
         self._running = True
-        asyncio.create_task(self._subscribe_loop())
-        asyncio.create_task(self._metrics_push_loop())
+        self._tasks = [
+            asyncio.create_task(self._subscribe_loop()),
+            asyncio.create_task(self._metrics_push_loop()),
+        ]
         logger.info("EventProcessor started")
 
     async def stop(self):
+        """Signal shutdown AND cancel the worker tasks.
+
+        Flipping _running alone is not enough: _subscribe_loop blocks inside
+        pubsub.listen() and won't observe the flag until the next message
+        arrives, so shutdown could hang or leak the pub/sub connection. Cancel
+        the tasks and await them so the loop exits promptly and cleanly."""
         self._running = False
+        for t in self._tasks:
+            t.cancel()
+        if self._tasks:
+            await asyncio.gather(*self._tasks, return_exceptions=True)
+        self._tasks = []
 
     async def _subscribe_loop(self):
         pubsub = self.redis.pubsub()

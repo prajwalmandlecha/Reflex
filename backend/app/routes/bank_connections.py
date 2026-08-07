@@ -277,6 +277,12 @@ async def register_openapi_spec(connection_id: str, payload: dict):
             connection_id, name, base_url, spec_text, status_val,
         )
 
+        # Replace, don't append: re-importing a spec must not duplicate tool
+        # rows (tools has no (connection, name) uniqueness, so plain INSERTs
+        # would pile up duplicates and corrupt agp:tool_routing).
+        if extracted_tools:
+            await conn.execute("DELETE FROM tools WHERE bank_connection_id = $1", connection_id)
+
         inserted_tools = []
         for t in extracted_tools:
             row = await conn.fetchrow(

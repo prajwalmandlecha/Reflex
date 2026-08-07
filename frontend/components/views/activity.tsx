@@ -134,7 +134,8 @@ export function ActivityView({
             const agentClass = evt.agentClass || (evt as any).agent_class_id || '—';
             const bankConn = evt.bankConnectionId || (evt as any).bank_connection_id || (evt as any).service || '—';
             const latency = evt.latencyMs ?? (evt as any).total_latency_ms ?? 0;
-            const overhead = (evt as any).governance_overhead_ms || 1.2;
+            const overheadRaw = (evt as any).governance_overhead_ms;
+            const overhead = typeof overheadRaw === 'number' ? overheadRaw : null;
             const action = evt.action || (evt as any).tool || '—';
             const denyStage = (evt as any).deny_stage || 'policy_engine';
             const isDeny = evt.decision === 'deny';
@@ -198,7 +199,9 @@ export function ActivityView({
                       </div>
                       <div>
                         <span className="text-ink-secondary">Latency Breakdown: </span>
-                        <span className="text-ink-primary font-medium">Total: {latency}ms (Gateway Overhead: {overhead}ms)</span>
+                        <span className="text-ink-primary font-medium">
+                          Total: {latency}ms (Gateway Overhead: {overhead !== null ? `${overhead}ms` : '—'})
+                        </span>
                       </div>
                     </div>
 

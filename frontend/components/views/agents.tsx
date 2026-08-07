@@ -169,7 +169,7 @@ export function AgentsView({
                 </div>
 
                 <div className="p-4 space-y-3">
-                  <SpendBar used={inst.spendToday} cap={inst.capToday || 5000} />
+                  <SpendBar used={inst.spendToday} cap={inst.capToday} showLabel />
 
                   <div className="flex items-center justify-between font-mono text-[10px] text-ink-secondary">
                     <span>Last action: {inst.lastAction || 'Idle'}</span>

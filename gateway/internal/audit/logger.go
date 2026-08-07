@@ -83,6 +83,10 @@ func NewLogger(ctx context.Context, dbPool *pgxpool.Pool, logger *slog.Logger, b
 // prevHash is left unchanged, so the next written entry still chains to the
 // last *persisted* entry — a dropped entry never creates a gap in the chain.
 // (A drop is data loss under overload, but it must not also corrupt the chain.)
+//
+// If a flush later fails, the failed batch is re-anchored to the last
+// persisted hash and re-chained (see reanchorAndRechain), so a transient DB
+// error cannot fork the persisted chain either.
 func (l *Logger) Log(entry *Entry) {
 	entry.Timestamp = time.Now()
 
@@ -130,6 +134,14 @@ func (l *Logger) flushLoop(ctx context.Context) {
 		}
 		if err := l.writeBatch(writeCtx, batch); err != nil {
 			l.logger.Error("failed to flush audit batch", "reason", reason, "error", err)
+			// The in-memory chain head has already advanced past these entries
+			// (Log() commits it at enqueue time). Dropping the batch would fork
+			// the persisted chain: the next written entry would chain to a hash
+			// that was never persisted. Re-anchor the head to the last hash
+			// actually persisted and re-chain the failed entries onto it, then
+			// keep them for retry — no gap, no fork.
+			l.reanchorAndRechain(batch)
+			return // keep batch for retry on the next flush trigger
 		}
 		batch = batch[:0]
 	}
@@ -152,6 +164,40 @@ func (l *Logger) flushLoop(ctx context.Context) {
 			return
 		}
 	}
+}
+
+// reanchorAndRechain repairs the in-memory chain head after a batch flush
+// failure. The head is reset to the last hash actually persisted in Postgres
+// (falling back to the first failed entry's prevHash if the DB lookup fails),
+// and every failed entry is re-chained onto that anchor so a later successful
+// flush writes a continuous, unbroken chain.
+func (l *Logger) reanchorAndRechain(entries []*Entry) {
+	if len(entries) == 0 {
+		return
+	}
+
+	anchor := entries[0].PrevHash // last hash known to be persisted before this batch
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if lastHash, err := db.New(l.db).GetLastAuditEntryHash(ctx); err == nil && lastHash != "" {
+		anchor = lastHash
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	prev := anchor
+	for _, e := range entries {
+		e.PrevHash = prev
+		e.EntryHash = computeHash(prev, e)
+		prev = e.EntryHash
+	}
+	// Any entries enqueued after the failed batch chained onto the old head;
+	// they will be re-chained the same way if their own flush fails. The head
+	// must reflect the re-chained batch so subsequent enqueues build on it.
+	l.prevHash = prev
+
+	l.logger.Warn("re-anchored audit chain after flush failure", "entries", len(entries), "new_head", prev[:16])
 }
 
 func (l *Logger) writeBatch(ctx context.Context, entries []*Entry) error {

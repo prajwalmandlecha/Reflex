@@ -147,6 +147,18 @@ async def init_db_schema():
         reason                  TEXT DEFAULT '',
         created_at              TIMESTAMPTZ DEFAULT NOW()
     );
+
+    -- Indexes required by upserts and hot query paths. These mirror
+    -- db/migrations/001_schema.sql; without them the policies ON CONFLICT
+    -- upsert raises 42P10 and audit queries full-table-scan on a DB that was
+    -- initialized by this function instead of the SQL migration.
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_policies_unique_scope
+        ON policies (name, scope, COALESCE(target_id, '__global__'));
+    CREATE INDEX IF NOT EXISTS idx_audit_agent ON audit_log(agent_id);
+    CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts);
+    CREATE INDEX IF NOT EXISTS idx_audit_decision ON audit_log(decision);
+    CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action);
+    CREATE INDEX IF NOT EXISTS idx_audit_class ON audit_log(agent_class_id);
     """
     async with pool.acquire() as conn:
         await conn.execute(schema_sql)

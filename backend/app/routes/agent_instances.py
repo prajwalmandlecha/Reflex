@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, status
 from app.database import get_pool
 from app.models.agent_instance import AgentInstanceCreate, AgentInstanceResponse, AgentInstanceUpdate
 from app.redis_client import get_redis
+from app.routes.fleet import publish_fleet_event
 from app.routes.tokens import create_agent_jwt
 from app.services.config_propagation import cache_agent_instance, publish_config_update
 
@@ -21,9 +22,24 @@ async def list_agent_instances():
         rows = await conn.fetch(
             """
             SELECT i.id, i.class_id, i.status, i.constraint_overrides, i.cap_overrides, i.tool_overrides,
-                   i.created_at, i.updated_at, c.name AS class_name
+                   i.created_at, i.updated_at, c.name AS class_name,
+                   c.default_caps AS class_caps,
+                   COALESCE(sp.spend_cents, 0) AS spend_today_cents,
+                   la.action AS last_action
             FROM agent_instances i
             LEFT JOIN agent_classes c ON i.class_id = c.id
+            LEFT JOIN LATERAL (
+                SELECT SUM(a.spend_delta) AS spend_cents
+                FROM audit_log a
+                WHERE a.agent_id = i.id AND a.ts >= CURRENT_DATE AND a.decision = 'allow'
+            ) sp ON true
+            LEFT JOIN LATERAL (
+                SELECT a2.action
+                FROM audit_log a2
+                WHERE a2.agent_id = i.id
+                ORDER BY a2.ts DESC
+                LIMIT 1
+            ) la ON true
             ORDER BY i.id ASC
             """
         )
@@ -34,6 +50,19 @@ async def list_agent_instances():
         caps = json.loads(r["cap_overrides"]) if isinstance(r["cap_overrides"], str) else (r["cap_overrides"] or {})
         updated_dt = r["updated_at"] or r["created_at"]
         last_seen_val = updated_dt.isoformat() if updated_dt else ""
+
+        # Effective daily cap: instance override wins, else class default.
+        # Caps are stored in cents; the response model is in dollars.
+        class_caps = json.loads(r["class_caps"]) if isinstance(r["class_caps"], str) else (r["class_caps"] or {})
+        eff_caps = caps if caps else class_caps
+        cap_today_dollars = 0.0
+        daily = eff_caps.get("daily") if isinstance(eff_caps, dict) else None
+        if isinstance(daily, dict):
+            amt = daily.get("amount_cents")
+            if isinstance(amt, (int, float)) and amt > 0:
+                cap_today_dollars = amt / 100.0
+
+        spend_today_dollars = (float(r["spend_today_cents"]) if r["spend_today_cents"] else 0.0) / 100.0
 
         status_val = r["status"] or "active"
         if fleet_halted and status_val != "revoked":
@@ -53,6 +82,9 @@ async def list_agent_instances():
             tool_overrides=r["tool_overrides"],
             created_at=r["created_at"],
             updated_at=r["updated_at"],
+            spend_today=spend_today_dollars,
+            cap_today=cap_today_dollars,
+            last_action=r["last_action"] or "",
             last_seen=last_seen_val,
             class_name=r["class_name"] or r["class_id"],
         ))
@@ -190,6 +222,7 @@ async def revoke_agent_instance(agent_id: str):
     await redis.set(f"agp:kill:agent:{agent_id}", "1")
     await cache_agent_instance(agent_id)
     await publish_config_update("kill_agent", agent_id)
+    await publish_fleet_event("kill_agent", agent_id, "Agent stopped by operator")
     return {"status": "revoked", "agent_id": agent_id}
 
 
@@ -211,6 +244,7 @@ async def revive_agent_instance(agent_id: str):
 
     await cache_agent_instance(agent_id)
     await publish_config_update("revive_agent", agent_id)
+    await publish_fleet_event("revive_agent", agent_id, "Agent revived by operator")
     return {"status": "active", "agent_id": agent_id}
 
 

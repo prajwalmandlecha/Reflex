@@ -6,6 +6,7 @@ from app.database import get_pool
 from app.models.agent_class import AgentClassCreate, AgentClassResponse, AgentClassUpdate
 from app.redis_client import get_redis
 from app.services.config_propagation import cache_agent_class, publish_config_update
+from app.routes.fleet import publish_fleet_event
 from app.services.constraint_validation import validate_class_config
 
 router = APIRouter(prefix="/api/v1/classes", tags=["Agent Classes"])
@@ -179,6 +180,7 @@ async def revoke_agent_class(class_id: str):
         await conn.execute("INSERT INTO stop_events (scope, target_id, action, reason) VALUES ('class', $1, 'stop', 'Class stop triggered by operator')", class_id)
         await conn.execute("UPDATE agent_instances SET status = 'killed', updated_at = NOW() WHERE class_id = $1 AND status = 'active'", class_id)
     await publish_config_update("kill_class", class_id)
+    await publish_fleet_event("kill_class", class_id, "Class stop triggered by operator")
     return {"status": "revoked", "class_id": class_id}
 
 
@@ -191,6 +193,7 @@ async def revive_agent_class(class_id: str):
         await conn.execute("INSERT INTO stop_events (scope, target_id, action, reason) VALUES ('class', $1, 'resume', 'Class resumed by operator')", class_id)
         await conn.execute("UPDATE agent_instances SET status = 'active', updated_at = NOW() WHERE class_id = $1 AND status = 'killed'", class_id)
     await publish_config_update("revive_class", class_id)
+    await publish_fleet_event("revive_class", class_id, "Class resumed by operator")
     return {"status": "active", "class_id": class_id}
 
 

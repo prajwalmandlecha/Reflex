@@ -1,5 +1,7 @@
 """Fleet control routes (/api/v1/fleet)."""
 
+import datetime
+
 import httpx
 from fastapi import APIRouter, Body
 from app.config import settings
@@ -8,6 +10,31 @@ from app.redis_client import get_redis
 from app.services.config_propagation import publish_config_update
 
 router = APIRouter(prefix="/api/v1/fleet", tags=["Fleet Control"])
+
+
+def _utc_now_iso() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+async def publish_fleet_event(event_type: str, target_id: str, reason: str = "") -> None:
+    """Publish an operator-initiated stop/resume event on the SAME channel the
+    event processor subscribes to (gateway:events), so it is fanned out to the
+    /ws/fleet and /ws/alerts WebSocket channels in real time. Publishing only to
+    config:updates leaves the emergency-stop UI blind until its next poll."""
+    redis = get_redis()
+    import json as _json
+    await redis.publish("gateway:events", _json.dumps({
+        "type": event_type,
+        "agent_id": target_id if "agent" in event_type else "",
+        "agent_class_id": target_id if "class" in event_type else "",
+        "tool": "",
+        "decision": "",
+        "deny_stage": "",
+        "reason": reason,
+        "spend_delta_cents": 0,
+        "latency": {},
+        "timestamp": _utc_now_iso(),
+    }))
 
 
 @router.get("/system-health")
@@ -106,6 +133,7 @@ async def halt_fleet(payload: dict = Body(default={})):
         await conn.execute("INSERT INTO stop_events (scope, action, reason) VALUES ('fleet', 'stop', $1)", reason)
         await conn.execute("UPDATE agent_instances SET status = 'killed', updated_at = NOW() WHERE status = 'active'")
     await publish_config_update("halt_fleet", "fleet")
+    await publish_fleet_event("halt_fleet", "fleet", reason)
     return await get_fleet_status()
 
 
@@ -118,5 +146,6 @@ async def resume_fleet():
         await conn.execute("INSERT INTO stop_events (scope, action, reason) VALUES ('fleet', 'resume', 'Fleet resumed by operator')")
         await conn.execute("UPDATE agent_instances SET status = 'active', updated_at = NOW() WHERE status = 'killed'")
     await publish_config_update("resume_fleet", "fleet")
+    await publish_fleet_event("resume_fleet", "fleet", "Fleet resumed by operator")
     return await get_fleet_status()
 

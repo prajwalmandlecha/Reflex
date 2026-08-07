@@ -18,12 +18,17 @@ import (
 
 // Entry is one stateful counter to commit: increment Key by Amount, enforce
 // Cap (0 = uncapped), and set TTLSeconds when the key is first created.
+//
+// Group is optional: entries sharing the same Group are capped on the SUM of
+// their keys rather than individually. This is how the sliding-window rate
+// limiter caps the total across all live sub-buckets instead of each bucket.
 type Entry struct {
 	Key        string  `json:"key"`
 	Amount     float64 `json:"amount"`
 	Cap        float64 `json:"cap"`
 	TTLSeconds int64   `json:"ttl"`
 	Label      string  `json:"label,omitempty"` // human-readable description used in deny reasons
+	Group      string  `json:"group,omitempty"` // when set, Cap applies to the sum of all keys in the group
 }
 
 // CommitResult is the outcome of an atomic counter commit.
@@ -42,6 +47,11 @@ var luaCommit = redis.NewScript(`
 local entries = cjson.decode(ARGV[1])
 local applied = {}
 
+-- First pass: apply increments and collect per-group caps/keys.
+local group_caps = {}
+local group_labels = {}
+local group_keys_order = {}
+
 for i, e in ipairs(entries) do
     local new_val = tonumber(redis.call('INCRBYFLOAT', e.key, e.amount))
     table.insert(applied, e)
@@ -49,12 +59,39 @@ for i, e in ipairs(entries) do
     if new_val == e.amount and e.ttl > 0 then
         redis.call('EXPIRE', e.key, e.ttl)
     end
-    if e.cap > 0 and new_val > e.cap then
-        -- rollback ALL already-applied increments
-        for _, a in ipairs(applied) do
-            redis.call('INCRBYFLOAT', a.key, -a.amount)
+
+    if e.group and e.group ~= "" then
+        -- Grouped entry: cap applies to the SUM of all keys in the group.
+        if not group_caps[e.group] then
+            group_caps[e.group] = e.cap
+            group_labels[e.group] = e.label
+            group_keys_order[e.group] = {}
         end
-        return cjson.encode({allowed=false, exceeded=e.key, label=e.label, current=new_val - e.amount, cap=e.cap})
+        table.insert(group_keys_order[e.group], e.key)
+    else
+        -- Ungrouped entry: cap applies to this key alone.
+        if e.cap > 0 and new_val > e.cap then
+            for _, a in ipairs(applied) do
+                redis.call('INCRBYFLOAT', a.key, -a.amount)
+            end
+            return cjson.encode({allowed=false, exceeded=e.key, label=e.label, current=new_val - e.amount, cap=e.cap})
+        end
+    end
+end
+
+-- Second pass: enforce per-group caps on the summed values.
+for group, cap in pairs(group_caps) do
+    if cap > 0 then
+        local sum = 0
+        for _, k in ipairs(group_keys_order[group]) do
+            sum = sum + tonumber(redis.call('GET', k) or 0)
+        end
+        if sum > cap then
+            for _, a in ipairs(applied) do
+                redis.call('INCRBYFLOAT', a.key, -a.amount)
+            end
+            return cjson.encode({allowed=false, exceeded=group, label=group_labels[group], current=sum - 1, cap=cap})
+        end
     end
 end
 
@@ -115,4 +152,46 @@ func (l *Limiter) GetCurrentSpend(ctx context.Context, key string) (float64, err
 		return 0, nil
 	}
 	return val, err
+}
+
+// luaRollback decrements every counter by the given amounts — the exact inverse
+// of luaCommit's increments. Used to refund budget when a downstream call fails
+// AFTER the governance counters were committed, so a failed bank call never
+// consumes spend/rate-limit budget.
+var luaRollback = redis.NewScript(`
+local entries = cjson.decode(ARGV[1])
+for i, e in ipairs(entries) do
+    redis.call('INCRBYFLOAT', e.key, -e.amount)
+end
+return cjson.encode({rolled_back=#entries})
+`)
+
+// Rollback decrements every entry's counter by its amount, undoing a prior
+// Commit. Best-effort by design: a rollback failure is logged by the caller,
+// not retried, since the counters are windowed and self-expire via TTL.
+func (l *Limiter) Rollback(ctx context.Context, entries []Entry) error {
+	active := make([]Entry, 0, len(entries))
+	for _, e := range entries {
+		if e.Amount > 0 {
+			active = append(active, e)
+		}
+	}
+	if len(active) == 0 {
+		return nil
+	}
+
+	payload, err := json.Marshal(active)
+	if err != nil {
+		return fmt.Errorf("marshaling rollback entries: %w", err)
+	}
+
+	keys := make([]string, len(active))
+	for i, e := range active {
+		keys[i] = e.Key
+	}
+
+	if err := luaRollback.Run(ctx, l.rdb, keys, string(payload)).Err(); err != nil {
+		return fmt.Errorf("executing counter rollback: %w", err)
+	}
+	return nil
 }

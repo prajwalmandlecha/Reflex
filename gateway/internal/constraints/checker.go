@@ -57,6 +57,17 @@ func (c *Checker) CheckStatic(cfg *configcache.AgentConfig, toolName string) (bo
 	return true, ""
 }
 
+// withinWindow reports whether currentMinutes falls inside the [startMin,
+// endMin] window. Handles overnight windows where start > end (e.g. 22:00–
+// 06:00): those wrap past midnight, so "inside" means >= start OR <= end.
+func withinWindow(current, startMin, endMin int) bool {
+	if startMin <= endMin {
+		return current >= startMin && current <= endMin
+	}
+	// Overnight window (e.g. 22:00–06:00)
+	return current >= startMin || current <= endMin
+}
+
 // CounterEntries builds the stateful counter increments (sliding-window rate
 // limit, cumulative daily spend cap) for a tool call as spend.Entry values.
 // They are NOT applied here — the caller commits them atomically alongside
@@ -82,13 +93,32 @@ func (c *Checker) CounterEntries(cfg *configcache.AgentConfig, toolName string, 
 			}
 
 			if maxCalls > 0 {
-				entries = append(entries, spend.Entry{
-					Key:        fmt.Sprintf("ratelimit:%s:%s:%d", cfg.ID, toolName, time.Now().Unix()/winSec),
-					Amount:     1,
-					Cap:        float64(maxCalls),
-					TTLSeconds: winSec,
-					Label:      fmt.Sprintf("rate limit exceeded for tool '%s' (%d calls allowed per %ds window)", toolName, maxCalls, winSec),
-				})
+				// Sliding window: split the window into 10 sub-buckets and cap the
+				// SUM of all live buckets, so a burst straddling a fixed-window
+				// boundary can't pass 2× max_calls. Each sub-bucket expires after
+				// one full window, so only the last `window` of calls counts.
+				const subBuckets = 10
+				subSec := winSec / subBuckets
+				if subSec < 1 {
+					subSec = 1
+				}
+				nowBucket := time.Now().Unix() / subSec
+				group := fmt.Sprintf("ratelimit-group:%s:%s", cfg.ID, toolName)
+				for i := int64(0); i < subBuckets; i++ {
+					b := nowBucket - i
+					amt := 0.0
+					if i == 0 {
+						amt = 1 // only the current sub-bucket is incremented by this call
+					}
+					entries = append(entries, spend.Entry{
+						Key:        fmt.Sprintf("ratelimit:%s:%s:%d", cfg.ID, toolName, b),
+						Amount:     amt,
+						Cap:        float64(maxCalls),
+						TTLSeconds: winSec,
+						Label:      fmt.Sprintf("rate limit exceeded for tool '%s' (%d calls allowed per %ds window)", toolName, maxCalls, winSec),
+						Group:      group,
+					})
+				}
 			}
 		}
 	}

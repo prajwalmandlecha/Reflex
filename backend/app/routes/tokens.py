@@ -1,7 +1,7 @@
 """JWT Minting routes (/api/v1/tokens)."""
 
 import datetime
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException
 import jwt
 from app.config import settings
 
@@ -25,9 +25,23 @@ def create_agent_jwt(agent_id: str, agent_kind: str = "custom", policy_version: 
 
 @router.post("")
 @router.post("/")
-async def mint_token(agent_id: str, agent_kind: str = "custom", policy_version: int = 1):
-    if not agent_id:
-        raise HTTPException(status_code=400, detail="agent_id query parameter is required")
+async def mint_token(
+    payload: dict = Body(default={}),
+    agent_id: str | None = None,
+    agent_kind: str | None = None,
+    policy_version: int | None = None,
+):
+    """Mint an agent JWT.
 
-    token = create_agent_jwt(agent_id, agent_kind, policy_version)
-    return {"token": token, "agent_id": agent_id, "expires_in_minutes": settings.jwt_ttl_minutes}
+    Accepts EITHER a JSON body ({"agent_id": ..., "agent_kind": ..., "policy_version": ...})
+    OR query parameters (?agent_id=...&agent_kind=...). Body values take precedence.
+    agent_id is required (from either source); agent_kind defaults to "custom",
+    policy_version to 1."""
+    resolved_id = payload.get("agent_id") or agent_id
+    if not resolved_id:
+        raise HTTPException(status_code=400, detail="agent_id is required (JSON body or query parameter)")
+    resolved_kind = payload.get("agent_kind") or agent_kind or "custom"
+    resolved_version = int(payload.get("policy_version") or policy_version or 1)
+
+    token = create_agent_jwt(resolved_id, resolved_kind, resolved_version)
+    return {"token": token, "agent_id": resolved_id, "expires_in_minutes": settings.jwt_ttl_minutes}

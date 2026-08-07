@@ -67,5 +67,11 @@ func (m *JWTManager) Validate(tokenString string) (*AgentClaims, error) {
 		return nil, fmt.Errorf("invalid token claims")
 	}
 
+	// Bind the token to this issuer: a token minted by a different service that
+	// happens to share the HMAC secret must not be accepted at the data plane.
+	if m.issuer != "" && claims.Issuer != m.issuer {
+		return nil, fmt.Errorf("invalid token issuer: got %q, want %q", claims.Issuer, m.issuer)
+	}
+
 	return claims, nil
 }

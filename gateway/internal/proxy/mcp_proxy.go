@@ -337,11 +337,18 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		amount, amountFound := p.extractAmount(agentCfg, toolName, args)
 
-		allowed, denyStage, reason, timings := p.governCall(r.Context(), agentID, classID, agentKind, toolName, amount, amountFound, allowedTools, agentCfg, args)
+		allowed, denyStage, reason, timings, committedEntries := p.governCall(r.Context(), agentID, classID, agentKind, toolName, amount, amountFound, allowedTools, agentCfg, args)
 
 		downstreamStart := time.Now()
 		if allowed {
-			p.proxyToTarget(w, r, targetURL, bodyBytes)
+			if !p.proxyToTarget(w, r, targetURL, bodyBytes) {
+				// Downstream unreachable/5xx AFTER governance committed counters:
+				// refund the budget and record a downstream-stage failure.
+				p.rollbackCommittedEntries(r.Context(), committedEntries, agentID, toolName)
+				allowed = false
+				denyStage = "downstream"
+				reason = fmt.Sprintf("downstream MCP server (%s) failed", targetURL)
+			}
 		} else {
 			p.logger.Warn("mcp tool execution DENIED", "agent_id", agentID, "tool", toolName, "stage", denyStage, "reason", reason)
 			p.sendErrorResponse(w, r, reqID, reason)
@@ -427,7 +434,7 @@ func (p *MCPProxy) governCall(
 	allowedTools []string,
 	cfg *configcache.AgentConfig,
 	args map[string]any,
-) (bool, string, string, GovernanceTimings) {
+) (bool, string, string, GovernanceTimings, []spend.Entry) {
 	var t GovernanceTimings
 
 	// Stage 1: Killswitch
@@ -438,11 +445,11 @@ func (p *MCPProxy) governCall(
 
 	if err != nil {
 		t.GovernanceTotal = t.KillswitchMs
-		return false, "killswitch", "internal error: killswitch check failed", t
+		return false, "killswitch", "internal error: killswitch check failed", t, nil
 	}
 	if ksRes.Killed {
 		t.GovernanceTotal = t.KillswitchMs
-		return false, "killswitch", ksRes.Reason, t
+		return false, "killswitch", ksRes.Reason, t, nil
 	}
 
 	// Stage 2: Static Per-Tool Constraints (stateless checks: time windows).
@@ -464,7 +471,7 @@ func (p *MCPProxy) governCall(
 		if len(mp) > 0 {
 			reason = fmt.Sprintf("action '%s' denied: no parseable value in declared money field(s) %v — spend cap cannot be enforced", toolName, mp)
 		}
-		return false, "constraint", reason, t
+		return false, "constraint", reason, t, nil
 	}
 
 	cOk, cReason := p.constraintCheck.CheckStatic(cfg, toolName)
@@ -473,7 +480,7 @@ func (p *MCPProxy) governCall(
 
 	if !cOk {
 		t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs
-		return false, "constraint", cReason, t
+		return false, "constraint", cReason, t, nil
 	}
 
 	// Stage 3: OPA Policy Engine
@@ -491,11 +498,11 @@ func (p *MCPProxy) governCall(
 
 	if err != nil {
 		t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs + t.PolicyMs
-		return false, "policy", "internal error: policy evaluation failed", t
+		return false, "policy", "internal error: policy evaluation failed", t, nil
 	}
 	if !decision.Allow {
 		t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs + t.PolicyMs
-		return false, "policy", decision.Reason, t
+		return false, "policy", decision.Reason, t, nil
 	}
 
 	// Stage 4 (final): Atomic commit of ALL stateful counters — per-tool rate
@@ -516,7 +523,7 @@ func (p *MCPProxy) governCall(
 
 	if err != nil {
 		t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs + t.PolicyMs + t.SpendCheckMs
-		return false, "spend", "internal error: governance counter commit failed", t
+		return false, "spend", "internal error: governance counter commit failed", t, nil
 	}
 	if !commitRes.Allowed {
 		stage := "spend"
@@ -529,11 +536,31 @@ func (p *MCPProxy) governCall(
 		}
 		reason = fmt.Sprintf("%s (current: %.0f / cap: %.0f)", reason, commitRes.Current, commitRes.Cap)
 		t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs + t.PolicyMs + t.SpendCheckMs
-		return false, stage, reason, t
+		return false, stage, reason, t, nil
 	}
 
 	t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs + t.PolicyMs + t.SpendCheckMs
-	return true, "", decision.Reason, t
+	return true, "", decision.Reason, t, entries
+}
+
+// rollbackCommittedEntries refunds the governance counters committed in Stage 4
+// when the downstream call fails after governance allowed it — a failed bank
+// call must never consume spend or rate-limit budget.
+func (p *MCPProxy) rollbackCommittedEntries(ctx context.Context, entries []spend.Entry, agentID, toolName string) {
+	if len(entries) == 0 {
+		return
+	}
+	// Detach from the request context: the client may have hung up, but the
+	// refund must still land.
+	rbCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := p.spendLimiter.Rollback(rbCtx, entries); err != nil {
+		p.logger.Error("failed to roll back governance counters after downstream failure",
+			"agent_id", agentID, "tool", toolName, "error", err)
+	} else {
+		p.logger.Info("rolled back governance counters after downstream failure",
+			"agent_id", agentID, "tool", toolName, "entries", len(entries))
+	}
 }
 
 // buildDynamicScopes expresses the hierarchical spend caps (instance hourly,
@@ -676,7 +703,7 @@ func (p *MCPProxy) handleOpenAPIRequest(
 		// aren't bypassed by non-float64 encodings or renamed money fields (G12).
 		amount, amountFound := p.extractAmount(agentCfg, toolName, args)
 
-		allowed, denyStage, reason, timings := p.governCall(r.Context(), agentID, classID, agentKind, toolName, amount, amountFound, allowedTools, agentCfg, args)
+		allowed, denyStage, reason, timings, committedEntries := p.governCall(r.Context(), agentID, classID, agentKind, toolName, amount, amountFound, allowedTools, agentCfg, args)
 
 		downstreamStart := time.Now()
 		var mcpResult map[string]any
@@ -684,7 +711,8 @@ func (p *MCPProxy) handleOpenAPIRequest(
 			restReq, err := adapter.BuildRESTRequest(target.BaseURL, target.Doc, toolName, args)
 			if err != nil {
 				// Downstream request construction failed after governance allowed:
-				// record as a downstream-stage failure and STILL audit/emit below.
+				// refund the committed budget and record a downstream-stage failure.
+				p.rollbackCommittedEntries(r.Context(), committedEntries, agentID, toolName)
 				allowed = false
 				denyStage = "downstream"
 				reason = fmt.Sprintf("invalid tool arguments: %v", err)
@@ -693,9 +721,19 @@ func (p *MCPProxy) handleOpenAPIRequest(
 				restReq = restReq.WithContext(r.Context())
 				resp, err := p.client.Do(restReq)
 				if err != nil {
+					p.rollbackCommittedEntries(r.Context(), committedEntries, agentID, toolName)
 					allowed = false
 					denyStage = "downstream"
 					reason = "downstream bank REST API unreachable"
+					p.sendErrorResponse(w, r, reqID, reason)
+				} else if resp.StatusCode >= 500 {
+					// Downstream 5xx after governance committed: refund budget.
+					// 4xx is a legitimate (if rejected) bank response and stays charged.
+					resp.Body.Close()
+					p.rollbackCommittedEntries(r.Context(), committedEntries, agentID, toolName)
+					allowed = false
+					denyStage = "downstream"
+					reason = fmt.Sprintf("downstream bank REST API failed (HTTP %d)", resp.StatusCode)
 					p.sendErrorResponse(w, r, reqID, reason)
 				} else {
 					mcpResult = adapter.RESTResponseToMCPResult(resp)
@@ -893,9 +931,27 @@ func (p *MCPProxy) handleAggregatedToolsList(w http.ResponseWriter, r *http.Requ
 	}
 	p.openAPIMux.RUnlock()
 
-	// 3. Filter by allowed tools
-	var filtered []any
+	// 3. Dedupe by tool NAME (not URL): two connections can expose the same
+	// tool name, but tools/call routing resolves a name to exactly one
+	// connection (agp:tool_routing, last-write-wins). Advertising duplicates
+	// would show the agent a tool that silently routes elsewhere. First
+	// occurrence wins, matching the routing map's effective owner.
+	seenNames := make(map[string]bool)
+	var deduped []any
 	for _, tool := range allTools {
+		if toolMap, ok := tool.(map[string]any); ok {
+			name, _ := toolMap["name"].(string)
+			if name == "" || seenNames[name] {
+				continue
+			}
+			seenNames[name] = true
+			deduped = append(deduped, tool)
+		}
+	}
+
+	// 4. Filter by allowed tools
+	var filtered []any
+	for _, tool := range deduped {
 		if toolMap, ok := tool.(map[string]any); ok {
 			name, _ := toolMap["name"].(string)
 			if len(allowedTools) == 0 || allowedSet[name] {
@@ -1025,7 +1081,11 @@ func (p *MCPProxy) getOrCreateDownstreamSession(ctx context.Context, targetURL s
 	return sessID
 }
 
-func (p *MCPProxy) proxyToTarget(w http.ResponseWriter, r *http.Request, targetBaseURL string, bodyBytes []byte) {
+// proxyToTarget forwards the request downstream and writes the response.
+// Returns false when the downstream exchange failed (unreachable, read error,
+// or 5xx) so callers can roll back any governance counters committed in
+// governCall — a failed downstream call must not consume budget.
+func (p *MCPProxy) proxyToTarget(w http.ResponseWriter, r *http.Request, targetBaseURL string, bodyBytes []byte) bool {
 	targetURL := targetBaseURL
 	if !strings.HasSuffix(targetBaseURL, "/mcp") {
 		targetURL = strings.TrimSuffix(targetBaseURL, "/") + "/mcp"
@@ -1037,16 +1097,16 @@ func (p *MCPProxy) proxyToTarget(w http.ResponseWriter, r *http.Request, targetB
 	resp := p.doProxyRequest(r, targetURL, bodyBytes, false)
 	if resp == nil {
 		p.logger.Error("failed to reach target MCP Server", "target", targetBaseURL)
-		http.Error(w, fmt.Sprintf("downstream MCP Server (%s) unreachable", targetBaseURL), http.StatusBadGateway)
-		return
+		p.sendErrorResponse(w, r, nil, fmt.Sprintf("downstream MCP Server (%s) unreachable", targetBaseURL))
+		return false
 	}
 	defer resp.Body.Close()
 
 	// Read the response body to check for session errors
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		http.Error(w, "error reading downstream response", http.StatusInternalServerError)
-		return
+		p.sendErrorResponse(w, r, nil, "error reading downstream response")
+		return false
 	}
 
 	// Detect "Session has been terminated" and retry with a fresh session
@@ -1057,14 +1117,14 @@ func (p *MCPProxy) proxyToTarget(w http.ResponseWriter, r *http.Request, targetB
 
 		resp2 := p.doProxyRequest(r, targetURL, bodyBytes, true)
 		if resp2 == nil {
-			http.Error(w, fmt.Sprintf("downstream MCP Server (%s) unreachable", targetBaseURL), http.StatusBadGateway)
-			return
+			p.sendErrorResponse(w, r, nil, fmt.Sprintf("downstream MCP Server (%s) unreachable", targetBaseURL))
+			return false
 		}
 		defer resp2.Body.Close()
 		respBytes, err = io.ReadAll(resp2.Body)
 		if err != nil {
-			http.Error(w, "error reading downstream response", http.StatusInternalServerError)
-			return
+			p.sendErrorResponse(w, r, nil, "error reading downstream response")
+			return false
 		}
 		for k, vv := range resp2.Header {
 			for _, v := range vv {
@@ -1073,7 +1133,7 @@ func (p *MCPProxy) proxyToTarget(w http.ResponseWriter, r *http.Request, targetB
 		}
 		w.WriteHeader(resp2.StatusCode)
 		w.Write(respBytes)
-		return
+		return resp2.StatusCode < 500
 	}
 
 	for k, vv := range resp.Header {
@@ -1083,6 +1143,7 @@ func (p *MCPProxy) proxyToTarget(w http.ResponseWriter, r *http.Request, targetB
 	}
 	w.WriteHeader(resp.StatusCode)
 	w.Write(respBytes)
+	return resp.StatusCode < 500
 }
 
 // doProxyRequest forwards the request to the downstream target, managing the

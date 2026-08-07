@@ -54,26 +54,40 @@ export function FleetMonitor({
     return buckets;
   }, [activityFeed]);
 
-  // Spend trajectory — cumulative spend across fleet over the day
+  // Spend trajectory — REAL cumulative spend built from the activity feed's
+  // allow events (spend_delta_cents), bucketed over the last 24h. No simulation.
   const spendTrajectory = useMemo(() => {
     const totalCap = instances.reduce((s, i) => s + i.capToday, 0);
-    const totalSpend = instances.reduce((s, i) => s + i.spendToday, 0);
+    const now = Date.now();
+    const bucketMs = 2 * 60 * 60 * 1000; // 2h buckets over 24h
+    const buckets = 12;
+
+    // Collect real spend events with timestamps
+    const spendEvents = activityFeed
+      .filter((e) => e.decision === 'allow')
+      .map((e) => ({
+        t: new Date(e.timestamp).getTime(),
+        cents: (e as any).spend_delta_cents ?? (e as any).spendDeltaCents ?? 0,
+      }))
+      .filter((e) => !isNaN(e.t) && e.cents > 0)
+      .sort((a, b) => a.t - b.t);
+
     const points: { label: string; spend: number; cap: number }[] = [];
-    const hours = 12;
-    for (let h = 0; h <= hours; h++) {
-      const fraction = h / hours;
-      // Simulate a ramp with some noise
-      const noise = Math.sin(h * 1.7) * 0.05;
-      const spend = Math.max(0, totalSpend * Math.min(1, fraction + noise * fraction));
+    let cumulative = 0;
+    for (let b = buckets; b >= 0; b--) {
+      const bucketEnd = now - b * bucketMs;
+      // Add all spend events up to this bucket boundary
+      while (spendEvents.length && spendEvents[0].t <= bucketEnd) {
+        cumulative += spendEvents.shift()!.cents;
+      }
       points.push({
-        label: `${h * 2}h`,
-        spend: Math.round(spend),
+        label: `${(buckets - b) * 2}h`,
+        spend: Math.round(cumulative / 100), // cents → dollars
         cap: totalCap,
       });
     }
-    points[points.length - 1].spend = totalSpend;
     return points;
-  }, [instances]);
+  }, [instances, activityFeed]);
 
   const totalSpend = instances.reduce((s, i) => s + i.spendToday, 0);
   const totalCap = instances.reduce((s, i) => s + i.capToday, 0);

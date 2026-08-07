@@ -1,10 +1,55 @@
 """Audit Log routes (/api/v1/audit)."""
 
+import csv
+import datetime
+import hashlib
+import io
 import json
 from fastapi import APIRouter, Query
 from fastapi.responses import PlainTextResponse
 from app.database import get_pool
 from app.models.audit import AuditLogResponse, AuditVerificationResult
+
+
+def _go_rfc3339nano(ts: datetime.datetime) -> str:
+    """Format a UTC datetime exactly as Go's encoding/json marshals time.Time
+    (RFC3339Nano): 'Z' suffix, fractional seconds present only when non-zero,
+    trailing zeros trimmed. Must match the gateway's hash input byte-for-byte."""
+    base = ts.strftime("%Y-%m-%dT%H:%M:%S")
+    micro = ts.microsecond
+    if micro:
+        frac = f"{micro:06d}".rstrip("0")
+        return f"{base}.{frac}Z"
+    return f"{base}Z"
+
+
+def _compute_entry_hash(prev_hash: str, row) -> str:
+    """Recompute the gateway's SHA-256 entry hash for a stored row.
+
+    Must mirror the field set and canonical JSON layout of the gateway's
+    hashContent struct (internal/audit/logger.go) exactly, or verification
+    false-positives. Timestamp is normalized to UTC with microsecond precision
+    to match the gateway's Truncate(time.Microsecond).UTC()."""
+    ts = row["ts"]
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=datetime.timezone.utc)
+    ts = ts.astimezone(datetime.timezone.utc)
+    content = {
+        "ts": _go_rfc3339nano(ts),
+        "agent_id": row["agent_id"],
+        "agent_class_id": row["agent_class_id"] or "",
+        "action": row["action"],
+        "decision": row["decision"],
+        "deny_stage": row["deny_stage"] or "",
+        "spend_delta": row["spend_delta"] or 0,
+        "governance_overhead_ms": row["governance_overhead_ms"] or 0.0,
+        "reason": row["reason"] or "",
+    }
+    payload = json.dumps(content, separators=(",", ":"), ensure_ascii=False)
+    h = hashlib.sha256()
+    h.update(prev_hash.encode())
+    h.update(payload.encode())
+    return h.hexdigest()
 
 router = APIRouter(prefix="/api/v1/audit", tags=["Audit Log"])
 
@@ -90,20 +135,33 @@ async def verify_audit_log_integrity():
         return AuditVerificationResult(valid=True, total_records=0, verified_until_id=0)
 
     prev_hash = ""
+    last_good_id = 0
     for r in rows:
+        # 1. Linkage: this row must chain to the previous row's entry_hash.
         if r["prev_hash"] != prev_hash:
             return AuditVerificationResult(
                 valid=False,
                 total_records=len(rows),
-                verified_until_id=r["id"] - 1,
+                verified_until_id=last_good_id,
                 error_message=f"Hash chain mismatch at row ID {r['id']}: expected prev_hash '{prev_hash}', got '{r['prev_hash']}'",
             )
+        # 2. Content integrity: recompute the hash from the stored fields so a
+        # row whose content was edited (while keeping both hashes) is caught.
+        recomputed = _compute_entry_hash(prev_hash, r)
+        if recomputed != r["entry_hash"]:
+            return AuditVerificationResult(
+                valid=False,
+                total_records=len(rows),
+                verified_until_id=last_good_id,
+                error_message=f"Content hash mismatch at row ID {r['id']}: stored entry_hash does not match recomputed content hash",
+            )
         prev_hash = r["entry_hash"]
+        last_good_id = r["id"]
 
     return AuditVerificationResult(
         valid=True,
         total_records=len(rows),
-        verified_until_id=rows[-1]["id"],
+        verified_until_id=last_good_id,
     )
 
 
@@ -114,9 +172,15 @@ async def export_audit_log(format: str = "csv"):
         rows = await conn.fetch("SELECT * FROM audit_log ORDER BY id ASC LIMIT 5000")
 
     if format == "csv":
-        lines = ["id,timestamp,agent_id,action,decision,deny_stage,reason,spend_delta_cents,total_latency_ms,governance_overhead_ms,entry_hash"]
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(["id", "timestamp", "agent_id", "action", "decision", "deny_stage", "reason", "spend_delta_cents", "total_latency_ms", "governance_overhead_ms", "entry_hash"])
         for r in rows:
-            lines.append(f"{r['id']},{r['ts'].isoformat()},{r['agent_id']},{r['action']},{r['decision']},{r['deny_stage']},{r['reason']},{r['spend_delta']},{r['total_latency_ms']},{r['governance_overhead_ms']},{r['entry_hash']}")
-        return PlainTextResponse("\n".join(lines), media_type="text/csv")
+            writer.writerow([
+                r["id"], r["ts"].isoformat(), r["agent_id"], r["action"], r["decision"],
+                r["deny_stage"], r["reason"], r["spend_delta"], r["total_latency_ms"],
+                r["governance_overhead_ms"], r["entry_hash"],
+            ])
+        return PlainTextResponse(buf.getvalue(), media_type="text/csv")
 
     return [dict(r) for r in rows]
