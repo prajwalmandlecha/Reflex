@@ -1,5 +1,6 @@
 """Bank Connections routes (/api/v1/connections)."""
 
+import asyncio
 import json
 from fastapi import APIRouter, HTTPException, status
 from app.crypto import encrypt
@@ -10,6 +11,20 @@ from app.services.mcp_discovery import fetch_mcp_tools
 from app.services.openapi_ingestion import parse_openapi_spec
 
 router = APIRouter(prefix="/api/v1/connections", tags=["Bank Connections"])
+
+
+async def _probe_connection(source_type: str, mcp_url: str | None, openapi_spec: str | None):
+    """Network-only probe (no DB conn held, safe to run concurrently).
+
+    Returns (fresh_status, discovered_tools, with_ops). Tools is None when the
+    probe failed, so callers don't wipe previously-discovered tools."""
+    if source_type == "native_mcp" and mcp_url:
+        mcp_tools = await fetch_mcp_tools(mcp_url)
+        return ("connected" if mcp_tools is not None else "error"), mcp_tools, False
+    if source_type == "openapi" and openapi_spec:
+        _, openapi_tools = parse_openapi_spec(openapi_spec)
+        return ("connected" if openapi_tools else "error"), (openapi_tools or None), True
+    return None, None, False  # manual / un-probeable
 
 
 @router.get("", response_model=list[BankConnectionResponse])
@@ -26,6 +41,26 @@ async def list_bank_connections():
             ORDER BY b.name ASC
             """
         )
+
+        # Re-probe all connections concurrently (network I/O, no DB conn held) so a
+        # down upstream flips to 'error' immediately instead of showing a stale
+        # 'connected'. DB writes happen sequentially afterward on the shared conn.
+        probe_results = await asyncio.gather(
+            *(_probe_connection(r["source_type"], r["mcp_url"], r["openapi_spec"]) for r in rows)
+        )
+
+        status_by_id: dict[str, str] = {}
+        for r, (fresh, tools, with_ops) in zip(rows, probe_results):
+            if fresh is None:
+                status_by_id[r["id"]] = r["status"] or "pending"
+                continue
+            if tools:
+                await _replace_tools(conn, r["id"], tools, with_ops=with_ops)
+            await conn.execute(
+                "UPDATE bank_connections SET status = $2, updated_at = NOW() WHERE id = $1",
+                r["id"], fresh,
+            )
+            status_by_id[r["id"]] = fresh
 
         res = []
         for r in rows:
@@ -47,8 +82,8 @@ async def list_bank_connections():
                 BankConnectionResponse(
                     id=r["id"], name=r["name"], source_type=r["source_type"],
                     mcp_url=r["mcp_url"], base_url=r["base_url"], openapi_spec=r["openapi_spec"],
-                    credential_type=r["credential_type"], status=r["status"] or "pending",
-                    created_at=r["created_at"], updated_at=r["updated_at"], tool_count=r["tool_count"],
+                    credential_type=r["credential_type"], status=status_by_id.get(r["id"], r["status"] or "pending"),
+                    created_at=r["created_at"], updated_at=r["updated_at"], tool_count=len(tools_list),
                     tools=tools_list,
                 )
             )

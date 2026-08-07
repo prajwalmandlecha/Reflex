@@ -6,7 +6,7 @@ export type AgentClass = {
   description: string;
   allowedTools: string[];
   defaultConstraints: Record<string, unknown>;
-  defaultCap: { amount: number; window: 'day' | 'month' };
+  defaultCap: { amount: number; window: "day" | "month" };
   defaultCaps?: Record<string, unknown>;
   defaultAllowedTools?: string[];
   defaultConstraintsDict?: Record<string, unknown>;
@@ -19,7 +19,7 @@ export type AgentClass = {
   unreachable_tools?: string[];
 };
 
-export type AgentStatus = 'active' | 'revoked' | 'killed';
+export type AgentStatus = "active" | "revoked" | "killed";
 
 export type AgentInstance = {
   id: string;
@@ -34,7 +34,7 @@ export type AgentInstance = {
   class_name?: string;
   instanceOverrides?: {
     tools?: string[];
-    capOverride?: { amount: number; window: 'day' | 'month' };
+    capOverride?: { amount: number; window: "day" | "month" };
   };
   constraint_overrides?: Record<string, unknown>;
   cap_overrides?: Record<string, unknown>;
@@ -49,14 +49,14 @@ export type AgentInstance = {
 export type BankConnection = {
   id: string;
   name: string;
-  sourceType: 'native_mcp' | 'openapi' | 'manual';
+  sourceType: "native_mcp" | "openapi" | "manual";
   source_type?: string;
   mcpUrl?: string;
   baseUrl?: string;
   openapiSpec?: string;
   toolCount: number;
   tool_count?: number;
-  status: 'connected' | 'error' | 'pending';
+  status: "connected" | "error" | "pending";
   tools?: BankTool[];
   authType?: string;
   credential_type?: string;
@@ -78,12 +78,12 @@ export type BankTool = {
 export type Policy = {
   id: string | number;
   name: string;
-  scope: 'global' | 'class' | 'instance';
+  scope: "global" | "class" | "instance";
   targetId?: string;
   target_id?: string;
   targetName?: string;
-  type: 'visual' | 'rego';
-  status: 'draft' | 'active' | 'archived';
+  type: "visual" | "rego";
+  status: "draft" | "active" | "archived";
   version?: number;
   lastModified?: string;
   created_at?: string;
@@ -97,13 +97,24 @@ export type Policy = {
 
 export type VisualRule = {
   action: string;
-  effect?: 'allow' | 'deny';
+  effect?: "allow" | "deny";
   conditions: RuleCondition[];
 };
 
 export type RuleCondition = {
   field: string;
-  operator: 'eq' | 'ne' | 'lt' | 'gt' | 'lte' | 'gte' | 'in' | 'contains' | 'regex_deny' | 'regex_allow' | 'in_list';
+  operator:
+    | "eq"
+    | "ne"
+    | "lt"
+    | "gt"
+    | "lte"
+    | "gte"
+    | "in"
+    | "contains"
+    | "regex_deny"
+    | "regex_allow"
+    | "in_list";
   value: string | number;
 };
 
@@ -131,7 +142,7 @@ export type GovernanceEvent = {
   agentClassId: string;
   agent_class_id?: string;
   tool: string;
-  decision: 'allow' | 'deny';
+  decision: "allow" | "deny";
   denyStage?: string;
   deny_stage?: string;
   reason?: string;
@@ -150,7 +161,7 @@ export type ActivityEvent = {
   params: Record<string, unknown>;
   responseData?: Record<string, unknown> | string;
   response_data?: Record<string, unknown> | string;
-  decision: 'allow' | 'deny';
+  decision: "allow" | "deny";
   denyStage?: string;
   reason?: string;
   latencyMs: number;
@@ -160,7 +171,7 @@ export type ActivityEvent = {
 };
 
 export type AuditLogEntry = ActivityEvent & {
-  entryType?: 'action' | 'config_change' | 'policy_change' | 'stop_event';
+  entryType?: "action" | "config_change" | "policy_change" | "stop_event";
   oldValue?: string;
   newValue?: string;
   operator?: string;
@@ -195,7 +206,7 @@ export type MetricsSnapshot = {
   timestamp: number | string;
 };
 
-export type FleetStatus = 'healthy' | 'degraded' | 'stopped';
+export type FleetStatus = "healthy" | "degraded" | "stopped";
 
 export type FleetStatusResponse = {
   status: FleetStatus;
@@ -208,10 +219,10 @@ export type FleetStatusResponse = {
 export type StopEvent = {
   id: string;
   timestamp: string;
-  scope: 'fleet' | 'class' | 'instance';
+  scope: "fleet" | "class" | "instance";
   targetId?: string;
   targetName?: string;
-  action: 'stop' | 'resume';
+  action: "stop" | "resume";
   operator: string;
   reason: string;
 };
@@ -219,8 +230,8 @@ export type StopEvent = {
 export type AlertItem = {
   id: string;
   timestamp: string;
-  severity: 'critical' | 'warning' | 'info';
-  category: 'revocation' | 'cap_breach' | 'emergency_stop' | 'policy_change';
+  severity: "critical" | "warning" | "info";
+  category: "revocation" | "cap_breach" | "emergency_stop" | "policy_change";
   title: string;
   detail: string;
   source: string;

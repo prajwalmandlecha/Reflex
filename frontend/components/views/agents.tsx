@@ -691,24 +691,14 @@ function AgentConnectionSnippet({ agent, cls, token }: { agent: AgentInstance; c
     ? `${window.location.protocol}//${window.location.hostname}:8080/mcp`
     : 'http://localhost:8080/mcp';
 
-  // Pick a sample tool from the agent's allowed tools for the curl example
+  // Pick a sample tool from the agent's allowed tools for the curl example.
+  // Arguments are left empty — we don't fabricate fake account IDs / values.
+  // The operator fills them in from the tool's real input_schema.
   const allowedTools = agent.tool_overrides?.length
     ? agent.tool_overrides
     : cls?.allowedTools || [];
   const sampleTool = allowedTools[0] || 'get_balance';
-
-  // Build sample arguments based on common tool patterns
   const sampleArgs: Record<string, string> = {};
-  if (sampleTool.includes('balance') || sampleTool.includes('transaction') || sampleTool.includes('history')) {
-    sampleArgs.account_id = 'acc-101';
-  } else if (sampleTool.includes('transfer') || sampleTool.includes('payment')) {
-    sampleArgs.recipient_account = 'acc-102';
-    sampleArgs.amount_cents = '1000';
-  } else if (sampleTool.includes('contact')) {
-    sampleArgs.contact_id = 'contact-1';
-  } else {
-    sampleArgs.account_id = 'acc-101';
-  }
 
   const serverName = agent.id.replace(/[^a-zA-Z0-9-_]/g, '-');
 
