@@ -55,7 +55,9 @@ type GovernanceEvent struct {
 }
 
 type MCPProxy struct {
-	targets         map[string]string
+	targets         map[string]string // effective: env targets + native-MCP connections
+	targetsMux      sync.RWMutex
+	envTargets      map[string]string // static MCP_TARGETS from env, never reloaded
 	openAPITargets  map[string]*OpenAPISpecTarget
 	openAPIMux      sync.RWMutex
 	toolRouting     map[string]string // tool_name → service/connection_id
@@ -86,6 +88,7 @@ func NewMCPProxy(
 ) *MCPProxy {
 	return &MCPProxy{
 		targets:         targets,
+		envTargets:      targets,
 		openAPITargets:  make(map[string]*OpenAPISpecTarget),
 		toolRouting:     make(map[string]string),
 		ks:              ks,
@@ -153,6 +156,63 @@ func (p *MCPProxy) LoadOpenAPISpecs(ctx context.Context) {
 	p.logger.Info("loaded openapi virtual targets", "count", len(newTargets))
 }
 
+// LoadNativeTargets rebuilds the effective native-MCP target map by merging the
+// static env MCP_TARGETS with any native_mcp bank_connections cached in Redis.
+// This lets connections registered at runtime become routable without a restart
+// (previously only OpenAPI connections were hot-reloaded). Env targets win on
+// name conflicts so an operator can always override via config.
+func (p *MCPProxy) LoadNativeTargets(ctx context.Context) {
+	merged := make(map[string]string, len(p.envTargets))
+	for k, v := range p.envTargets {
+		merged[k] = v
+	}
+
+	if p.rdb != nil {
+		raw, err := p.rdb.Get(ctx, "agp:connections").Result()
+		if err == nil && raw != "" {
+			var mapping map[string]connectionEntry
+			if err := json.Unmarshal([]byte(raw), &mapping); err == nil {
+				for id, conn := range mapping {
+					if conn.SourceType == "native_mcp" && conn.MCPURL != "" {
+						if _, overridden := p.envTargets[id]; !overridden {
+							merged[id] = conn.MCPURL
+						}
+					}
+				}
+			}
+		}
+	}
+
+	p.targetsMux.Lock()
+	p.targets = merged
+	p.targetsMux.Unlock()
+	p.logger.Info("loaded native mcp targets", "count", len(merged))
+}
+
+// getTarget returns the downstream URL for a service name, or the default.
+func (p *MCPProxy) getTarget(serviceName string) (string, bool) {
+	p.targetsMux.RLock()
+	defer p.targetsMux.RUnlock()
+	if serviceName != "" {
+		if url, ok := p.targets[serviceName]; ok {
+			return url, true
+		}
+	}
+	if url, ok := p.targets["default"]; ok {
+		return url, true
+	}
+	return "", false
+}
+
+// rangeTargets calls fn for each target (snapshot under read lock).
+func (p *MCPProxy) rangeTargets(fn func(svcName, targetBaseURL string)) {
+	p.targetsMux.RLock()
+	defer p.targetsMux.RUnlock()
+	for svcName, targetBaseURL := range p.targets {
+		fn(svcName, targetBaseURL)
+	}
+}
+
 // LoadToolRouting reads the tool_name → connection_id mapping from Redis.
 // This enables the gateway to route /mcp requests to the correct downstream
 // based on the tool name in tools/call, without requiring a service-specific URL.
@@ -206,6 +266,7 @@ func (p *MCPProxy) SubscribeConnectionUpdates(ctx context.Context) {
 			}
 			p.LoadOpenAPISpecs(ctx)
 			p.LoadToolRouting(ctx)
+			p.LoadNativeTargets(ctx)
 		}
 	}
 }
@@ -309,19 +370,10 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve target URL from service name
-	var targetURL string
-	if serviceName != "" {
-		if url, ok := p.targets[serviceName]; ok {
-			targetURL = url
-		}
-	}
-	if targetURL == "" {
-		if defaultURL, ok := p.targets["default"]; ok {
-			targetURL = defaultURL
-		} else {
-			targetURL = "http://localhost:9000"
-		}
+	// Resolve target URL from service name (lock-safe; hot-reloadable)
+	targetURL, ok := p.getTarget(serviceName)
+	if !ok {
+		targetURL = "http://localhost:9000"
 	}
 
 	if method == "tools/list" {
@@ -337,7 +389,7 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		amount, amountFound := p.extractAmount(agentCfg, toolName, args)
 
-		allowed, denyStage, reason, timings, committedEntries := p.governCall(r.Context(), agentID, classID, agentKind, toolName, amount, amountFound, allowedTools, agentCfg, args)
+		allowed, denyStage, reason, timings, committedEntries := p.governCall(r.Context(), callKindTool, agentID, classID, agentKind, toolName, amount, amountFound, allowedTools, agentCfg, args)
 
 		downstreamStart := time.Now()
 		if allowed {
@@ -400,13 +452,13 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
 		})
 
-		// Write permanent audit log entry
+		// Write permanent audit log entry (sensitive params redacted)
 		p.auditor.Log(&audit.Entry{
 			AgentID:              agentID,
 			AgentClassID:         classID,
 			Action:               toolName,
 			BankConnectionID:     serviceName,
-			Params:               args,
+			Params:               redactParams(args),
 			Decision:             decisionStr,
 			DenyStage:            denyStage,
 			Reason:               reason,
@@ -423,11 +475,227 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Governed resource/prompt reads. These don't move money, but they ARE an
+	// exfiltration / prompt-injection surface, so they go through the same
+	// killswitch → constraints → OPA → rate-limit pipeline (no spend commit).
+	if method == "resources/read" || method == "prompts/get" {
+		kind := callKindResource
+		if method == "prompts/get" {
+			kind = callKindPrompt
+		}
+		params, _ := rpcReq["params"].(map[string]any)
+		// Identify the action: resources use a URI, prompts use a name.
+		actionName, _ := params["uri"].(string)
+		if actionName == "" {
+			actionName, _ = params["name"].(string)
+		}
+
+		// No monetary amount for resources/prompts; amountFound=false is fine
+		// because governCall skips money-field enforcement for non-tools.
+		allowed, denyStage, reason, timings, committedEntries := p.governCall(r.Context(), kind, agentID, classID, agentKind, actionName, 0, false, allowedTools, agentCfg, params)
+
+		downstreamStart := time.Now()
+		if allowed {
+			if !p.proxyToTarget(w, r, targetURL, bodyBytes) {
+				p.rollbackCommittedEntries(r.Context(), committedEntries, agentID, actionName)
+				allowed = false
+				denyStage = "downstream"
+				reason = fmt.Sprintf("downstream MCP server (%s) failed", targetURL)
+			}
+		} else {
+			p.logger.Warn("mcp resource/prompt access DENIED", "agent_id", agentID, "kind", string(kind), "action", actionName, "stage", denyStage, "reason", reason)
+			p.sendErrorResponse(w, r, reqID, reason)
+		}
+		downstreamMs := ms(time.Since(downstreamStart))
+		if !allowed {
+			downstreamMs = 0
+		}
+
+		totalMs := ms(time.Since(reqStart))
+		govOverheadMs := timings.GovernanceTotal
+		decisionStr := map[bool]string{true: "allow", false: "deny"}[allowed]
+
+		metrics.RequestDuration.WithLabelValues(actionName, classID, decisionStr).Observe(totalMs / 1000.0)
+		metrics.GovernanceOverhead.WithLabelValues(actionName, decisionStr).Observe(govOverheadMs / 1000.0)
+		if allowed {
+			metrics.DownstreamDuration.WithLabelValues(serviceName, actionName).Observe(downstreamMs / 1000.0)
+		}
+		metrics.DecisionsTotal.WithLabelValues(actionName, classID, decisionStr, denyStage).Inc()
+
+		p.publishEvent(r.Context(), GovernanceEvent{
+			Type:            "decision",
+			AgentID:         agentID,
+			AgentClassID:    classID,
+			Tool:            actionName,
+			Decision:        decisionStr,
+			DenyStage:       denyStage,
+			Reason:          reason,
+			SpendDeltaCents: 0,
+			Latency: map[string]float64{
+				"total_ms":               totalMs,
+				"killswitch_ms":          timings.KillswitchMs,
+				"constraint_ms":          timings.ConstraintMs,
+				"policy_ms":              timings.PolicyMs,
+				"spend_ms":               timings.SpendCheckMs,
+				"downstream_ms":          downstreamMs,
+				"governance_overhead_ms": govOverheadMs,
+			},
+			Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+		})
+
+		p.auditor.Log(&audit.Entry{
+			AgentID:              agentID,
+			AgentClassID:         classID,
+			Action:               fmt.Sprintf("%s:%s", method, actionName),
+			BankConnectionID:     serviceName,
+			Params:               redactParams(params),
+			Decision:             decisionStr,
+			DenyStage:            denyStage,
+			Reason:               reason,
+			SpendDelta:           0,
+			TotalLatencyMs:       totalMs,
+			KillswitchLatencyMs:  timings.KillswitchMs,
+			PolicyLatencyMs:      timings.PolicyMs,
+			SpendCheckLatencyMs:  timings.SpendCheckMs,
+			ConstraintLatencyMs:  timings.ConstraintMs,
+			DownstreamLatencyMs:  downstreamMs,
+			GovernanceOverheadMs: govOverheadMs,
+		})
+
+		return
+	}
+
+	// Aggregated resources/list and prompts/list across all targets, filtered by
+	// the agent's whitelist (same pattern as tools/list).
+	if method == "resources/list" || method == "prompts/list" {
+		p.handleAggregatedList(w, r, bodyBytes, method, allowedTools)
+		return
+	}
+
 	p.proxyToTarget(w, r, targetURL, bodyBytes)
 }
 
+// handleAggregatedList fans a resources/list or prompts/list request out to all
+// native MCP targets, merges the results, dedupes by uri/name, and filters by
+// the agent's allowed list. (OpenAPI virtual targets don't expose MCP
+// resources/prompts, so only native targets are queried.)
+func (p *MCPProxy) handleAggregatedList(w http.ResponseWriter, r *http.Request, bodyBytes []byte, method string, allowedTools []string) {
+	allowedSet := make(map[string]bool)
+	for _, t := range allowedTools {
+		allowedSet[t] = true
+	}
+
+	var rpcReq map[string]any
+	_ = json.Unmarshal(bodyBytes, &rpcReq)
+	reqID := rpcReq["id"]
+
+	// result key is "resources" for resources/list, "prompts" for prompts/list
+	resultKey := "resources"
+	idField := "uri"
+	if method == "prompts/list" {
+		resultKey = "prompts"
+		idField = "name"
+	}
+
+	var merged []any
+	seen := make(map[string]bool)
+	seenURL := make(map[string]bool)
+	p.rangeTargets(func(svcName, targetBaseURL string) {
+		if svcName == "default" {
+			return
+		}
+		targetURL := targetBaseURL
+		if !strings.HasSuffix(targetURL, "/mcp") {
+			targetURL = strings.TrimSuffix(targetURL, "/") + "/mcp"
+		}
+		if seenURL[targetURL] {
+			return
+		}
+		seenURL[targetURL] = true
+
+		items := p.fetchListFromTarget(r, targetURL, bodyBytes, resultKey)
+		for _, item := range items {
+			if m, ok := item.(map[string]any); ok {
+				id, _ := m[idField].(string)
+				if id == "" || seen[id] {
+					continue
+				}
+				seen[id] = true
+				if len(allowedTools) == 0 || allowedSet[id] {
+					merged = append(merged, item)
+				}
+			}
+		}
+	})
+	if merged == nil {
+		merged = []any{}
+	}
+
+	res := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      reqID,
+		"result":  map[string]any{resultKey: merged},
+	}
+	p.sendJSONRPCResponse(w, r, res)
+}
+
+// fetchListFromTarget forwards a resources/list or prompts/list to a single
+// native MCP downstream and returns the items array (empty on any failure).
+func (p *MCPProxy) fetchListFromTarget(r *http.Request, targetURL string, bodyBytes []byte, resultKey string) []any {
+	outReq, err := http.NewRequestWithContext(r.Context(), "POST", targetURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil
+	}
+	outReq.Header.Set("Content-Type", "application/json")
+	outReq.Header.Set("Accept", "application/json, text/event-stream")
+	if sessID := p.getOrCreateDownstreamSession(r.Context(), targetURL); sessID != "" {
+		outReq.Header.Set("Mcp-Session-Id", sessID)
+	}
+
+	resp, err := p.client.Do(outReq)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil
+	}
+
+	// Handle SSE-wrapped responses.
+	body := string(respBytes)
+	if strings.HasPrefix(body, "event:") || strings.Contains(body, "\ndata:") {
+		for _, line := range strings.Split(body, "\n") {
+			if strings.HasPrefix(line, "data:") {
+				body = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+				break
+			}
+		}
+	}
+
+	var rpcResp map[string]any
+	if err := json.Unmarshal([]byte(body), &rpcResp); err != nil {
+		return nil
+	}
+	result, _ := rpcResp["result"].(map[string]any)
+	items, _ := result[resultKey].([]any)
+	return items
+}
+
+// callKind distinguishes what sort of MCP action is being governed, so the
+// pipeline can skip money-field enforcement for actions that don't move money.
+type callKind string
+
+const (
+	callKindTool     callKind = "tool"
+	callKindResource callKind = "resource"
+	callKindPrompt   callKind = "prompt"
+)
+
 func (p *MCPProxy) governCall(
 	ctx context.Context,
+	kind callKind,
 	agentID, classID, agentKind, toolName string,
 	amount float64,
 	amountFound bool,
@@ -462,16 +730,19 @@ func (p *MCPProxy) governCall(
 	// — MUST carry a parseable value in a declared field. If it doesn't, the
 	// spend cap cannot be enforced, so the call is DENIED rather than silently
 	// passed through as $0 (which is exactly how a renamed/omitted money field
-	// would otherwise bypass every cap).
-	if required, mp := p.constraintCheck.RequiresAmount(cfg, toolName); required && !amountFound {
+	// would otherwise bypass every cap). Only applies to tools — resources and
+	// prompts don't move money.
+	if kind == callKindTool {
+		if required, mp := p.constraintCheck.RequiresAmount(cfg, toolName); required && !amountFound {
 		t.ConstraintMs = ms(time.Since(cStart))
 		metrics.ConstraintCheckDuration.WithLabelValues(toolName).Observe(t.ConstraintMs / 1000.0)
 		t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs
-		reason := fmt.Sprintf("action '%s' denied: missing or unparseable declared money field", toolName)
-		if len(mp) > 0 {
-			reason = fmt.Sprintf("action '%s' denied: no parseable value in declared money field(s) %v — spend cap cannot be enforced", toolName, mp)
+			reason := fmt.Sprintf("action '%s' denied: missing or unparseable declared money field", toolName)
+			if len(mp) > 0 {
+				reason = fmt.Sprintf("action '%s' denied: no parseable value in declared money field(s) %v — spend cap cannot be enforced", toolName, mp)
+			}
+			return false, "constraint", reason, t, nil
 		}
-		return false, "constraint", reason, t, nil
 	}
 
 	cOk, cReason := p.constraintCheck.CheckStatic(cfg, toolName)
@@ -489,6 +760,7 @@ func (p *MCPProxy) governCall(
 		AgentID:      agentID,
 		AgentKind:    agentKind,
 		Action:       toolName,
+		Resource:     string(kind), // "tool" | "resource" | "prompt" — lets policies distinguish action types
 		Amount:       amount,
 		AllowedTools: allowedTools,
 		Params:       args,
@@ -703,7 +975,7 @@ func (p *MCPProxy) handleOpenAPIRequest(
 		// aren't bypassed by non-float64 encodings or renamed money fields (G12).
 		amount, amountFound := p.extractAmount(agentCfg, toolName, args)
 
-		allowed, denyStage, reason, timings, committedEntries := p.governCall(r.Context(), agentID, classID, agentKind, toolName, amount, amountFound, allowedTools, agentCfg, args)
+		allowed, denyStage, reason, timings, committedEntries := p.governCall(r.Context(), callKindTool, agentID, classID, agentKind, toolName, amount, amountFound, allowedTools, agentCfg, args)
 
 		downstreamStart := time.Now()
 		var mcpResult map[string]any
@@ -797,7 +1069,7 @@ func (p *MCPProxy) handleOpenAPIRequest(
 			AgentClassID:         classID,
 			Action:               toolName,
 			BankConnectionID:     serviceName,
-			Params:               args,
+			Params:               redactParams(args),
 			Decision:             decisionStr,
 			DenyStage:            denyStage,
 			Reason:               reason,
@@ -896,22 +1168,22 @@ func (p *MCPProxy) handleAggregatedToolsList(w http.ResponseWriter, r *http.Requ
 
 	// 1. Fetch from native MCP targets
 	seen := make(map[string]bool)
-	for svcName, targetBaseURL := range p.targets {
+	p.rangeTargets(func(svcName, targetBaseURL string) {
 		if svcName == "default" {
-			continue
+			return
 		}
 		targetURL := targetBaseURL
 		if !strings.HasSuffix(targetURL, "/mcp") {
 			targetURL = strings.TrimSuffix(targetURL, "/") + "/mcp"
 		}
 		if seen[targetURL] {
-			continue
+			return
 		}
 		seen[targetURL] = true
 
 		tools := p.fetchToolsFromTarget(r, targetURL, bodyBytes)
 		allTools = append(allTools, tools...)
-	}
+	})
 
 	// 2. Fetch from OpenAPI virtual targets
 	p.openAPIMux.RLock()
@@ -1262,8 +1534,50 @@ func (p *MCPProxy) trackSession(ctx context.Context, sessionID, agentID, agentKi
 		"service":    service,
 		"updated_at": time.Now().UTC().Format(time.RFC3339),
 	})
-	p.rdb.Set(ctx, key, string(data), 24*time.Hour)
-	metrics.ActiveSessions.Inc()
+	// SetNX so the ActiveSessions gauge only increments for a genuinely NEW
+	// session, not on every request that re-uses an existing session ID —
+	// otherwise the gauge grows monotonically and never reflects reality.
+	// The key keeps a 24h TTL; when it expires the session is gone and a later
+	// re-registration counts as new again.
+	wasNew, err := p.rdb.SetNX(ctx, key, string(data), 24*time.Hour).Result()
+	if err == nil && wasNew {
+		metrics.ActiveSessions.Inc()
+	} else if err == nil {
+		// Existing session: refresh the TTL without double-counting.
+		p.rdb.Expire(ctx, key, 24*time.Hour)
+	}
+}
+
+// sensitiveParamKeys are argument keys whose values must never be persisted to
+// the audit log or published to the event stream (credentials, tokens, secrets).
+var sensitiveParamKeys = map[string]bool{
+	"bearer_token": true,
+	"token":        true,
+	"password":     true,
+	"secret":       true,
+	"api_key":      true,
+	"apikey":       true,
+	"authorization": true,
+	"private_key":  true,
+	"client_secret": true,
+}
+
+// redactParams returns a copy of the params map with sensitive values replaced
+// by "[REDACTED]". The audit log and event stream must never store bearer
+// tokens or credentials in plaintext.
+func redactParams(params map[string]any) map[string]any {
+	if params == nil {
+		return nil
+	}
+	out := make(map[string]any, len(params))
+	for k, v := range params {
+		if sensitiveParamKeys[strings.ToLower(k)] {
+			out[k] = "[REDACTED]"
+		} else {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 func ms(d time.Duration) float64 {

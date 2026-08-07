@@ -39,6 +39,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { formatCurrency, formatTimestamp, formatDateTime } from '@/lib/format';
+import { useToast } from '@/hooks/use-toast';
 import type { AgentInstance, AgentClass, ActivityEvent } from '@/lib/types';
 import { api } from '@/lib/api';
 import { Search, Ban, Shield, Clock, Wrench, Plus, Key, Copy, Check, RefreshCw, Play, Terminal, Trash2 } from 'lucide-react';
@@ -69,6 +70,7 @@ export function AgentsView({
   );
   const [showCreate, setShowCreate] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
+  const { toast } = useToast();
 
   useEffect(() => {
     if (initialFilter?.classId) setClassFilter(initialFilter.classId);
@@ -215,28 +217,31 @@ export function AgentsView({
                 onRevoke={async () => {
                   try {
                     await api.revokeAgent(selectedAgent.id);
+                    toast({ title: 'Agent revoked', description: selectedAgent.id });
                     onSelectAgent(null);
                     if (onRefresh) onRefresh();
                   } catch (err: any) {
-                    alert(`Failed to revoke agent: ${err.message || 'Unknown error'}`);
+                    toast({ variant: 'destructive', title: 'Failed to revoke agent', description: err.message || 'Unknown error' });
                   }
                 }}
                 onRevive={async () => {
                   try {
                     await api.reviveAgent(selectedAgent.id);
+                    toast({ title: 'Agent revived', description: selectedAgent.id });
                     onSelectAgent(null);
                     if (onRefresh) onRefresh();
                   } catch (err: any) {
-                    alert(`Failed to revive agent: ${err.message || 'Unknown error'}`);
+                    toast({ variant: 'destructive', title: 'Failed to revive agent', description: err.message || 'Unknown error' });
                   }
                 }}
                 onDelete={async () => {
                   try {
                     await api.deleteAgentInstance(selectedAgent.id);
+                    toast({ title: 'Agent deleted', description: selectedAgent.id });
                     onSelectAgent(null);
                     if (onRefresh) onRefresh();
                   } catch (err: any) {
-                    alert(`Failed to delete agent: ${err.message || 'Unknown error'}`);
+                    toast({ variant: 'destructive', title: 'Failed to delete agent', description: err.message || 'Unknown error' });
                   }
                 }}
               />
@@ -428,11 +433,24 @@ function AgentDetail({
   const [jwtToken, setJwtToken] = useState('');
   const [copied, setCopied] = useState(false);
   const [loadingToken, setLoadingToken] = useState(false);
+  const [spendToday, setSpendToday] = useState<number | null>(null);
 
   const agentActivity = useMemo(
     () => activityFeed.filter((a) => a.agentId === agent.id),
     [activityFeed, agent.id]
   );
+
+  // Fetch the real per-agent spend counter from the backend (previously the
+  // endpoint existed but was never called, so the drawer showed no spend data).
+  useEffect(() => {
+    let cancelled = false;
+    api.getAgentSpend(agent.id)
+      .then((counters) => {
+        if (!cancelled) setSpendToday(counters?.today ?? 0);
+      })
+      .catch(() => { if (!cancelled) setSpendToday(null); });
+    return () => { cancelled = true; };
+  }, [agent.id]);
 
   const handleMintToken = async () => {
     setLoadingToken(true);
@@ -475,6 +493,12 @@ function AgentDetail({
         <div className="flex items-center justify-between text-ink-secondary uppercase tracking-widest text-[10px]">
           <span>Instance Governance Overrides</span>
           <span className="text-cyan-400 font-semibold">{agent.id}</span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-ink-secondary text-[11px]">Spend Today:</span>
+          <span className="text-emerald-400 font-bold tabular">
+            {spendToday !== null ? formatCurrency(spendToday) : '—'}
+          </span>
         </div>
         <div className="flex items-center justify-between">
           <span className="text-ink-secondary text-[11px]">Spend Cap Override:</span>

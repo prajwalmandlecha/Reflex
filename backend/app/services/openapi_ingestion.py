@@ -16,8 +16,20 @@ def parse_openapi_spec(spec_text: str) -> tuple[dict[str, Any], list[dict[str, A
     try:
         spec_data = json.loads(spec_text)
     except json.JSONDecodeError:
-        # Fallback basic YAML key-value parser for simple specs
-        spec_data = {"openapi": "3.0.0", "info": {"title": "Imported Spec"}, "paths": {}}
+        # Real YAML parse (OpenAPI specs are commonly YAML). Surface failure as
+        # an empty spec so the caller marks the connection 'error' rather than
+        # silently importing zero tools.
+        try:
+            import yaml
+            parsed = yaml.safe_load(spec_text)
+            if isinstance(parsed, dict):
+                spec_data = parsed
+            else:
+                logger.warning("OpenAPI YAML parsed to non-dict (%s); treating as empty", type(parsed))
+                spec_data = {"openapi": "3.0.0", "info": {"title": "Imported Spec"}, "paths": {}}
+        except Exception as yaml_err:
+            logger.warning("failed to parse OpenAPI spec as JSON or YAML: %s", yaml_err)
+            spec_data = {"openapi": "3.0.0", "info": {"title": "Imported Spec"}, "paths": {}}
 
     paths = spec_data.get("paths", {})
     tools = []

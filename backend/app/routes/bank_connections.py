@@ -4,7 +4,7 @@ import json
 from fastapi import APIRouter, HTTPException, status
 from app.crypto import encrypt
 from app.database import get_pool
-from app.models.bank_connection import BankConnectionCreate, BankConnectionResponse
+from app.models.bank_connection import BankConnectionCreate, BankConnectionResponse, BankConnectionUpdate
 from app.services.config_propagation import cache_bank_connections, cache_tool_routing, publish_config_update
 from app.services.mcp_discovery import fetch_mcp_tools
 from app.services.openapi_ingestion import parse_openapi_spec
@@ -216,6 +216,64 @@ async def sync_bank_connection(connection_id: str):
         credential_type=row["credential_type"], status=status_val,
         created_at=updated["created_at"], updated_at=updated["updated_at"],
         tool_count=len(discovered_tools), tools=discovered_tools,
+    )
+
+
+@router.put("/{connection_id}", response_model=BankConnectionResponse)
+async def update_bank_connection(connection_id: str, b: BankConnectionUpdate):
+    """Update a connection's mutable fields. Only provided fields are changed.
+    If credentials are supplied they are re-encrypted; if the spec/url changes,
+    tools are NOT auto-refreshed — call /sync to re-probe."""
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM bank_connections WHERE id = $1", connection_id)
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Bank connection '{connection_id}' not found")
+
+        name = b.name if b.name is not None else row["name"]
+        mcp_url = b.mcp_url if b.mcp_url is not None else row["mcp_url"]
+        base_url = b.base_url if b.base_url is not None else row["base_url"]
+        openapi_spec = b.openapi_spec if b.openapi_spec is not None else row["openapi_spec"]
+        credential_type = b.credential_type if b.credential_type is not None else row["credential_type"]
+        status_val = b.status if b.status is not None else row["status"]
+        enc_creds = encrypt(b.credentials) if b.credentials is not None else row["encrypted_creds"]
+
+        updated = await conn.fetchrow(
+            """
+            UPDATE bank_connections
+            SET name = $2, mcp_url = $3, base_url = $4, openapi_spec = $5,
+                credential_type = $6, encrypted_creds = $7, status = $8, updated_at = NOW()
+            WHERE id = $1
+            RETURNING id, name, source_type, mcp_url, base_url, openapi_spec, credential_type, status, created_at, updated_at
+            """,
+            connection_id, name, mcp_url, base_url, openapi_spec, credential_type, enc_creds, status_val,
+        )
+
+        tools_rows = await conn.fetch(
+            "SELECT id, name, description, input_schema, exposed FROM tools WHERE bank_connection_id = $1",
+            connection_id,
+        )
+        tools_list = [
+            {
+                "id": str(t["id"]),
+                "name": t["name"],
+                "description": t["description"] or "",
+                "input_schema": json.loads(t["input_schema"]) if isinstance(t["input_schema"], str) else (t["input_schema"] or {}),
+                "exposed": t["exposed"],
+            }
+            for t in tools_rows
+        ]
+
+    await cache_bank_connections()
+    await cache_tool_routing()
+    await publish_config_update("connection", connection_id)
+
+    return BankConnectionResponse(
+        id=updated["id"], name=updated["name"], source_type=updated["source_type"],
+        mcp_url=updated["mcp_url"], base_url=updated["base_url"], openapi_spec=updated["openapi_spec"],
+        credential_type=updated["credential_type"], status=updated["status"],
+        created_at=updated["created_at"], updated_at=updated["updated_at"],
+        tool_count=len(tools_list), tools=tools_list,
     )
 
 

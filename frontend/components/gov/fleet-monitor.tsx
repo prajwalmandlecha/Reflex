@@ -55,33 +55,37 @@ export function FleetMonitor({
   }, [activityFeed]);
 
   // Spend trajectory — REAL cumulative spend built from the activity feed's
-  // allow events (spend_delta_cents), bucketed over the last 24h. No simulation.
+  // allow events (spend_delta_cents) within the LAST 24h only, bucketed per 2h.
+  // Events older than the window are excluded so stale spend isn't mis-bucketed
+  // onto the axis. X labels are real clock times, not "0h/8h/…" offsets.
   const spendTrajectory = useMemo(() => {
     const totalCap = instances.reduce((s, i) => s + i.capToday, 0);
     const now = Date.now();
     const bucketMs = 2 * 60 * 60 * 1000; // 2h buckets over 24h
     const buckets = 12;
+    const windowStart = now - buckets * bucketMs; // 24h ago
 
-    // Collect real spend events with timestamps
+    // Collect real spend events INSIDE the 24h window, with timestamps.
     const spendEvents = activityFeed
       .filter((e) => e.decision === 'allow')
       .map((e) => ({
         t: new Date(e.timestamp).getTime(),
         cents: (e as any).spend_delta_cents ?? (e as any).spendDeltaCents ?? 0,
       }))
-      .filter((e) => !isNaN(e.t) && e.cents > 0)
+      .filter((e) => !isNaN(e.t) && e.cents > 0 && e.t >= windowStart)
       .sort((a, b) => a.t - b.t);
 
     const points: { label: string; spend: number; cap: number }[] = [];
     let cumulative = 0;
     for (let b = buckets; b >= 0; b--) {
       const bucketEnd = now - b * bucketMs;
-      // Add all spend events up to this bucket boundary
+      // Add spend events that occurred up to this bucket boundary (within window).
       while (spendEvents.length && spendEvents[0].t <= bucketEnd) {
         cumulative += spendEvents.shift()!.cents;
       }
+      const d = new Date(bucketEnd);
       points.push({
-        label: `${(buckets - b) * 2}h`,
+        label: d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' }),
         spend: Math.round(cumulative / 100), // cents → dollars
         cap: totalCap,
       });

@@ -8,6 +8,7 @@ from app.models.policy import (
     PolicyCreate, PolicyResponse,
     PolicyUpdate, PolicyValidateRequest, PolicyValidateResponse,
     PolicyTestInputRequest, PolicyTestInputResponse,
+    PolicyDryRunRequest, PolicyDryRunResult,
 )
 from app.services.config_propagation import cache_active_policies, publish_config_update
 from app.services.policy_engine import validate_rego, evaluate_rego_testcase, visual_rules_to_rego
@@ -38,6 +39,38 @@ async def list_policies():
             updated_at=r["updated_at"],
         ))
     return res
+
+
+# NOTE: registered BEFORE /{policy_id} so FastAPI doesn't capture "changelog"
+# as an integer policy_id (routes match in registration order).
+@router.get("/changelog")
+async def get_policy_changelog(policy_id: int | None = None, limit: int = 100):
+    """Expose the policy_changelog audit trail (written on every mutation but
+    previously never readable)."""
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        if policy_id is not None:
+            rows = await conn.fetch(
+                "SELECT * FROM policy_changelog WHERE policy_id = $1 ORDER BY changed_at DESC LIMIT $2",
+                policy_id, limit,
+            )
+        else:
+            rows = await conn.fetch(
+                "SELECT * FROM policy_changelog ORDER BY changed_at DESC LIMIT $1",
+                limit,
+            )
+    return [
+        {
+            "id": r["id"],
+            "policy_id": r["policy_id"],
+            "changed_by": r["changed_by"],
+            "change_type": r["change_type"],
+            "old_value": json.loads(r["old_value"]) if isinstance(r["old_value"], str) else r["old_value"],
+            "new_value": json.loads(r["new_value"]) if isinstance(r["new_value"], str) else r["new_value"],
+            "changed_at": r["changed_at"].isoformat() if r["changed_at"] else "",
+        }
+        for r in rows
+    ]
 
 
 @router.post("", response_model=PolicyResponse, status_code=status.HTTP_201_CREATED)
@@ -193,5 +226,83 @@ async def compile_visual_rules(payload: dict[str, Any]):
 async def test_policy_input(req: PolicyTestInputRequest):
     res = await evaluate_rego_testcase(req.rego_source, req.visual_rules, req.input_payload)
     return PolicyTestInputResponse(**res)
+
+
+@router.post("/dry-run", response_model=PolicyDryRunResult)
+async def dry_run_policy(req: PolicyDryRunRequest):
+    """Evaluate a candidate policy against recent audit-log decisions to show what
+    WOULD change if it were activated — without touching the live policy set.
+
+    Compares the candidate's decision against the recorded actual decision for
+    each sampled audit row and reports the flip counts."""
+    # Resolve the candidate Rego source.
+    rego_source = req.rego_source
+    pool = get_pool()
+    if not rego_source and req.policy_id is not None:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT rego_source FROM policies WHERE id = $1", req.policy_id)
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Policy ID {req.policy_id} not found")
+        rego_source = row["rego_source"]
+    if not rego_source:
+        raise HTTPException(status_code=400, detail="Provide rego_source or policy_id")
+
+    # Sample recent audit rows that carry enough context to re-evaluate.
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT agent_id, agent_class_id, action, params, decision
+            FROM audit_log
+            ORDER BY id DESC
+            LIMIT $1
+            """,
+            req.sample_size,
+        )
+
+    total = 0
+    allow_to_deny = 0
+    deny_to_allow = 0
+    samples: list[dict[str, Any]] = []
+
+    for r in rows:
+        params = json.loads(r["params"]) if isinstance(r["params"], str) else (r["params"] or {})
+        input_payload = {
+            "agent_id": r["agent_id"],
+            "agent_kind": r["agent_class_id"],
+            "action": r["action"],
+            "params": params,
+            "amount": params.get("amount", 0) if isinstance(params, dict) else 0,
+        }
+        try:
+            res = await evaluate_rego_testcase(rego_source, None, input_payload)
+        except Exception:
+            continue  # skip rows the candidate can't evaluate
+
+        candidate_allow = bool(res.get("allow", False))
+        actual_allow = r["decision"] == "allow"
+        total += 1
+
+        if actual_allow and not candidate_allow:
+            allow_to_deny += 1
+        elif not actual_allow and candidate_allow:
+            deny_to_allow += 1
+        else:
+            continue  # no change
+
+        if len(samples) < 20:
+            samples.append({
+                "agent_id": r["agent_id"],
+                "action": r["action"],
+                "actual": "allow" if actual_allow else "deny",
+                "candidate": "allow" if candidate_allow else "deny",
+            })
+
+    return PolicyDryRunResult(
+        total_evaluated=total,
+        changes_count=allow_to_deny + deny_to_allow,
+        allowed_to_denied=allow_to_deny,
+        denied_to_allowed=deny_to_allow,
+        diff_samples=samples,
+    )
 
 

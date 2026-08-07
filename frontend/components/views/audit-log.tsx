@@ -109,24 +109,12 @@ export function AuditLogView({ entries }: { entries: AuditLogEntry[] }) {
           </Button>
 
           <div className="flex items-center gap-2">
+            {/* Server-side export: full audit log (up to 5000 rows), properly
+                CSV-escaped by the backend — not limited to on-screen rows. */}
             <Button
               onClick={() => {
-                const headers = ['ID', 'Timestamp', 'Type', 'Agent', 'Action', 'Outcome', 'Reason', 'Operator'];
-                const rows = filtered.map((e) => [
-                  e.id,
-                  e.timestamp,
-                  e.entryType || 'action',
-                  e.agentId,
-                  `"${(e.action || '').replace(/"/g, '""')}"`,
-                  e.decision,
-                  `"${(e.reason || '').replace(/"/g, '""')}"`,
-                  e.operator || '-',
-                ]);
-                const csvStr = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-                const blob = new Blob([csvStr], { type: 'text/csv;charset=utf-8;' });
-                const url = URL.createObjectURL(blob);
                 const link = document.createElement('a');
-                link.href = url;
+                link.href = api.getAuditExportUrl();
                 link.setAttribute('download', `audit_log_${new Date().toISOString().slice(0, 10)}.csv`);
                 document.body.appendChild(link);
                 link.click();

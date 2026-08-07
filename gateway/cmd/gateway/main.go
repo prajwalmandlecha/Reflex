@@ -5,6 +5,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -34,6 +36,15 @@ func main() {
 	slog.SetDefault(logger)
 
 	cfg := config.Load()
+
+	// Fail closed on the built-in dev JWT secret outside of explicit dev mode.
+	// A governance proxy that starts with a known shared secret is silently
+	// mintable by anyone — refuse to boot unless the operator opts into dev.
+	if cfg.JWTSecret == "dev-secret-2026" && os.Getenv("AGP_ENV") != "dev" {
+		logger.Error("refusing to start: JWT secret is the built-in dev default; set JWT_SECRET (and JWT_ISSUER) or AGP_ENV=dev to proceed")
+		os.Exit(1)
+	}
+
 	logger.Info("starting AGP gateway",
 		"mcp_port", cfg.MCPPort,
 		"metrics_port", cfg.MetricsPort,
@@ -104,10 +115,11 @@ func main() {
 	)
 	logger.Info("MCP Security Interceptor Proxy initialized", "targets", cfg.MCPTargets)
 
-	// Load OpenAPI virtual targets from the bank-connection cache and keep them
-	// hot-reloaded on connection config changes (G7).
+	// Load OpenAPI virtual targets, tool routing, and native-MCP targets from the
+	// bank-connection cache, and keep them hot-reloaded on config changes (G7).
 	mcpInterceptor.LoadOpenAPISpecs(ctx)
 	mcpInterceptor.LoadToolRouting(ctx)
+	mcpInterceptor.LoadNativeTargets(ctx)
 	go mcpInterceptor.SubscribeConnectionUpdates(ctx)
 
 	// --- Chi Router ---
@@ -122,21 +134,46 @@ func main() {
 		w.Write([]byte(`{"status":"ok","service":"agp-gateway"}`))
 	})
 
+	// Audit chain integrity verification — recomputes every entry_hash and
+	// checks linkage. Operator-facing; the backend exposes its own /api/v1/audit/verify.
+	r.Get("/v1/audit/verify", func(w http.ResponseWriter, r *http.Request) {
+		res, err := audit.Verify(r.Context(), pool)
+		w.Header().Set("Content-Type", "application/json")
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprintf(w, `{"valid":false,"error":%q}`, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(res)
+	})
+
 	// MCP Transparent Reverse Proxy — single /mcp endpoint for all agents.
 	// Gateway routes to the correct downstream based on tool name.
 	r.Mount("/mcp", mcpInterceptor)
 
 	// --- HTTP Servers ---
+	// Hardened against Slowloris / resource exhaustion: explicit read/write/
+	// idle timeouts and a header size cap. The MCP server tolerates longer
+	// writes for downstream streaming; the metrics server is tight.
 	mcpHTTP := &http.Server{
-		Addr:    ":" + cfg.MCPPort,
-		Handler: r,
+		Addr:           ":" + cfg.MCPPort,
+		Handler:        r,
+		ReadTimeout:    15 * time.Second,
+		WriteTimeout:   60 * time.Second,
+		IdleTimeout:    120 * time.Second,
+		MaxHeaderBytes: 1 << 20, // 1 MiB
 	}
 
 	metricsMux := http.NewServeMux()
 	metricsMux.Handle("/metrics", promhttp.Handler())
 	metricsHTTP := &http.Server{
-		Addr:    ":" + cfg.MetricsPort,
-		Handler: metricsMux,
+		Addr:           ":" + cfg.MetricsPort,
+		Handler:        metricsMux,
+		ReadTimeout:    5 * time.Second,
+		WriteTimeout:   10 * time.Second,
+		IdleTimeout:    30 * time.Second,
+		MaxHeaderBytes: 1 << 20,
 	}
 
 	// --- Start ---

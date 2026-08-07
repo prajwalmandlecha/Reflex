@@ -306,6 +306,12 @@ export const api = {
     return request<any>("/api/v1/audit/verify");
   },
 
+  // Server-side export: full audit log (up to 5000 rows), properly CSV-escaped
+  // by the backend — not limited to the rows currently rendered on screen.
+  getAuditExportUrl(): string {
+    return `${API_BASE}/api/v1/audit/export?format=csv`;
+  },
+
   async getAuditLog(params?: {
     agentId?: string;
     agentClassId?: string;

@@ -120,6 +120,22 @@ export function AppShell() {
 
   const { history: wsAlerts } = useWebSocket<AlertItem>('/ws/alerts');
   const { history: wsActivities, isConnected: isActivityWsConnected } = useWebSocket<ActivityEvent>('/ws/activity');
+  const { history: wsFleet } = useWebSocket<any>('/ws/fleet');
+
+  // Fleet channel: operator-initiated stops/resumes arrive here in real time
+  // (backend publishes them to gateway:events → /ws/fleet). Refresh fleet status
+  // and the agent list immediately instead of waiting for the 30s poll.
+  useEffect(() => {
+    if (wsFleet.length > 0) {
+      api.getFleetStatus().then((res) => {
+        if (res && res.status) setFleetStatus(res.status);
+      }).catch(() => {});
+      api.getAgentInstances().then(setInstances).catch(() => {});
+      api.getStopEvents().then((evs) => {
+        if (Array.isArray(evs)) setStopEvents(evs);
+      }).catch(() => {});
+    }
+  }, [wsFleet]);
 
   useEffect(() => {
     if (wsAlerts.length > 0) {

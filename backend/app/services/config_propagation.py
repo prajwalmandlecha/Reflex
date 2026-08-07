@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 from typing import Any
@@ -10,6 +11,23 @@ from app.database import get_pool
 from app.redis_client import get_redis
 
 logger = logging.getLogger(__name__)
+
+
+def _non_fatal_cache(fn):
+    """Cache writes must not 500 a request after the DB write already committed.
+
+    A Redis outage degrades the gateway's fast-path config lookup (it falls back
+    to the backend /internal/config endpoint and its 30s Postgres poll), so log
+    the failure and let the request succeed rather than leaving DB and operator
+    out of sync."""
+    @functools.wraps(fn)
+    async def wrapper(*args, **kwargs):
+        try:
+            return await fn(*args, **kwargs)
+        except Exception as e:
+            logger.error("%s failed (non-fatal, cache will re-converge): %s", fn.__name__, e)
+            return None
+    return wrapper
 
 
 async def bump_config_version() -> int:
@@ -28,14 +46,23 @@ async def bump_config_version() -> int:
 
 
 async def publish_config_update(change_type: str, item_id: str):
-    """Notify subscribers (gateway) of a config update via Redis pub/sub."""
-    ver = await bump_config_version()
-    redis = get_redis()
-    payload = json.dumps({"type": change_type, "id": item_id, "version": ver})
-    await redis.publish("config:updates", payload)
-    logger.info("Published config:update type=%s id=%s version=%d", change_type, item_id, ver)
+    """Notify subscribers (gateway) of a config update via Redis pub/sub.
+
+    Non-fatal: a Redis outage must not 500 a request AFTER the DB write already
+    committed (which would leave the operator thinking the change failed while
+    the DB says it succeeded). Log the failure; the gateway's 30s Postgres poll
+    and the next successful publish will re-converge the cache."""
+    try:
+        ver = await bump_config_version()
+        redis = get_redis()
+        payload = json.dumps({"type": change_type, "id": item_id, "version": ver})
+        await redis.publish("config:updates", payload)
+        logger.info("Published config:update type=%s id=%s version=%d", change_type, item_id, ver)
+    except Exception as e:
+        logger.error("config:update publish FAILED (DB already committed) type=%s id=%s: %s", change_type, item_id, e)
 
 
+@_non_fatal_cache
 async def cache_agent_class(class_id: str):
     """Compute and cache AgentClass config in Redis."""
     pool = get_pool()
@@ -60,6 +87,7 @@ async def cache_agent_class(class_id: str):
         await redis.set(f"agp:class:{class_id}", json.dumps(data))
 
 
+@_non_fatal_cache
 async def cache_agent_instance(agent_id: str):
     """Compute effective instance config (merged class + instance overrides) and cache in Redis."""
     pool = get_pool()
@@ -102,6 +130,7 @@ async def cache_agent_instance(agent_id: str):
         await redis.set(f"agp:inst:{agent_id}", json.dumps(data))
 
 
+@_non_fatal_cache
 async def cache_active_policies():
     """Concatenate all active Rego policies and store in Redis."""
     pool = get_pool()
@@ -115,6 +144,7 @@ async def cache_active_policies():
         await redis.set("agp:policy:active", combined)
 
 
+@_non_fatal_cache
 async def cache_bank_connections():
     """Cache bank connection endpoints map in Redis."""
     pool = get_pool()
@@ -138,6 +168,7 @@ async def cache_bank_connections():
         await redis.set("agp:connections", json.dumps(mapping))
 
 
+@_non_fatal_cache
 async def cache_tool_routing():
     """Cache tool_name → bank_connection_id mapping in Redis for gateway routing."""
     pool = get_pool()

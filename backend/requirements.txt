@@ -8,3 +8,4 @@ cryptography==44.0.0
 PyJWT==2.10.0
 httpx==0.28.0
 python-multipart==0.0.20
+pyyaml==6.0.2

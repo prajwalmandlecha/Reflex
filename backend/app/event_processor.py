@@ -109,6 +109,10 @@ class EventProcessor:
         self.metrics_buffer = MetricsBuffer()
         self._running = False
         self._tasks: list[asyncio.Task] = []
+        # Throttle heartbeat writes: agent_id -> last heartbeat epoch. Avoids a
+        # DB write per event under high throughput.
+        self._last_heartbeat: dict[str, float] = {}
+        self._heartbeat_interval = 15.0  # seconds
 
     async def start(self):
         self._running = True
@@ -154,6 +158,10 @@ class EventProcessor:
                 # 2. Accumulate metrics
                 self.metrics_buffer.add(event)
 
+                # 2b. Record agent liveness (heartbeat) so last_seen reflects real
+                # activity, not just the last config edit. Throttled per agent.
+                await self._record_heartbeat(event)
+
                 # 3. Critical alerts
                 if self._is_critical(event):
                     await ws_manager.broadcast("alerts", event)
@@ -172,6 +180,29 @@ class EventProcessor:
         finally:
             await pubsub.unsubscribe("gateway:events")
             await pubsub.close()
+
+    async def _record_heartbeat(self, event: dict):
+        """Touch agent_instances.updated_at on decision events so last_seen tracks
+        real agent activity. Throttled to one write per agent per interval."""
+        if event.get("type") != "decision":
+            return
+        agent_id = event.get("agent_id")
+        if not agent_id:
+            return
+        now = time.time()
+        if now - self._last_heartbeat.get(agent_id, 0) < self._heartbeat_interval:
+            return
+        self._last_heartbeat[agent_id] = now
+        try:
+            from app.database import get_pool
+            pool = get_pool()
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE agent_instances SET updated_at = NOW() WHERE id = $1",
+                    agent_id,
+                )
+        except Exception as e:
+            logger.debug("heartbeat update failed for %s: %s", agent_id, e)
 
     async def _metrics_push_loop(self):
         """Push aggregated metrics snapshot to /ws/metrics clients every 2 seconds."""
