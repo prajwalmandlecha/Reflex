@@ -45,9 +45,11 @@ const sourceTypeLabel: Record<string, string> = {
 
 export function BankConnectionsView({
   connections,
+  isLoading = false,
   onRefresh,
 }: {
   connections: BankConnection[];
+  isLoading?: boolean;
   onRefresh?: () => void;
 }) {
   const [showWizard, setShowWizard] = useState(false);
@@ -224,6 +226,16 @@ export function BankConnectionsView({
             </Panel>
           ))}
         </div>
+      ) : isLoading ? (
+        <Panel className="p-12 text-center">
+          <Loader2 className="mx-auto h-8 w-8 animate-spin text-accent/70 mb-3" />
+          <h3 className="font-mono text-sm uppercase tracking-widest text-ink-primary font-semibold">
+            Loading Bank Connections
+          </h3>
+          <p className="mt-1 font-sans text-xs text-ink-secondary max-w-sm mx-auto">
+            Fetching registered MCP servers and OpenAPI connections.
+          </p>
+        </Panel>
       ) : (
         <Panel className="p-12 text-center">
           <Server className="mx-auto h-8 w-8 text-ink-secondary/40 mb-3" />

@@ -251,7 +251,7 @@ func splitPolicySources(blob string) []string {
 // rewritePackage replaces ONLY the first `package <path>` line with
 // `package <newPath>`, leaving the rest of the source byte-for-byte intact.
 func rewritePackage(src, newPath string) string {
-	lines := strings.SplitN(src, "\n", -1)
+	lines := strings.Split(src, "\n")
 	for i, ln := range lines {
 		t := strings.TrimSpace(ln)
 		if strings.HasPrefix(t, "package ") {

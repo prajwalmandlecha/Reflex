@@ -3,6 +3,7 @@ package config
 
 import (
 	"encoding/json"
+	"log/slog"
 	"os"
 	"strconv"
 	"time"
@@ -44,7 +45,9 @@ type Config struct {
 func Load() *Config {
 	targets := make(map[string]string)
 	if targetsJSON := os.Getenv("MCP_TARGETS"); targetsJSON != "" {
-		_ = json.Unmarshal([]byte(targetsJSON), &targets)
+		if err := json.Unmarshal([]byte(targetsJSON), &targets); err != nil {
+			slog.Warn("failed to parse MCP_TARGETS, using defaults only", "error", err)
+		}
 	}
 
 	if _, ok := targets["default"]; !ok {

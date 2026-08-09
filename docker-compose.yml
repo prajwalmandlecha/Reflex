@@ -84,6 +84,21 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: "production"
+    networks:
+      - frontend
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
 networks:
   frontend:
   backend:

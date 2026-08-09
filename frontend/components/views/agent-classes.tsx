@@ -112,7 +112,7 @@ export function AgentClassesView({
                             key={t}
                             title={isDown ? 'Currently unreachable (bank connection down)' : undefined}
                             className={isDown
-                              ? 'border border-signal-caution/30 bg-signal-caution/10 px-1.5 py-0.5 font-mono text-[10px] text-signal-caution rounded line-through decoration-signal-caution/60'
+                              ? 'border border-signal-caution/30 bg-signal-caution/10 px-1.5 py-0.5 font-mono text-[10px] text-signal-caution rounded'
                               : 'border border-cyan-500/20 bg-cyan-500/10 px-1.5 py-0.5 font-mono text-[10px] text-cyan-400 rounded'
                             }
                           >

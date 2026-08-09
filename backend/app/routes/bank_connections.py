@@ -1,25 +1,27 @@
 """Bank Connections routes (/api/v1/connections)."""
 
 import asyncio
+from collections import defaultdict
 import json
 from fastapi import APIRouter, HTTPException, status
 from app.crypto import encrypt
 from app.database import get_pool
 from app.models.bank_connection import BankConnectionCreate, BankConnectionResponse, BankConnectionUpdate
-from app.services.config_propagation import cache_bank_connections, cache_tool_routing, publish_config_update
+from app.redis_client import get_redis
+from app.services.config_propagation import cache_bank_connections, cache_bank_connections_list, cache_tool_routing, publish_config_update
 from app.services.mcp_discovery import fetch_mcp_tools
 from app.services.openapi_ingestion import parse_openapi_spec
 
 router = APIRouter(prefix="/api/v1/connections", tags=["Bank Connections"])
 
 
-async def _probe_connection(source_type: str, mcp_url: str | None, openapi_spec: str | None):
+async def _probe_connection(source_type: str, mcp_url: str | None, openapi_spec: str | None, timeout: float = 1.5):
     """Network-only probe (no DB conn held, safe to run concurrently).
 
     Returns (fresh_status, discovered_tools, with_ops). Tools is None when the
     probe failed, so callers don't wipe previously-discovered tools."""
     if source_type == "native_mcp" and mcp_url:
-        mcp_tools = await fetch_mcp_tools(mcp_url)
+        mcp_tools = await fetch_mcp_tools(mcp_url, timeout=timeout)
         return ("connected" if mcp_tools is not None else "error"), mcp_tools, False
     if source_type == "openapi" and openapi_spec:
         _, openapi_tools = parse_openapi_spec(openapi_spec)
@@ -29,62 +31,48 @@ async def _probe_connection(source_type: str, mcp_url: str | None, openapi_spec:
 
 @router.get("", response_model=list[BankConnectionResponse])
 async def list_bank_connections():
+    redis = get_redis()
+    cached = await redis.get("agp:bank_connections:list")
+    if cached:
+        try:
+            return json.loads(cached)
+        except json.JSONDecodeError:
+            pass
+
     pool = get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
             SELECT b.id, b.name, b.source_type, b.mcp_url, b.base_url, b.openapi_spec, b.credential_type,
-                   b.status, b.created_at, b.updated_at, COUNT(t.id)::int AS tool_count
+                   b.status, b.created_at, b.updated_at
             FROM bank_connections b
-            LEFT JOIN tools t ON b.id = t.bank_connection_id
-            GROUP BY b.id
             ORDER BY b.name ASC
             """
         )
-
-        # Re-probe all connections concurrently (network I/O, no DB conn held) so a
-        # down upstream flips to 'error' immediately instead of showing a stale
-        # 'connected'. DB writes happen sequentially afterward on the shared conn.
-        probe_results = await asyncio.gather(
-            *(_probe_connection(r["source_type"], r["mcp_url"], r["openapi_spec"]) for r in rows)
+        tools_rows = await conn.fetch(
+            "SELECT id, bank_connection_id, name, description, input_schema, exposed FROM tools"
         )
 
-        status_by_id: dict[str, str] = {}
-        for r, (fresh, tools, with_ops) in zip(rows, probe_results):
-            if fresh is None:
-                status_by_id[r["id"]] = r["status"] or "pending"
-                continue
-            if tools:
-                await _replace_tools(conn, r["id"], tools, with_ops=with_ops)
-            await conn.execute(
-                "UPDATE bank_connections SET status = $2, updated_at = NOW() WHERE id = $1",
-                r["id"], fresh,
-            )
-            status_by_id[r["id"]] = fresh
+        tools_by_conn = defaultdict(list)
+        for t in tools_rows:
+            tools_by_conn[t["bank_connection_id"]].append({
+                "id": str(t["id"]),
+                "name": t["name"],
+                "description": t["description"] or "",
+                "input_schema": json.loads(t["input_schema"]) if isinstance(t["input_schema"], str) else (t["input_schema"] or {}),
+                "exposed": t["exposed"],
+            })
 
         res = []
         for r in rows:
-            tools_rows = await conn.fetch(
-                "SELECT id, name, description, input_schema, exposed FROM tools WHERE bank_connection_id = $1",
-                r["id"],
-            )
-            tools_list = [
-                {
-                    "id": str(t["id"]),
-                    "name": t["name"],
-                    "description": t["description"] or "",
-                    "input_schema": json.loads(t["input_schema"]) if isinstance(t["input_schema"], str) else (t["input_schema"] or {}),
-                    "exposed": t["exposed"],
-                }
-                for t in tools_rows
-            ]
+            conn_tools = tools_by_conn[r["id"]]
             res.append(
                 BankConnectionResponse(
                     id=r["id"], name=r["name"], source_type=r["source_type"],
                     mcp_url=r["mcp_url"], base_url=r["base_url"], openapi_spec=r["openapi_spec"],
-                    credential_type=r["credential_type"], status=status_by_id.get(r["id"], r["status"] or "pending"),
-                    created_at=r["created_at"], updated_at=r["updated_at"], tool_count=len(tools_list),
-                    tools=tools_list,
+                    credential_type=r["credential_type"], status=r["status"] or "pending",
+                    created_at=r["created_at"], updated_at=r["updated_at"], tool_count=len(conn_tools),
+                    tools=conn_tools,
                 )
             )
     return res
@@ -178,6 +166,7 @@ async def create_bank_connection(b: BankConnectionCreate):
             discovered_tools = []
 
     await cache_bank_connections()
+    await cache_bank_connections_list()
     await cache_tool_routing()
     await publish_config_update("connection", b.id)
 
@@ -219,18 +208,16 @@ async def sync_bank_connection(connection_id: str):
         else:
             status_val = "pending"
 
-        updated = await conn.fetchrow(
-            "UPDATE bank_connections SET status = $2, updated_at = NOW() WHERE id = $1 RETURNING created_at, updated_at",
-            connection_id, status_val,
-        )
-
+        existing_tools = []
         if not discovered_tools:
-            # Probe failed or returned nothing — report the tools we still have.
+            # Preserve a usable connection when discovery is temporarily slow or unavailable.
+            # If we still have previously discovered tools, the operator needs to see that
+            # the connection is usable even if the latest probe failed.
             tools_rows = await conn.fetch(
                 "SELECT id, name, description, input_schema, exposed FROM tools WHERE bank_connection_id = $1",
                 connection_id,
             )
-            discovered_tools = [
+            existing_tools = [
                 {
                     "id": str(t["id"]),
                     "name": t["name"],
@@ -240,8 +227,17 @@ async def sync_bank_connection(connection_id: str):
                 }
                 for t in tools_rows
             ]
+            discovered_tools = existing_tools
+            if existing_tools:
+                status_val = "connected"
+
+        updated = await conn.fetchrow(
+            "UPDATE bank_connections SET status = $2, updated_at = NOW() WHERE id = $1 RETURNING created_at, updated_at",
+            connection_id, status_val,
+        )
 
     await cache_bank_connections()
+    await cache_bank_connections_list()
     await cache_tool_routing()
     await publish_config_update("connection", connection_id)
 
@@ -300,6 +296,7 @@ async def update_bank_connection(connection_id: str, b: BankConnectionUpdate):
         ]
 
     await cache_bank_connections()
+    await cache_bank_connections_list()
     await cache_tool_routing()
     await publish_config_update("connection", connection_id)
 
@@ -319,6 +316,7 @@ async def delete_all_connections():
     async with pool.acquire() as conn:
         await conn.execute("DELETE FROM bank_connections")
     await cache_bank_connections()
+    await cache_bank_connections_list()
     await cache_tool_routing()
     await publish_config_update("connection", "all")
     return {"status": "cleared", "message": "All bank connections and tools deleted successfully"}
@@ -332,6 +330,7 @@ async def delete_bank_connection(connection_id: str):
         if res == "DELETE 0":
             raise HTTPException(status_code=404, detail=f"Bank connection '{connection_id}' not found")
     await cache_bank_connections()
+    await cache_bank_connections_list()
     await cache_tool_routing()
     await publish_config_update("connection", connection_id)
     return None
@@ -390,6 +389,7 @@ async def register_openapi_spec(connection_id: str, payload: dict):
             inserted_tools.append(dict(row))
 
     await cache_bank_connections()
+    await cache_bank_connections_list()
     await cache_tool_routing()
     await publish_config_update("openapi", connection_id)
 

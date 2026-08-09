@@ -189,6 +189,55 @@ async def cache_bank_connections():
 
 
 @_non_fatal_cache
+async def cache_bank_connections_list():
+    """Cache the full bank-connections list response for fast UI reads."""
+    pool = get_pool()
+    redis = get_redis()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT b.id, b.name, b.source_type, b.mcp_url, b.base_url, b.openapi_spec, b.credential_type,
+                   b.status, b.created_at, b.updated_at
+            FROM bank_connections b
+            ORDER BY b.name ASC
+            """
+        )
+        tools_rows = await conn.fetch(
+            "SELECT id, bank_connection_id, name, description, input_schema, exposed FROM tools"
+        )
+
+    tools_by_conn: dict[str, list[dict[str, Any]]] = {}
+    for t in tools_rows:
+        tools_by_conn.setdefault(t["bank_connection_id"], []).append({
+            "id": str(t["id"]),
+            "name": t["name"],
+            "description": t["description"] or "",
+            "input_schema": json.loads(t["input_schema"]) if isinstance(t["input_schema"], str) else (t["input_schema"] or {}),
+            "exposed": t["exposed"],
+        })
+
+    payload = []
+    for r in rows:
+        conn_tools = tools_by_conn.get(r["id"], [])
+        payload.append({
+            "id": r["id"],
+            "name": r["name"],
+            "source_type": r["source_type"],
+            "mcp_url": r["mcp_url"],
+            "base_url": r["base_url"],
+            "openapi_spec": r["openapi_spec"],
+            "credential_type": r["credential_type"],
+            "status": r["status"] or "pending",
+            "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+            "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
+            "tool_count": len(conn_tools),
+            "tools": conn_tools,
+        })
+
+    await redis.set("agp:bank_connections:list", json.dumps(payload))
+
+
+@_non_fatal_cache
 async def cache_tool_routing():
     """Cache tool_name → bank_connection_id mapping in Redis for gateway routing."""
     pool = get_pool()

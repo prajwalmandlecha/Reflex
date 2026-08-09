@@ -91,6 +91,7 @@ export function AppShell() {
   const [hideHelpOnStartup, setHideHelpOnStartup] = useState(false);
   const [isVisible, setIsVisible] = useState(true);
   const [apiError, setApiError] = useState<string | null>(null);
+  const [connectionsLoading, setConnectionsLoading] = useState(false);
 
   // Record an API failure so the operator sees it instead of a silent empty
   // dashboard. Stores a readable message; cleared on the next successful load.
@@ -231,7 +232,16 @@ export function AppShell() {
         api.getPolicies().then(setPolicies).catch(() => {});
         break;
       case 'bank':
-        api.getBankConnections().then(setConnections).catch(() => {});
+        // Bank connections are expensive to re-poll because the backend can
+        // block on upstream discovery. Only fetch when we don't already have a
+        // populated snapshot; manual refresh still goes through reloadData().
+        if (connections.length === 0) {
+          setConnectionsLoading(true);
+          api.getBankConnections()
+            .then(setConnections)
+            .catch(() => {})
+            .finally(() => setConnectionsLoading(false));
+        }
         break;
       case 'activity':
         // Activity is primarily WebSocket-driven; light poll for catch-up
@@ -261,7 +271,10 @@ export function AppShell() {
     }).catch(noteApiError('Backend unreachable'));
     api.getAgentInstances().then(setInstances).catch(noteApiError('Failed to load agents'));
     api.getAgentClasses().then(setClasses).catch(noteApiError('Failed to load classes'));
-    api.getBankConnections().then(setConnections).catch(noteApiError('Failed to load connections'));
+    api.getBankConnections()
+      .then(setConnections)
+      .catch(noteApiError('Failed to load connections'))
+      .finally(() => setConnectionsLoading(false));
     api.getPolicies().then(setPolicies).catch(noteApiError('Failed to load policies'));
     api.getAuditLog().then(setAuditEntries).catch(noteApiError('Failed to load audit log'));
     api.getDashboardActivity().then((act) => {
@@ -468,7 +481,7 @@ export function AppShell() {
           )}
           {view === 'classes' && <AgentClassesView classes={classes} instances={instances} onRefresh={reloadData} />}
           {view === 'policies' && <PoliciesView policies={policies} classes={classes} instances={instances} onRefresh={reloadData} />}
-          {view === 'bank' && <BankConnectionsView connections={connections} onRefresh={reloadData} />}
+          {view === 'bank' && <BankConnectionsView connections={connections} isLoading={connectionsLoading} onRefresh={reloadData} />}
           {view === 'activity' && <ActivityView activityFeed={activityFeed} classes={classes} isStreamConnected={isActivityWsConnected} />}
           {view === 'performance' && <PerformanceView />}
           {view === 'audit' && <AuditLogView entries={auditEntries} />}

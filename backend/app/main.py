@@ -16,6 +16,7 @@ from app.routes import (
 )
 from app.services.config_propagation import (
     cache_active_policies, cache_bank_connections, cache_tool_routing,
+    cache_bank_connections_list,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -33,6 +34,7 @@ async def lifespan(app: FastAPI):
     try:
         await cache_active_policies()
         await cache_bank_connections()
+        await cache_bank_connections_list()
         await cache_tool_routing()
         logger.info("Pre-populated Redis cache with active policies, connections, and tool routing")
     except Exception as e:

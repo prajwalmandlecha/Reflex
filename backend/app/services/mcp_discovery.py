@@ -7,7 +7,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
-async def fetch_mcp_tools(mcp_url: str) -> list[dict] | None:
+async def fetch_mcp_tools(mcp_url: str, timeout: float = 2.0) -> list[dict] | None:
     """Perform MCP JSON-RPC initialize and tools/list request to discover tools and input schemas.
 
     Returns the discovered tool list on success (possibly empty), or None when the
@@ -24,7 +24,7 @@ async def fetch_mcp_tools(mcp_url: str) -> list[dict] | None:
             "Accept": "application/json, text/event-stream",
         }
 
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             # 1. Send initialize
             init_payload = {
                 "jsonrpc": "2.0",

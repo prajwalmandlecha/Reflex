@@ -46,7 +46,7 @@ func (c *Checker) CheckStatic(cfg *configcache.AgentConfig, toolName string) (bo
 				endMin := parseMinutes(endStr)
 
 				if startMin >= 0 && endMin >= 0 {
-					if currentMinutes < startMin || currentMinutes > endMin {
+					if !withinWindow(currentMinutes, startMin, endMin) {
 						return false, fmt.Sprintf("action '%s' is restricted outside business hours (%s to %s UTC)", toolName, startStr, endStr)
 					}
 				}
