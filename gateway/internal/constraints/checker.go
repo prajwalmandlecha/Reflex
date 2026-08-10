@@ -69,9 +69,9 @@ func withinWindow(current, startMin, endMin int) bool {
 }
 
 // CounterEntries builds the stateful counter increments (sliding-window rate
-// limit, cumulative daily spend cap) for a tool call as spend.Entry values.
-// They are NOT applied here — the caller commits them atomically alongside
-// the hierarchical spend scopes in one Lua script.
+// limit) for a tool call as spend.Entry values. They are NOT applied here —
+// the caller commits them atomically alongside the per-param spend caps and
+// hierarchical spend scopes in one Lua script.
 func (c *Checker) CounterEntries(cfg *configcache.AgentConfig, toolName string, args map[string]any) []spend.Entry {
 	toolConstraints := toolConstraintsFor(cfg, toolName)
 	if toolConstraints == nil {
@@ -123,28 +123,6 @@ func (c *Checker) CounterEntries(cfg *configcache.AgentConfig, toolName string, 
 		}
 	}
 
-	// 2. Cumulative Daily Spend Cap (Sliding 24-Hour Aggregate Monetary Limit)
-	if spendVal, ok := toolConstraints["cumulative_spend_cap"]; ok {
-		if spendMap, ok := spendVal.(map[string]any); ok {
-			maxDailyCap := toFloat(spendMap["max_daily_cents"])
-			if maxDailyCap > 0 {
-				// Extract the monetary amount using the tool's DECLARED money
-				// fields (falls back to amount/amount_cents when none declared).
-				currentCallCents, _ := ExtractAmountCents(args, moneyParamsFrom(toolConstraints))
-				if currentCallCents > 0 {
-					dayBucket := time.Now().UTC().Format("2006-01-02")
-					entries = append(entries, spend.Entry{
-						Key:        fmt.Sprintf("spendcap:%s:%s", cfg.ID, dayBucket),
-						Amount:     currentCallCents,
-						Cap:        maxDailyCap,
-						TTLSeconds: 172800, // 48h comfortably covers the daily bucket
-						Label:      fmt.Sprintf("cumulative daily spend cap exceeded for agent '%s' ($%.2f daily cap limit)", cfg.ID, maxDailyCap/100.0),
-					})
-				}
-			}
-		}
-	}
-
 	return entries
 }
 
@@ -155,85 +133,128 @@ func toolConstraintsFor(cfg *configcache.AgentConfig, toolName string) map[strin
 	return cfg.EffectiveConstraints[toolName]
 }
 
-// MoneyParams returns the argument field names a tool has declared as carrying
-// monetary value (e.g. ["amount_cents"], ["attendee_share"]). Empty when the
-// tool has no declaration.
-func (c *Checker) MoneyParams(cfg *configcache.AgentConfig, toolName string) []string {
-	return moneyParamsFrom(toolConstraintsFor(cfg, toolName))
+// ParamRule is the per-parameter constraint block for a tool. Each declared
+// parameter can carry a per-call ceiling (Max) and/or time-windowed
+// accumulation caps (DailyCents, HourlyCents). This is the parameter-level
+// model: caps are scoped to a specific knob, not a vague tool-wide money sum,
+// so an agent with both deposit and withdraw tools gets each capped
+// independently (and sign-agnostically via absolute value).
+type ParamRule struct {
+	Max        float64 `json:"max"`         // per-call ceiling on |value| (major units)
+	DailyCents float64 `json:"daily_cents"` // accumulated |value| cap per day (cents)
+	HourlyCents float64 `json:"hourly_cents"` // accumulated |value| cap per hour (cents)
 }
 
-// RequiresAmount reports whether a tool is money-moving and therefore MUST
-// carry a parseable monetary value: true when it declares money_params or
-// configures a cumulative_spend_cap. The declared money fields are returned so
-// callers can produce a precise deny reason. This is what lets the gateway fail
-// closed instead of silently treating an unrecognized field as $0 spend.
-//
-// Schema-aware: a declared money field that is OPTIONAL in the tool's input
-// schema does NOT force fail-closed — a legitimate call may omit it (e.g. a
-// "scale" multiplier). Only REQUIRED money fields (or an unknown schema, which
-// we treat conservatively) fail closed when missing.
-func (c *Checker) RequiresAmount(cfg *configcache.AgentConfig, toolName string) (bool, []string) {
+// ParamRules returns the per-parameter constraint rules declared for a tool,
+// keyed by argument field name. Empty when the tool has no parameter caps.
+func (c *Checker) ParamRules(cfg *configcache.AgentConfig, toolName string) map[string]ParamRule {
 	tc := toolConstraintsFor(cfg, toolName)
 	if tc == nil {
-		return false, nil
+		return nil
 	}
-	mp := moneyParamsFrom(tc)
-	if len(mp) > 0 {
-		return c.moneyFieldRequired(cfg, toolName, mp), mp
+	raw, ok := tc["params"]
+	if !ok {
+		return nil
 	}
-	if sc, ok := tc["cumulative_spend_cap"].(map[string]any); ok {
-		if toFloat(sc["max_daily_cents"]) > 0 {
-			return true, mp
+	pm, ok := raw.(map[string]any)
+	if !ok {
+		return nil
+	}
+	out := make(map[string]ParamRule, len(pm))
+	for name, v := range pm {
+		vm, ok := v.(map[string]any)
+		if !ok {
+			continue
 		}
-	}
-	return false, mp
-}
-
-// moneyFieldRequired reports whether any declared money field is REQUIRED in
-// the tool's input schema. When the schema is unknown (no propagated schema),
-// it conservatively returns true so the gateway keeps failing closed rather
-// than silently metering $0.
-func (c *Checker) moneyFieldRequired(cfg *configcache.AgentConfig, toolName string, moneyParams []string) bool {
-	if cfg == nil || cfg.ToolSchemas == nil {
-		return true
-	}
-	ts, ok := cfg.ToolSchemas[toolName]
-	if !ok {
-		return true // unknown schema → conservative fail-closed
-	}
-	req := make(map[string]bool, len(ts.Required))
-	for _, f := range ts.Required {
-		req[f] = true
-	}
-	for _, f := range moneyParams {
-		if req[f] {
-			return true
-		}
-	}
-	return false
-}
-
-// moneyParamsFrom extracts the declared money_params string list from a tool's
-// constraint map, tolerating the []any shape produced by JSON decoding.
-func moneyParamsFrom(tc map[string]any) []string {
-	if tc == nil {
-		return nil
-	}
-	raw, ok := tc["money_params"]
-	if !ok {
-		return nil
-	}
-	arr, ok := raw.([]any)
-	if !ok {
-		return nil
-	}
-	out := make([]string, 0, len(arr))
-	for _, x := range arr {
-		if s, ok := x.(string); ok && strings.TrimSpace(s) != "" {
-			out = append(out, s)
+		out[name] = ParamRule{
+			Max:         toFloat(vm["max"]),
+			DailyCents:  toFloat(vm["daily_cents"]),
+			HourlyCents: toFloat(vm["hourly_cents"]),
 		}
 	}
 	return out
+}
+
+// CheckParamMax evaluates the stateless per-call parameter ceilings. For each
+// declared param with a Max, the call's value (absolute) must not exceed it.
+// Returns (ok, denyReason).
+func (c *Checker) CheckParamMax(cfg *configcache.AgentConfig, toolName string, args map[string]any) (bool, string) {
+	rules := c.ParamRules(cfg, toolName)
+	if len(rules) == 0 {
+		return true, ""
+	}
+	for name, rule := range rules {
+		if rule.Max <= 0 {
+			continue
+		}
+		v, ok := args[name]
+		if !ok {
+			continue // absent optional param — no ceiling to enforce
+		}
+		f, ok := toFloatOK(v)
+		if !ok {
+			continue // non-numeric — not a money value
+		}
+		if abs(f) > rule.Max {
+			return false, fmt.Sprintf("action '%s' denied: parameter '%s' value %.2f exceeds per-call cap %.2f", toolName, name, f, rule.Max)
+		}
+	}
+	return true, ""
+}
+
+// ParamCounterEntries builds the stateful per-parameter accumulation counters
+// (daily/hourly) as spend.Entry values. Each declared param with a daily or
+// hourly cap produces its own counter keyed by tool+param+window, so caps are
+// scoped to the specific knob. Committed atomically by the caller.
+func (c *Checker) ParamCounterEntries(cfg *configcache.AgentConfig, toolName string, args map[string]any) []spend.Entry {
+	rules := c.ParamRules(cfg, toolName)
+	if len(rules) == 0 {
+		return nil
+	}
+	var entries []spend.Entry
+	now := time.Now().UTC()
+	for name, rule := range rules {
+		v, ok := args[name]
+		if !ok {
+			continue
+		}
+		f, ok := toFloatOK(v)
+		if !ok {
+			continue
+		}
+		cents := abs(f) * 100.0
+		if cents <= 0 {
+			continue
+		}
+		if rule.DailyCents > 0 {
+			day := now.Format("2006-01-02")
+			entries = append(entries, spend.Entry{
+				Key:        fmt.Sprintf("paramcap:%s:%s:%s:%s", cfg.ID, toolName, name, day),
+				Amount:     cents,
+				Cap:        rule.DailyCents,
+				TTLSeconds: 172800,
+				Label:      fmt.Sprintf("daily cap exceeded for parameter '%s' on tool '%s' ($%.2f daily cap)", name, toolName, rule.DailyCents/100.0),
+			})
+		}
+		if rule.HourlyCents > 0 {
+			hour := now.Format("2006010215")
+			entries = append(entries, spend.Entry{
+				Key:        fmt.Sprintf("paramcap:%s:%s:%s:%s", cfg.ID, toolName, name, hour),
+				Amount:     cents,
+				Cap:        rule.HourlyCents,
+				TTLSeconds: 172800,
+				Label:      fmt.Sprintf("hourly cap exceeded for parameter '%s' on tool '%s' ($%.2f hourly cap)", name, toolName, rule.HourlyCents/100.0),
+			})
+		}
+	}
+	return entries
+}
+
+func abs(f float64) float64 {
+	if f < 0 {
+		return -f
+	}
+	return f
 }
 
 func toFloat(val any) float64 {
@@ -277,32 +298,13 @@ func toFloatOK(val any) (float64, bool) {
 // that predate money-field declarations keep working.
 //
 // This is the single source of truth for money extraction across the gateway —
-// both the proxy (OPA input, metrics, hierarchical caps) and the cumulative
-// spend-cap counter use it, so no two code paths can disagree on the amount.
-func ExtractAmountCents(args map[string]any, moneyParams []string) (cents float64, found bool) {
+// both the proxy (OPA input, metrics, hierarchical caps) and the per-param
+// spend-cap counters use it, so no two code paths can disagree on the amount.
+// `amount_cents` is treated as cents, `amount` as major currency units (×100).
+func ExtractAmountCents(args map[string]any) (cents float64, found bool) {
 	if args == nil {
 		return 0, false
 	}
-	if len(moneyParams) > 0 {
-		for _, field := range moneyParams {
-			v, ok := args[field]
-			if !ok {
-				continue
-			}
-			f, ok := toFloatOK(v)
-			if !ok {
-				continue
-			}
-			found = true
-			if strings.HasSuffix(field, "_cents") {
-				cents += f
-			} else {
-				cents += f * 100.0
-			}
-		}
-		return cents, found
-	}
-	// Legacy fallback (no declared money fields).
 	if v, ok := args["amount_cents"]; ok {
 		if f, ok := toFloatOK(v); ok {
 			return f, true

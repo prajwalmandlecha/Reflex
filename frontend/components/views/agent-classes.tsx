@@ -25,10 +25,15 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 import { formatCurrency } from '@/lib/format';
 import type { AgentClass, AgentInstance, BankTool } from '@/lib/types';
 import { api } from '@/lib/api';
-import { Plus, Ban, Wrench, DollarSign, Clock, Settings2, Search, X, CheckCircle2, Trash2 } from 'lucide-react';
+import { Plus, Ban, Wrench, DollarSign, Clock, Settings2, Search, X, CheckCircle2, Trash2, ChevronDown } from 'lucide-react';
 
 export function AgentClassesView({
   classes,
@@ -326,11 +331,9 @@ function ClassForm({ classData, onComplete }: { classData: AgentClass | null; on
   const caps = (classData as any)?.defaultCaps || (classData as any)?.default_caps || {};
   const initHourly = caps.hourly?.amount_cents != null ? (caps.hourly.amount_cents / 100).toString() : '';
   const initDaily = caps.daily?.amount_cents != null ? (caps.daily.amount_cents / 100).toString() : '';
-  const initPerTx = caps.per_transaction?.max_amount_cents != null ? (caps.per_transaction.max_amount_cents / 100).toString() : '';
 
   const [hourlyCap, setHourlyCap] = useState(initHourly);
   const [dailyCap, setDailyCap] = useState(initDaily);
-  const [perTxCap, setPerTxCap] = useState(initPerTx);
 
   const [constraintsJson, setConstraintsJson] = useState(
     JSON.stringify(classData?.defaultConstraints || {}, null, 2)
@@ -398,9 +401,6 @@ function ClassForm({ classData, onComplete }: { classData: AgentClass | null; on
     if (dailyCap.trim() !== '') {
       defaultCaps.daily = { amount_cents: Math.max(0, (parseFloat(dailyCap) || 0) * 100) };
     }
-    if (perTxCap.trim() !== '') {
-      defaultCaps.per_transaction = { max_amount_cents: Math.max(0, (parseFloat(perTxCap) || 0) * 100) };
-    }
 
     setLoading(true);
     try {
@@ -465,7 +465,7 @@ function ClassForm({ classData, onComplete }: { classData: AgentClass | null; on
         <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary mb-1 block">
           Spend Caps Configuration ($ USD — Optional)
         </Label>
-        <div className="grid grid-cols-3 gap-3 border border-white/10 bg-white/[0.02] p-2.5 rounded-lg">
+        <div className="grid grid-cols-2 gap-3 border border-white/10 bg-white/[0.02] p-2.5 rounded-lg">
           <div>
             <Label className="font-mono text-[10px] text-ink-secondary/80">Hourly Cap ($)</Label>
             <Input
@@ -483,16 +483,6 @@ function ClassForm({ classData, onComplete }: { classData: AgentClass | null; on
               value={dailyCap}
               onChange={(e) => setDailyCap(e.target.value)}
               placeholder="e.g. 50000"
-              className="mt-1 h-8 border-white/10 bg-slate-900/80 font-mono text-xs text-white placeholder:text-ink-secondary/40"
-            />
-          </div>
-          <div>
-            <Label className="font-mono text-[10px] text-ink-secondary/80">Per-Tx Cap ($)</Label>
-            <Input
-              type="number"
-              value={perTxCap}
-              onChange={(e) => setPerTxCap(e.target.value)}
-              placeholder="e.g. 1000"
               className="mt-1 h-8 border-white/10 bg-slate-900/80 font-mono text-xs text-white placeholder:text-ink-secondary/40"
             />
           </div>
@@ -682,8 +672,11 @@ function VisualConstraintEditor({
   const [windowSec, setWindowSec] = useState<string>('');
   const [startTime, setStartTime] = useState<string>('');
   const [endTime, setEndTime] = useState<string>('');
-  const [moneyField, setMoneyField] = useState<string>('');
-  const [dailyCap, setDailyCap] = useState<string>('');
+  const [paramName, setParamName] = useState<string>('');
+  const [paramMax, setParamMax] = useState<string>('');
+  const [paramDailyCap, setParamDailyCap] = useState<string>('');
+  const [paramHourlyCap, setParamHourlyCap] = useState<string>('');
+  const [constraintsOpen, setConstraintsOpen] = useState(false);
 
   useEffect(() => {
     if (selectedTools.length > 0 && !selectedTools.includes(targetTool)) {
@@ -692,7 +685,7 @@ function VisualConstraintEditor({
   }, [selectedTools]);
 
   // Numeric parameters declared in the selected tool's input_schema. These are
-  // the candidate "money fields" a spend cap can meter on (e.g. amount_cents,
+  // the candidate parameters a per-param cap can bound (e.g. amount_cents,
   // dest_amount, attendee_share) — sourced straight from tools.input_schema.
   const targetToolMeta = useMemo(
     () => tools.find((t) => t.name === targetTool),
@@ -725,11 +718,11 @@ function VisualConstraintEditor({
     return req;
   }, [targetToolMeta]);
 
-  // Reset the money-field pick whenever the tool (and thus its param list)
-  // changes, so a stale field from another tool can't leak into the rule.
+  // Reset the param pick whenever the tool (and thus its param list) changes,
+  // so a stale field from another tool can't leak into the rule.
   useEffect(() => {
-    if (moneyField && !numericParams.includes(moneyField)) {
-      setMoneyField('');
+    if (paramName && !numericParams.includes(paramName)) {
+      setParamName('');
     }
   }, [numericParams]);
 
@@ -762,17 +755,23 @@ function VisualConstraintEditor({
       };
     }
 
-    // Declare which request field carries money so the gateway meters the
-    // right value and fails closed when it is missing (P0 spend-cap fix).
-    if (moneyField.trim()) {
-      toolRule.money_params = [moneyField.trim()];
-    }
-
-    // Cumulative daily spend cap, stored in cents to match the gateway.
-    if (dailyCap.trim() !== '') {
-      toolRule.cumulative_spend_cap = {
-        max_daily_cents: Math.max(0, Math.round((parseFloat(dailyCap) || 0) * 100)),
-      };
+    // Per-parameter caps: bound the input knob itself (max per call) and its
+    // accumulation over time (daily_cents / hourly_cents). Values are stored in
+    // cents to match the gateway, and the per-call max is sign-agnostic.
+    if (paramName.trim()) {
+      const rule: Record<string, any> = {};
+      if (paramMax.trim() !== '') {
+        rule.max = Math.max(0, parseFloat(paramMax) || 0);
+      }
+      if (paramDailyCap.trim() !== '') {
+        rule.daily_cents = Math.max(0, Math.round((parseFloat(paramDailyCap) || 0) * 100));
+      }
+      if (paramHourlyCap.trim() !== '') {
+        rule.hourly_cents = Math.max(0, Math.round((parseFloat(paramHourlyCap) || 0) * 100));
+      }
+      if (Object.keys(rule).length > 0) {
+        toolRule.params = { ...(toolRule.params || {}), [paramName.trim()]: rule };
+      }
     }
 
     current[targetTool] = toolRule;
@@ -794,45 +793,66 @@ function VisualConstraintEditor({
     setWindowSec(conf.rate_limit?.window_seconds?.toString() ?? '');
     setStartTime(conf.time_window?.start ?? '');
     setEndTime(conf.time_window?.end ?? '');
-    setMoneyField(
-      Array.isArray(conf.money_params) && conf.money_params.length > 0
-        ? conf.money_params[0]
-        : ''
+    const firstParam = Object.keys(conf.params || {})[0] || '';
+    setParamName(firstParam);
+    const prule = (conf.params || {})[firstParam] || {};
+    setParamMax(prule.max != null ? prule.max.toString() : '');
+    setParamDailyCap(
+      prule.daily_cents != null ? (prule.daily_cents / 100).toString() : ''
     );
-    setDailyCap(
-      conf.cumulative_spend_cap?.max_daily_cents != null
-        ? (conf.cumulative_spend_cap.max_daily_cents / 100).toString()
-        : ''
+    setParamHourlyCap(
+      prule.hourly_cents != null ? (prule.hourly_cents / 100).toString() : ''
     );
     setEditorMode('visual');
   };
 
   return (
-    <div className="space-y-2 border border-white/10 bg-white/[0.02] p-3 rounded-lg">
-      <div className="flex items-center justify-between border-b border-white/5 pb-2">
-        <div className="flex items-center gap-2">
-          <Clock className="h-4 w-4 text-cyan-400" />
-          <span className="font-mono text-[10px] uppercase tracking-widest text-ink-primary font-semibold">
+    <Collapsible
+      open={constraintsOpen}
+      onOpenChange={setConstraintsOpen}
+      className="space-y-2 border border-white/10 bg-white/[0.02] p-3 rounded-lg"
+    >
+      <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
+        <CollapsibleTrigger className="flex flex-1 items-center gap-2 text-left cursor-pointer group hover:opacity-90 select-none pr-3">
+          <ChevronDown
+            className={cn(
+              'h-4 w-4 text-ink-secondary transition-transform duration-200 shrink-0 group-hover:text-cyan-400',
+              constraintsOpen && 'rotate-180 text-cyan-400'
+            )}
+          />
+          <Clock className="h-4 w-4 text-cyan-400 shrink-0" />
+          <span className="font-mono text-xs uppercase tracking-widest text-ink-primary font-semibold">
             Dynamic Operational Constraints (Rate Limits, Time Windows & Spend Caps)
           </span>
-        </div>
-        <div className="flex items-center border border-white/10 bg-slate-900 p-0.5 font-mono text-[10px]">
+        </CollapsibleTrigger>
+
+        <div className="flex items-center gap-1 border border-white/10 bg-slate-900/90 p-1 rounded-md font-mono text-[10px] shrink-0 shadow-inner">
           <button
             type="button"
-            onClick={() => setEditorMode('visual')}
+            onClick={(e) => {
+              e.stopPropagation();
+              setEditorMode('visual');
+            }}
             className={cn(
-              'px-2 py-0.5 rounded uppercase transition-colors',
-              editorMode === 'visual' ? 'bg-cyan-500/20 text-cyan-300 font-semibold' : 'text-ink-secondary hover:text-white'
+              'px-2.5 py-1 rounded text-[10px] font-mono font-semibold uppercase whitespace-nowrap transition-all duration-150 cursor-pointer',
+              editorMode === 'visual'
+                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-sm'
+                : 'text-ink-secondary hover:text-white hover:bg-white/5'
             )}
           >
             Visual Form
           </button>
           <button
             type="button"
-            onClick={() => setEditorMode('json')}
+            onClick={(e) => {
+              e.stopPropagation();
+              setEditorMode('json');
+            }}
             className={cn(
-              'px-2 py-0.5 rounded uppercase transition-colors',
-              editorMode === 'json' ? 'bg-cyan-500/20 text-cyan-300 font-semibold' : 'text-ink-secondary hover:text-white'
+              'px-2.5 py-1 rounded text-[10px] font-mono font-semibold uppercase whitespace-nowrap transition-all duration-150 cursor-pointer',
+              editorMode === 'json'
+                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-sm'
+                : 'text-ink-secondary hover:text-white hover:bg-white/5'
             )}
           >
             Raw JSON
@@ -840,6 +860,7 @@ function VisualConstraintEditor({
         </div>
       </div>
 
+      <CollapsibleContent>
       {editorMode === 'visual' ? (
         <div className="space-y-3 pt-1">
           {/* Active Configured Constraints Cards */}
@@ -856,11 +877,22 @@ function VisualConstraintEditor({
                       {conf.time_window && (
                         <span>Hours: <strong className="text-amber-300">{conf.time_window.start} - {conf.time_window.end} UTC</strong></span>
                       )}
-                      {Array.isArray(conf.money_params) && conf.money_params.length > 0 && (
-                        <span>Money Field: <strong className="text-cyan-300">{conf.money_params.join(', ')}</strong></span>
-                      )}
-                      {conf.cumulative_spend_cap?.max_daily_cents != null && (
-                        <span>Daily Spend Cap: <strong className="text-emerald-400">${(conf.cumulative_spend_cap.max_daily_cents / 100).toLocaleString()}</strong></span>
+                      {conf.params && Object.keys(conf.params).length > 0 && (
+                        <span>
+                          Param Caps:{' '}
+                          <strong className="text-cyan-300">
+                            {Object.entries(conf.params)
+                              .map(([p, r]) => {
+                                const rule = (r || {}) as Record<string, any>;
+                                const bits: string[] = [];
+                                if (rule.max != null) bits.push(`max $${rule.max}`);
+                                if (rule.daily_cents != null) bits.push(`daily $${(rule.daily_cents / 100).toLocaleString()}`);
+                                if (rule.hourly_cents != null) bits.push(`hourly $${(rule.hourly_cents / 100).toLocaleString()}`);
+                                return `${p} (${bits.join(', ')})`;
+                              })
+                              .join('; ')}
+                          </strong>
+                        </span>
                       )}
                     </div>
                   </div>
@@ -919,10 +951,10 @@ function VisualConstraintEditor({
               </div>
 
               <div>
-                <Label className="font-mono text-[10px] text-ink-secondary">Money Field (from tool schema)</Label>
+                <Label className="font-mono text-[10px] text-ink-secondary">Parameter (from tool schema)</Label>
                 <select
-                  value={moneyField}
-                  onChange={(e) => setMoneyField(e.target.value)}
+                  value={paramName}
+                  onChange={(e) => setParamName(e.target.value)}
                   disabled={numericParams.length === 0}
                   className="mt-1 h-8 w-full border border-white/10 bg-slate-900 px-2 font-mono text-xs text-white rounded disabled:opacity-50"
                 >
@@ -931,7 +963,7 @@ function VisualConstraintEditor({
                       ? 'Tool not registered — connect its MCP server'
                       : numericParams.length === 0
                         ? 'No numeric params in schema'
-                        : 'None (no spend metering)'}
+                        : 'Select a parameter to cap'}
                   </option>
                   {numericParams.map((p) => (
                     <option key={p} value={p}>
@@ -942,18 +974,37 @@ function VisualConstraintEditor({
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               <div>
-                <Label className="font-mono text-[10px] text-ink-secondary">Daily Spend Cap ($)</Label>
+                <Label className="font-mono text-[10px] text-ink-secondary">Per-Call Max ($)</Label>
                 <Input
                   type="number"
-                  value={dailyCap}
-                  onChange={(e) => setDailyCap(e.target.value)}
+                  value={paramMax}
+                  onChange={(e) => setParamMax(e.target.value)}
+                  placeholder="e.g. 1200"
+                  className="mt-1 h-8 border-white/10 bg-slate-900 font-mono text-xs text-white"
+                />
+              </div>
+              <div>
+                <Label className="font-mono text-[10px] text-ink-secondary">Daily Cap ($)</Label>
+                <Input
+                  type="number"
+                  value={paramDailyCap}
+                  onChange={(e) => setParamDailyCap(e.target.value)}
+                  placeholder="e.g. 5000"
+                  className="mt-1 h-8 border-white/10 bg-slate-900 font-mono text-xs text-white"
+                />
+              </div>
+              <div>
+                <Label className="font-mono text-[10px] text-ink-secondary">Hourly Cap ($)</Label>
+                <Input
+                  type="number"
+                  value={paramHourlyCap}
+                  onChange={(e) => setParamHourlyCap(e.target.value)}
                   placeholder="e.g. 1000"
                   className="mt-1 h-8 border-white/10 bg-slate-900 font-mono text-xs text-white"
                 />
               </div>
-              <div />
             </div>
 
             <div className="grid grid-cols-2 gap-2">
@@ -1015,10 +1066,11 @@ function VisualConstraintEditor({
         <textarea
           value={constraintsJson}
           onChange={(e) => setConstraintsJson(e.target.value)}
-          placeholder={`{\n  "transfer_money": {\n    "money_params": ["amount_cents"],\n    "cumulative_spend_cap": {"max_daily_cents": 100000},\n    "rate_limit": {"max_calls": 60, "window_seconds": 3600},\n    "time_window": {"start": "09:00", "end": "17:00", "tz": "UTC"}\n  }\n}`}
+          placeholder={`{\n  "transfer_money": {\n    "params": {\n      "amount_cents": {"max": 120000, "daily_cents": 500000, "hourly_cents": 100000}\n    },\n    "rate_limit": {"max_calls": 60, "window_seconds": 3600},\n    "time_window": {"start": "09:00", "end": "17:00", "tz": "UTC"}\n  }\n}`}
           className="mt-1 h-36 w-full border border-white/10 bg-slate-900 p-2 font-mono text-[11px] leading-relaxed rounded text-white focus:outline-none focus:border-cyan-500"
         />
       )}
-    </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }

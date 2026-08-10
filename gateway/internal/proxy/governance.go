@@ -49,22 +49,15 @@ func (p *MCPProxy) governCall(
 	// in Stage 4 — no dry-run/commit split, so there's no TOCTOU window.
 	cStart := time.Now()
 
-	// Stage 2a: Declared money-field enforcement (FAIL CLOSED). A money-moving
-	// tool — one that declares money_params or configures a cumulative_spend_cap
-	// — MUST carry a parseable value in a declared field. If it doesn't, the
-	// spend cap cannot be enforced, so the call is DENIED rather than silently
-	// passed through as $0 (which is exactly how a renamed/omitted money field
-	// would otherwise bypass every cap). Only applies to tools — resources and
-	// prompts don't move money.
+	// Stage 2a: Per-parameter per-call ceilings (stateless). Each declared param
+	// with a Max is checked against the call's value (absolute). This is the
+	// parameter-level cap: bounds the actual knob the agent turns, sign-agnostic
+	// (handles deposit vs withdraw identically), and scoped per tool+param.
 	if kind == callKindTool {
-		if required, mp := p.constraintCheck.RequiresAmount(cfg, toolName); required && !amountFound {
+		if ok, reason := p.constraintCheck.CheckParamMax(cfg, toolName, args); !ok {
 			t.ConstraintMs = ms(time.Since(cStart))
 			metrics.ConstraintCheckDuration.WithLabelValues(toolName).Observe(t.ConstraintMs / 1000.0)
 			t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs
-			reason := fmt.Sprintf("action '%s' denied: missing or unparseable declared money field", toolName)
-			if len(mp) > 0 {
-				reason = fmt.Sprintf("action '%s' denied: no parseable value in declared money field(s) %v — spend cap cannot be enforced", toolName, mp)
-			}
 			return false, "constraint", reason, t, nil
 		}
 	}
@@ -108,6 +101,7 @@ func (p *MCPProxy) governCall(
 	// budget (G4) and concurrent calls cannot race between a read and a write.
 	spendStart := time.Now()
 	entries := p.constraintCheck.CounterEntries(cfg, toolName, args)
+	entries = append(entries, p.constraintCheck.ParamCounterEntries(cfg, toolName, args)...)
 	spendDelta := int64(amount * 100)
 	if spendDelta > 0 {
 		entries = append(entries, p.buildDynamicScopes(agentID, classID, cfg.EffectiveCaps, float64(spendDelta))...)
@@ -123,7 +117,7 @@ func (p *MCPProxy) governCall(
 	}
 	if !commitRes.Allowed {
 		stage := "spend"
-		if strings.HasPrefix(commitRes.Exceeded, "ratelimit:") || strings.HasPrefix(commitRes.Exceeded, "spendcap:") {
+		if strings.HasPrefix(commitRes.Exceeded, "ratelimit:") || strings.HasPrefix(commitRes.Exceeded, "spendcap:") || strings.HasPrefix(commitRes.Exceeded, "paramcap:") {
 			stage = "constraint"
 		}
 		reason := commitRes.Label
@@ -214,16 +208,14 @@ func (p *MCPProxy) buildDynamicScopes(agentID, classID string, caps map[string]m
 	return entries
 }
 
-// extractAmount resolves a call's monetary value in major currency units using
-// the tool's DECLARED money_params (falling back to the legacy amount/
-// amount_cents heuristic when none are declared). found reports whether a
-// parseable amount was present, letting governCall fail closed on money-moving
-// tools that omit their declared field instead of treating them as $0. All
-// money extraction routes through constraints.ExtractAmountCents so the proxy
-// (OPA input, metrics, hierarchical caps) and the spend-cap counter can never
-// disagree on the amount.
+// extractAmount resolves a call's monetary value in major currency units from
+// the legacy amount/amount_cents heuristic. found reports whether a parseable
+// amount was present. All money extraction routes through
+// constraints.ExtractAmountCents so the proxy (OPA input, metrics,
+// hierarchical caps) and the per-param spend-cap counters can never disagree
+// on the amount.
 func (p *MCPProxy) extractAmount(cfg *configcache.AgentConfig, toolName string, args map[string]any) (float64, bool) {
-	cents, found := constraints.ExtractAmountCents(args, p.constraintCheck.MoneyParams(cfg, toolName))
+	cents, found := constraints.ExtractAmountCents(args)
 	return cents / 100.0, found
 }
 

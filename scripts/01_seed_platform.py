@@ -101,8 +101,9 @@ def main():
             "default_constraints": {
                 "deposit_funds": {"rate_limit": {"max_calls": 30, "window_seconds": 3600}},
                 "transfer_money": {
-                    "money_params": ["amount_cents"],
-                    "cumulative_spend_cap": {"max_daily_cents": 500000}
+                    "params": {
+                        "amount_cents": {"max": 120000, "daily_cents": 500000}
+                    }
                 }
             },
             "default_caps": {

@@ -17,7 +17,10 @@ from app.database import get_pool
 # Constraint keys the gateway actually enforces (see gateway
 # internal/constraints/checker.go). Anything else is dead config and must be
 # rejected rather than silently ignored.
-VALID_CONSTRAINT_KEYS = {"rate_limit", "time_window", "cumulative_spend_cap", "money_params"}
+VALID_CONSTRAINT_KEYS = {"rate_limit", "time_window", "params"}
+
+# Per-parameter rule keys the gateway reads (see ParamRule in checker.go).
+VALID_PARAM_KEYS = {"max", "daily_cents", "hourly_cents"}
 
 
 async def _load_tool_schemas() -> dict[str, dict]:
@@ -74,34 +77,40 @@ async def validate_class_config(
                 )
                 continue
 
-            # 3. Typoed / non-existent money params.
-            if key == "money_params":
-                if not isinstance(val, list) or not all(isinstance(x, str) for x in val):
-                    errors.append(f"money_params for tool '{tool_name}' must be a list of field names")
+            # 3. Per-parameter caps: {param: {max?, daily_cents?, hourly_cents?}}.
+            if key == "params":
+                if not isinstance(val, dict) or not val:
+                    errors.append(
+                        f"params for tool '{tool_name}' must be a non-empty object "
+                        f"mapping parameter name -> rule"
+                    )
                     continue
-                if not val:
-                    errors.append(f"money_params for tool '{tool_name}' must not be empty")
-                    continue
-                for field in val:
+                for pname, prule in val.items():
                     # Only assert existence when the tool exposes a schema; some
                     # tools have no declared input schema and cannot be checked.
-                    if param_names and field not in param_names:
+                    if param_names and pname not in param_names:
                         errors.append(
-                            f"money field '{field}' declared for tool '{tool_name}' "
+                            f"parameter '{pname}' declared for tool '{tool_name}' "
                             f"does not exist in its input schema (typo?)"
                         )
-
-            # Light shape checks so an obviously malformed cap can't slip in.
-            if key == "cumulative_spend_cap":
-                if not isinstance(val, dict) or "max_daily_cents" not in val:
-                    errors.append(
-                        f"cumulative_spend_cap for tool '{tool_name}' must be an object "
-                        f"with a numeric 'max_daily_cents'"
-                    )
-                elif not isinstance(val["max_daily_cents"], (int, float)):
-                    errors.append(
-                        f"cumulative_spend_cap.max_daily_cents for tool '{tool_name}' must be numeric"
-                    )
+                    if not isinstance(prule, dict):
+                        errors.append(
+                            f"rule for parameter '{pname}' on tool '{tool_name}' "
+                            f"must be an object"
+                        )
+                        continue
+                    for pkey, pval in prule.items():
+                        if pkey not in VALID_PARAM_KEYS:
+                            errors.append(
+                                f"unknown parameter rule key '{pkey}' for parameter "
+                                f"'{pname}' on tool '{tool_name}' "
+                                f"(valid keys: {', '.join(sorted(VALID_PARAM_KEYS))})"
+                            )
+                        elif not isinstance(pval, (int, float)):
+                            errors.append(
+                                f"parameter rule '{pkey}' for parameter '{pname}' on "
+                                f"tool '{tool_name}' must be numeric"
+                            )
 
             if key == "rate_limit":
                 if not isinstance(val, dict) or "max_calls" not in val:
