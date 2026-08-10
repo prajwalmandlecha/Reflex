@@ -4,6 +4,7 @@ import asyncio
 from collections import defaultdict
 import json
 from fastapi import APIRouter, HTTPException, status
+from app.config import settings
 from app.crypto import encrypt
 from app.database import get_pool
 from app.models.bank_connection import BankConnectionCreate, BankConnectionResponse, BankConnectionUpdate
@@ -354,7 +355,7 @@ async def register_openapi_spec(connection_id: str, payload: dict):
         else:
             name = connection_id.replace("-", " ").title()
 
-        base_url = payload.get("base_url", "http://localhost:8080")
+        base_url = payload.get("base_url") or settings.gateway_url
         # Status is earned by a successful parse, not asserted.
         status_val = "connected" if extracted_tools else "error"
         await conn.execute(

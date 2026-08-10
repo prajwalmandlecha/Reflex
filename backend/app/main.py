@@ -22,6 +22,16 @@ from app.services.config_propagation import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("agp-backend")
 
+# Fail closed: refuse to start with the built-in dev JWT secret outside of
+# explicit dev mode — matches the gateway's check (gateway/cmd/gateway/main.go).
+if settings.jwt_secret == "dev-secret-2026" and settings.agp_env != "dev":
+    logger.error(
+        "Refusing to start: JWT_SECRET is the built-in dev default. "
+        "Set JWT_SECRET in .env (and JWT_ISSUER) or set AGP_ENV=dev to proceed."
+    )
+    raise SystemExit(1)
+
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
