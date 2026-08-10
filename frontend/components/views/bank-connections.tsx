@@ -291,14 +291,12 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
 
   // Native MCP Form Fields
   const [mcpName, setMcpName] = useState('');
-  const [mcpId, setMcpId] = useState('');
   const [mcpUrl, setMcpUrl] = useState('');
   const [mcpAuthType, setMcpAuthType] = useState('none');
   const [mcpToken, setMcpToken] = useState('');
 
   // OpenAPI Form Fields
   const [apiName, setApiName] = useState('');
-  const [apiId, setApiId] = useState('');
   const [apiBaseUrl, setApiBaseUrl] = useState('');
   const [specInputMode, setSpecInputMode] = useState<'url' | 'raw'>('raw');
   const [specUrl, setSpecUrl] = useState('');
@@ -307,15 +305,15 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
   const handleNativeMcpSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    if (!mcpName || !mcpId || !mcpUrl) {
-      setError('Please provide Name, ID, and MCP Server URL.');
+    if (!mcpName || !mcpUrl) {
+      setError('Please provide Name and MCP Server URL.');
       return;
     }
     setLoading(true);
     try {
       // Status is derived by the backend from a live discovery probe — never asserted here.
+      // id is derived from the name (slugified) by the backend when omitted.
       await api.createBankConnection({
-        id: mcpId.trim().toLowerCase().replace(/\s+/g, '-'),
         name: mcpName,
         source_type: 'native_mcp',
         sourceType: 'native_mcp',
@@ -335,9 +333,10 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
   const handleOpenApiSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    const connId = apiId.trim().toLowerCase().replace(/\s+/g, '-');
+    // id is derived from the connection name (slugified) when omitted.
+    const connId = apiName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
     if (!apiName || !connId) {
-      setError('Please provide Connection Name and ID.');
+      setError('Please provide Connection Name.');
       return;
     }
 
@@ -435,16 +434,9 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
                 className="mt-1 border-white/10 bg-white/5 font-mono text-xs"
                 required
               />
-            </div>
-            <div>
-              <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Connection ID</Label>
-              <Input
-                value={mcpId}
-                onChange={(e) => setMcpId(e.target.value)}
-                placeholder="e.g. bank-payments"
-                className="mt-1 border-white/10 bg-white/5 font-mono text-xs"
-                required
-              />
+              <p className="mt-1 font-mono text-[10px] text-ink-secondary">
+                ID: <span className="text-cyan-400">{mcpName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || '—'}</span>
+              </p>
             </div>
           </div>
 
@@ -513,16 +505,9 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
                 className="mt-1 border-white/10 bg-white/5 font-mono text-xs"
                 required
               />
-            </div>
-            <div>
-              <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Connection ID</Label>
-              <Input
-                value={apiId}
-                onChange={(e) => setApiId(e.target.value)}
-                placeholder="e.g. legacy-bank-rest"
-                className="mt-1 border-white/10 bg-white/5 font-mono text-xs"
-                required
-              />
+              <p className="mt-1 font-mono text-[10px] text-ink-secondary">
+                ID: <span className="text-cyan-400">{apiName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || '—'}</span>
+              </p>
             </div>
           </div>
 

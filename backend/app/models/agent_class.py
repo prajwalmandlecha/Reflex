@@ -6,7 +6,8 @@ from pydantic import BaseModel, Field
 
 
 class AgentClassBase(BaseModel):
-    id: str
+    # id is optional on create — derived from `name` (slugified) when omitted.
+    id: str | None = None
     name: str
     description: str = ""
     default_allowed_tools: list[str] = Field(default_factory=list)

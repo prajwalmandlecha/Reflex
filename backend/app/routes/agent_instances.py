@@ -1,6 +1,7 @@
 """Agent Instances routes (/api/v1/agents)."""
 
 import json
+import secrets
 from fastapi import APIRouter, HTTPException, status
 from app.database import get_pool
 from app.models.agent_instance import AgentInstanceCreate, AgentInstanceResponse, AgentInstanceUpdate
@@ -8,6 +9,7 @@ from app.redis_client import get_redis
 from app.routes.fleet import publish_fleet_event
 from app.routes.tokens import create_agent_jwt
 from app.services.config_propagation import cache_agent_instance, publish_config_update
+from app.slugify import slugify
 
 router = APIRouter(prefix="/api/v1/agents", tags=["Agent Instances"])
 
@@ -139,6 +141,10 @@ async def register_agent_instance(inst: AgentInstanceCreate):
 
         await _validate_tool_overrides(conn, inst.class_id, inst.tool_overrides)
 
+        # Derive a stable id from the class slug + a short random suffix when the
+        # client didn't supply one explicitly (instances have no display name).
+        agent_id = inst.id or f"{slugify(cls['name'], fallback=inst.class_id)}-{secrets.token_hex(3)}"
+
         row = await conn.fetchrow(
             """
             INSERT INTO agent_instances (id, class_id, status, constraint_overrides, cap_overrides, tool_overrides)
@@ -152,15 +158,15 @@ async def register_agent_instance(inst: AgentInstanceCreate):
                 updated_at = NOW()
             RETURNING id, class_id, status, constraint_overrides, cap_overrides, tool_overrides, created_at, updated_at
             """,
-            inst.id, inst.class_id, inst.status,
+            agent_id, inst.class_id, inst.status,
             json.dumps(inst.constraint_overrides), json.dumps(inst.cap_overrides), inst.tool_overrides,
         )
 
-    await cache_agent_instance(inst.id)
-    await publish_config_update("instance", inst.id)
+    await cache_agent_instance(agent_id)
+    await publish_config_update("instance", agent_id)
 
     # Mint signed JWT for the newly created agent instance
-    token = create_agent_jwt(inst.id, agent_kind=inst.class_id)
+    token = create_agent_jwt(agent_id, agent_kind=inst.class_id)
 
     constraints = json.loads(row["constraint_overrides"]) if isinstance(row["constraint_overrides"], str) else (row["constraint_overrides"] or {})
     caps = json.loads(row["cap_overrides"]) if isinstance(row["cap_overrides"], str) else (row["cap_overrides"] or {})

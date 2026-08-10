@@ -321,7 +321,6 @@ function ClassForm({ classData, onComplete }: { classData: AgentClass | null; on
   );
   const [toolSearch, setToolSearch] = useState('');
   const [toolFilter, setToolFilter] = useState<'all' | 'selected' | 'unselected'>('all');
-  const [classId, setClassId] = useState(classData?.id || '');
   const [name, setName] = useState(classData?.name || '');
   const [description, setDescription] = useState(classData?.description || '');
   const caps = (classData as any)?.defaultCaps || (classData as any)?.default_caps || {};
@@ -385,9 +384,10 @@ function ClassForm({ classData, onComplete }: { classData: AgentClass | null; on
       return;
     }
 
-    const id = classId.trim().toLowerCase().replace(/\s+/g, '-');
+    // id is derived from the display name (slugified) unless editing an existing class.
+    const id = classData?.id || name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
     if (!name || !id) {
-      setError('Please fill in Class ID and Class Name.');
+      setError('Please fill in Class Name.');
       return;
     }
 
@@ -435,28 +435,20 @@ function ClassForm({ classData, onComplete }: { classData: AgentClass | null; on
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Class ID</Label>
-          <Input
-            value={classId}
-            onChange={(e) => setClassId(e.target.value)}
-            disabled={!!classData}
-            placeholder="e.g. database_analytics"
-            className="mt-1 border-white/10 bg-white/5 font-mono text-xs"
-            required
-          />
-        </div>
-        <div>
-          <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Class Display Name</Label>
-          <Input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Analytics & Reporting Bot"
-            className="mt-1 border-white/10 bg-white/5 font-mono text-xs"
-            required
-          />
-        </div>
+      <div>
+        <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Class Display Name</Label>
+        <Input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. Analytics & Reporting Bot"
+          className="mt-1 border-white/10 bg-white/5 font-mono text-xs"
+          required
+        />
+        {!classData && (
+          <p className="mt-1 font-mono text-[10px] text-ink-secondary">
+            ID: <span className="text-cyan-400">{name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || '—'}</span>
+          </p>
+        )}
       </div>
 
       <div>

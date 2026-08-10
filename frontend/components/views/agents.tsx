@@ -280,7 +280,6 @@ export function AgentsView({
 }
 
 function CreateInstanceForm({ classes, onComplete }: { classes: AgentClass[]; onComplete: () => void }) {
-  const [agentId, setAgentId] = useState('');
   const [classId, setClassId] = useState(classes[0]?.id || '');
   const [mintedToken, setMintedToken] = useState('');
   const [copied, setCopied] = useState(false);
@@ -302,9 +301,9 @@ function CreateInstanceForm({ classes, onComplete }: { classes: AgentClass[]; on
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    const id = agentId.trim().toLowerCase().replace(/\s+/g, '-');
-    if (!id || !classId) {
-      setError('Please fill in Agent Instance ID and Class.');
+    // id is derived by the backend from the class name + a short random suffix.
+    if (!classId) {
+      setError('Please select a Class.');
       return;
     }
 
@@ -312,7 +311,6 @@ function CreateInstanceForm({ classes, onComplete }: { classes: AgentClass[]; on
     try {
       const toolOverrides = useScopeDown ? selectedTools : null;
       const res = await api.registerAgentInstance({
-        id,
         class_id: classId,
         status: 'active',
         tool_overrides: toolOverrides,
@@ -386,17 +384,6 @@ function CreateInstanceForm({ classes, onComplete }: { classes: AgentClass[]; on
           {error}
         </div>
       )}
-
-      <div>
-        <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Agent Instance ID</Label>
-        <Input
-          value={agentId}
-          onChange={(e) => setAgentId(e.target.value)}
-          placeholder="e.g. login-agent-01"
-          className="mt-1 border-white/10 bg-white/5 font-mono text-xs"
-          required
-        />
-      </div>
 
       <div>
         <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Assigned Agent Class</Label>

@@ -6,7 +6,8 @@ from pydantic import BaseModel, Field
 
 
 class AgentInstanceBase(BaseModel):
-    id: str
+    # id is optional on create — derived from `class_id` + a short suffix when omitted.
+    id: str | None = None
     class_id: str
     status: str = "active"
     constraint_overrides: dict[str, Any] = Field(default_factory=dict)

@@ -12,6 +12,7 @@ from app.redis_client import get_redis
 from app.services.config_propagation import cache_bank_connections, cache_bank_connections_list, cache_tool_routing, publish_config_update
 from app.services.mcp_discovery import fetch_mcp_tools
 from app.services.openapi_ingestion import parse_openapi_spec
+from app.slugify import slugify
 
 router = APIRouter(prefix="/api/v1/connections", tags=["Bank Connections"])
 
@@ -123,6 +124,9 @@ async def _replace_tools(conn, connection_id: str, tools: list[dict], with_ops: 
 
 @router.post("", response_model=BankConnectionResponse, status_code=status.HTTP_201_CREATED)
 async def create_bank_connection(b: BankConnectionCreate):
+    # Derive a stable, URL-safe id from the display name when the client didn't
+    # supply one explicitly.
+    conn_id = b.id or slugify(b.name, fallback="connection")
     pool = get_pool()
     enc_creds = encrypt(b.credentials) if b.credentials else None
 
@@ -156,20 +160,20 @@ async def create_bank_connection(b: BankConnectionCreate):
                 updated_at = NOW()
             RETURNING id, name, source_type, mcp_url, base_url, openapi_spec, credential_type, status, created_at, updated_at
             """,
-            b.id, b.name, b.source_type, b.mcp_url, b.base_url, b.openapi_spec, b.credential_type, enc_creds, status_val,
+            conn_id, b.name, b.source_type, b.mcp_url, b.base_url, b.openapi_spec, b.credential_type, enc_creds, status_val,
         )
 
         if mcp_tools:
-            discovered_tools = await _replace_tools(conn, b.id, mcp_tools)
+            discovered_tools = await _replace_tools(conn, conn_id, mcp_tools)
         elif openapi_tools:
-            discovered_tools = await _replace_tools(conn, b.id, openapi_tools, with_ops=True)
+            discovered_tools = await _replace_tools(conn, conn_id, openapi_tools, with_ops=True)
         else:
             discovered_tools = []
 
     await cache_bank_connections()
     await cache_bank_connections_list()
     await cache_tool_routing()
-    await publish_config_update("connection", b.id)
+    await publish_config_update("connection", conn_id)
 
     return BankConnectionResponse(
         id=row["id"], name=row["name"], source_type=row["source_type"],

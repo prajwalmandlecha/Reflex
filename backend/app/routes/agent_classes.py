@@ -8,6 +8,7 @@ from app.redis_client import get_redis
 from app.services.config_propagation import cache_agent_class, publish_config_update
 from app.routes.fleet import publish_fleet_event
 from app.services.constraint_validation import validate_class_config
+from app.slugify import slugify
 
 router = APIRouter(prefix="/api/v1/classes", tags=["Agent Classes"])
 
@@ -66,6 +67,9 @@ async def create_agent_class(cls: AgentClassCreate):
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"message": "Invalid constraint configuration", "errors": validation_errors},
         )
+    # Derive a stable, URL-safe id from the display name when the client didn't
+    # supply one explicitly.
+    class_id = cls.id or slugify(cls.name, fallback="class")
     pool = get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -82,12 +86,12 @@ async def create_agent_class(cls: AgentClassCreate):
                 updated_at = NOW()
             RETURNING id, name, description, default_allowed_tools, default_constraints, default_caps, status, created_at, updated_at
             """,
-            cls.id, cls.name, cls.description, cls.default_allowed_tools,
+            class_id, cls.name, cls.description, cls.default_allowed_tools,
             json.dumps(cls.default_constraints), json.dumps(cls.default_caps), cls.status,
         )
 
-    await cache_agent_class(cls.id)
-    await publish_config_update("class", cls.id)
+    await cache_agent_class(class_id)
+    await publish_config_update("class", class_id)
 
     constraints = json.loads(row["default_constraints"]) if isinstance(row["default_constraints"], str) else (row["default_constraints"] or {})
     caps = json.loads(row["default_caps"]) if isinstance(row["default_caps"], str) else (row["default_caps"] or {})

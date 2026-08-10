@@ -6,7 +6,8 @@ from pydantic import BaseModel, Field
 
 
 class BankConnectionBase(BaseModel):
-    id: str
+    # id is optional on create — derived from `name` (slugified) when omitted.
+    id: str | None = None
     name: str
     source_type: str  # 'native_mcp', 'openapi', 'manual'
     mcp_url: str | None = None
