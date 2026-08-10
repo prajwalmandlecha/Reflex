@@ -16,10 +16,10 @@ import (
 // or 5xx) so callers can roll back any governance counters committed in
 // governCall — a failed downstream call must not consume budget.
 func (p *MCPProxy) proxyToTarget(w http.ResponseWriter, r *http.Request, targetBaseURL string, bodyBytes []byte, serviceName ...string) bool {
+	// mcp_url is stored as the complete MCP endpoint (e.g. https://mcp.exa.ai/mcp
+	// or https://mockhero.dev/mcp/agent). Use it verbatim — do NOT append /mcp,
+	// which corrupts endpoints that already include a path segment.
 	targetURL := targetBaseURL
-	if !strings.HasSuffix(targetBaseURL, "/mcp") {
-		targetURL = strings.TrimSuffix(targetBaseURL, "/") + "/mcp"
-	}
 	if r.URL.RawQuery != "" {
 		targetURL += "?" + r.URL.RawQuery
 	}

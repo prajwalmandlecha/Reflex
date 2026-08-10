@@ -215,10 +215,8 @@ func (p *MCPProxy) handleAggregatedToolsList(w http.ResponseWriter, r *http.Requ
 		if svcName == "default" {
 			return
 		}
+		// mcp_url is the complete MCP endpoint — use verbatim, no /mcp suffix.
 		targetURL := targetBaseURL
-		if !strings.HasSuffix(targetURL, "/mcp") {
-			targetURL = strings.TrimSuffix(targetURL, "/") + "/mcp"
-		}
 		if seen[targetURL] {
 			return
 		}
@@ -336,10 +334,8 @@ func (p *MCPProxy) handleAggregatedList(w http.ResponseWriter, r *http.Request, 
 		if svcName == "default" {
 			return
 		}
+		// mcp_url is the complete MCP endpoint — use verbatim, no /mcp suffix.
 		targetURL := targetBaseURL
-		if !strings.HasSuffix(targetURL, "/mcp") {
-			targetURL = strings.TrimSuffix(targetURL, "/") + "/mcp"
-		}
 		if seenURL[targetURL] {
 			return
 		}
