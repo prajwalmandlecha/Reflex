@@ -167,6 +167,11 @@ func (c *Checker) MoneyParams(cfg *configcache.AgentConfig, toolName string) []s
 // configures a cumulative_spend_cap. The declared money fields are returned so
 // callers can produce a precise deny reason. This is what lets the gateway fail
 // closed instead of silently treating an unrecognized field as $0 spend.
+//
+// Schema-aware: a declared money field that is OPTIONAL in the tool's input
+// schema does NOT force fail-closed — a legitimate call may omit it (e.g. a
+// "scale" multiplier). Only REQUIRED money fields (or an unknown schema, which
+// we treat conservatively) fail closed when missing.
 func (c *Checker) RequiresAmount(cfg *configcache.AgentConfig, toolName string) (bool, []string) {
 	tc := toolConstraintsFor(cfg, toolName)
 	if tc == nil {
@@ -174,7 +179,7 @@ func (c *Checker) RequiresAmount(cfg *configcache.AgentConfig, toolName string) 
 	}
 	mp := moneyParamsFrom(tc)
 	if len(mp) > 0 {
-		return true, mp
+		return c.moneyFieldRequired(cfg, toolName, mp), mp
 	}
 	if sc, ok := tc["cumulative_spend_cap"].(map[string]any); ok {
 		if toFloat(sc["max_daily_cents"]) > 0 {
@@ -182,6 +187,30 @@ func (c *Checker) RequiresAmount(cfg *configcache.AgentConfig, toolName string) 
 		}
 	}
 	return false, mp
+}
+
+// moneyFieldRequired reports whether any declared money field is REQUIRED in
+// the tool's input schema. When the schema is unknown (no propagated schema),
+// it conservatively returns true so the gateway keeps failing closed rather
+// than silently metering $0.
+func (c *Checker) moneyFieldRequired(cfg *configcache.AgentConfig, toolName string, moneyParams []string) bool {
+	if cfg == nil || cfg.ToolSchemas == nil {
+		return true
+	}
+	ts, ok := cfg.ToolSchemas[toolName]
+	if !ok {
+		return true // unknown schema → conservative fail-closed
+	}
+	req := make(map[string]bool, len(ts.Required))
+	for _, f := range ts.Required {
+		req[f] = true
+	}
+	for _, f := range moneyParams {
+		if req[f] {
+			return true
+		}
+	}
+	return false
 }
 
 // moneyParamsFrom extracts the declared money_params string list from a tool's

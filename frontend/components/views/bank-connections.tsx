@@ -483,7 +483,7 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
             <Button
               type="submit"
               disabled={loading}
-              className="bg-cyan-600 text-white hover:bg-cyan-500 font-mono text-xs px-5"
+              className="bg-cyan-500 text-slate-950 hover:bg-cyan-400 font-mono text-xs font-semibold px-5 h-8"
             >
               {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Plug className="h-4 w-4 mr-2" />}
               Connect MCP Server
@@ -563,7 +563,7 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
             <Button
               type="submit"
               disabled={loading}
-              className="bg-cyan-600 text-white hover:bg-cyan-500 font-mono text-xs px-5"
+              className="bg-cyan-500 text-slate-950 hover:bg-cyan-400 font-mono text-xs font-semibold px-5 h-8"
             >
               {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <FileUp className="h-4 w-4 mr-2" />}
               Register & Virtualize Spec

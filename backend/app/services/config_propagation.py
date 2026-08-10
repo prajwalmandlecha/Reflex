@@ -13,6 +13,21 @@ from app.redis_client import get_redis
 logger = logging.getLogger(__name__)
 
 
+def collect_required_fields(schema: dict) -> list[str]:
+    """Collect required field names from a JSON Schema, including anyOf/oneOf
+    branches. The gateway uses this to distinguish REQUIRED money fields (fail
+    closed when missing) from OPTIONAL ones (a legitimate call may omit them,
+    e.g. a "scale" multiplier)."""
+    if not isinstance(schema, dict):
+        return []
+    required: set[str] = set(schema.get("required") or [])
+    for key in ("anyOf", "oneOf", "allOf"):
+        for branch in schema.get(key) or []:
+            if isinstance(branch, dict):
+                required.update(branch.get("required") or [])
+    return sorted(required)
+
+
 def _non_fatal_cache(fn):
     """Cache writes must not 500 a request after the DB write already committed.
 
@@ -126,6 +141,21 @@ async def cache_agent_instance(agent_id: str):
         i_caps = json.loads(row["cap_overrides"]) if isinstance(row["cap_overrides"], str) else (row["cap_overrides"] or {})
         effective_caps = {**c_caps, **i_caps}
 
+        # Propagate each tool's REQUIRED field list so the gateway can tell a
+        # required money field (fail closed when missing) from an optional one
+        # (a legitimate call may omit it, e.g. a "scale" multiplier).
+        tool_schemas = {}
+        if effective_tools:
+            tool_rows = await conn.fetch(
+                "SELECT name, input_schema FROM tools WHERE name = ANY($1)",
+                effective_tools,
+            )
+            for tr in tool_rows:
+                schema = json.loads(tr["input_schema"]) if isinstance(tr["input_schema"], str) else (tr["input_schema"] or {})
+                tool_schemas[tr["name"]] = {
+                    "required": collect_required_fields(schema),
+                }
+
         data = {
             "id": row["id"],
             "class_id": row["class_id"],
@@ -133,6 +163,7 @@ async def cache_agent_instance(agent_id: str):
             "effective_tools": effective_tools,
             "effective_constraints": effective_constraints,
             "effective_caps": effective_caps,
+            "tool_schemas": tool_schemas,
         }
         await redis.set(f"agp:inst:{agent_id}", json.dumps(data))
 

@@ -652,7 +652,7 @@ function ClassForm({ classData, onComplete }: { classData: AgentClass | null; on
         <Button
           type="submit"
           disabled={loading}
-          className="bg-cyan-600 text-white hover:bg-cyan-500 font-mono text-xs px-5"
+          className="bg-cyan-500 text-slate-950 hover:bg-cyan-400 font-mono text-xs font-semibold px-5 h-8"
         >
           {classData ? 'Save Changes' : 'Create Class'}
         </Button>
@@ -674,10 +674,14 @@ function VisualConstraintEditor({
 }) {
   const [editorMode, setEditorMode] = useState<'visual' | 'json'>('visual');
   const [targetTool, setTargetTool] = useState<string>(selectedTools[0] || '');
-  const [maxCalls, setMaxCalls] = useState<string>('60');
-  const [windowSec, setWindowSec] = useState<string>('3600');
-  const [startTime, setStartTime] = useState<string>('09:00');
-  const [endTime, setEndTime] = useState<string>('17:00');
+  // All fields start EMPTY so nothing is added unless the user explicitly fills
+  // it in. Previously these were pre-filled (60/3600/09:00/17:00), which meant
+  // clicking "Add" silently injected a rate limit AND a time window the user
+  // never asked for.
+  const [maxCalls, setMaxCalls] = useState<string>('');
+  const [windowSec, setWindowSec] = useState<string>('');
+  const [startTime, setStartTime] = useState<string>('');
+  const [endTime, setEndTime] = useState<string>('');
   const [moneyField, setMoneyField] = useState<string>('');
   const [dailyCap, setDailyCap] = useState<string>('');
 
@@ -703,6 +707,22 @@ function VisualConstraintEditor({
         return type === 'number' || type === 'integer';
       })
       .map(([name]) => name);
+  }, [targetToolMeta]);
+
+  // Fields the tool schema marks as REQUIRED (including anyOf/oneOf branches).
+  // The gateway only fails closed on a money field that is required — an
+  // optional one (e.g. a "scale" multiplier) may legitimately be omitted.
+  const requiredParams = useMemo(() => {
+    const schema = (targetToolMeta?.input_schema || {}) as Record<string, any>;
+    const req = new Set<string>(schema.required || []);
+    for (const key of ['anyOf', 'oneOf', 'allOf']) {
+      for (const branch of (schema[key] || []) as any[]) {
+        if (branch && Array.isArray(branch.required)) {
+          branch.required.forEach((f: string) => req.add(f));
+        }
+      }
+    }
+    return req;
   }, [targetToolMeta]);
 
   // Reset the money-field pick whenever the tool (and thus its param list)
@@ -765,6 +785,28 @@ function VisualConstraintEditor({
     setConstraintsJson(JSON.stringify(current, null, 2));
   };
 
+  // Load an existing tool's constraint back into the form so the user can edit
+  // it in place instead of deleting and re-adding from scratch.
+  const handleEditToolConstraint = (tName: string) => {
+    const conf = parsedObj[tName] || {};
+    setTargetTool(tName);
+    setMaxCalls(conf.rate_limit?.max_calls?.toString() ?? '');
+    setWindowSec(conf.rate_limit?.window_seconds?.toString() ?? '');
+    setStartTime(conf.time_window?.start ?? '');
+    setEndTime(conf.time_window?.end ?? '');
+    setMoneyField(
+      Array.isArray(conf.money_params) && conf.money_params.length > 0
+        ? conf.money_params[0]
+        : ''
+    );
+    setDailyCap(
+      conf.cumulative_spend_cap?.max_daily_cents != null
+        ? (conf.cumulative_spend_cap.max_daily_cents / 100).toString()
+        : ''
+    );
+    setEditorMode('visual');
+  };
+
   return (
     <div className="space-y-2 border border-white/10 bg-white/[0.02] p-3 rounded-lg">
       <div className="flex items-center justify-between border-b border-white/5 pb-2">
@@ -822,15 +864,28 @@ function VisualConstraintEditor({
                       )}
                     </div>
                   </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => handleRemoveToolConstraint(tName)}
-                    className="h-6 px-1.5 text-rose-400 hover:bg-rose-500/10"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </Button>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => handleEditToolConstraint(tName)}
+                      className="h-6 px-1.5 text-cyan-400 hover:bg-cyan-500/10"
+                      title="Edit this constraint"
+                    >
+                      <Settings2 className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => handleRemoveToolConstraint(tName)}
+                      className="h-6 px-1.5 text-rose-400 hover:bg-rose-500/10"
+                      title="Remove this constraint"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
                 </div>
               ))
             ) : (
@@ -879,7 +934,9 @@ function VisualConstraintEditor({
                         : 'None (no spend metering)'}
                   </option>
                   {numericParams.map((p) => (
-                    <option key={p} value={p}>{p}</option>
+                    <option key={p} value={p}>
+                      {p}{requiredParams.has(p) ? ' (required)' : ' (optional)'}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -895,9 +952,6 @@ function VisualConstraintEditor({
                   placeholder="e.g. 1000"
                   className="mt-1 h-8 border-white/10 bg-slate-900 font-mono text-xs text-white"
                 />
-                <p className="mt-1 font-mono text-[9px] text-ink-secondary/60 leading-tight">
-                  Metered on the money field above. Calls missing it are denied (fail-closed).
-                </p>
               </div>
               <div />
             </div>

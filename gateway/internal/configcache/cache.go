@@ -15,14 +15,24 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// ToolSchema carries the minimal schema facts the gateway needs for
+// fail-closed money-field enforcement: which argument fields a tool declares
+// as REQUIRED. This lets the gateway distinguish a required money field
+// (deny when missing) from an optional one (a legitimate call may omit it,
+// e.g. a "scale" multiplier).
+type ToolSchema struct {
+	Required []string `json:"required"`
+}
+
 // AgentConfig represents effective agent configuration cached in memory.
 type AgentConfig struct {
-	ID                   string                   `json:"id"`
-	ClassID              string                   `json:"class_id"`
-	Status               string                   `json:"status"`
-	EffectiveTools       []string                 `json:"effective_tools"`
+	ID                   string                    `json:"id"`
+	ClassID              string                    `json:"class_id"`
+	Status               string                    `json:"status"`
+	EffectiveTools       []string                  `json:"effective_tools"`
 	EffectiveConstraints map[string]map[string]any `json:"effective_constraints"`
 	EffectiveCaps        map[string]map[string]any `json:"effective_caps"`
+	ToolSchemas          map[string]ToolSchema     `json:"tool_schemas"`
 }
 
 // ConfigCache manages agent configurations with atomic in-memory reads,
@@ -77,6 +87,7 @@ func (c *ConfigCache) Get(ctx context.Context, agentID string) *AgentConfig {
 			EffectiveTools:       []string{},
 			EffectiveConstraints: make(map[string]map[string]any),
 			EffectiveCaps:        make(map[string]map[string]any),
+			ToolSchemas:          make(map[string]ToolSchema),
 		}
 	} else {
 		c.agents.Store(agentID, cfg)

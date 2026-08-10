@@ -1,6 +1,55 @@
 package constraints
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/agp/gateway/internal/configcache"
+)
+
+// TestRequiresAmount_OptionalMoneyFieldIsNotFailClosed verifies the fix for
+// the optional-parameter false positive: a tool that declares an OPTIONAL money
+// field (e.g. "scale" on estimate_agent_usage) must NOT fail closed when the
+// call omits it. Only REQUIRED money fields (or an unknown schema) fail closed.
+func TestRequiresAmount_OptionalMoneyFieldIsNotFailClosed(t *testing.T) {
+	c := &Checker{}
+
+	// Optional money field, schema known → NOT required → no fail-closed.
+	cfg := &configcache.AgentConfig{
+		EffectiveConstraints: map[string]map[string]any{
+			"estimate_agent_usage": {"money_params": []any{"scale"}},
+		},
+		ToolSchemas: map[string]configcache.ToolSchema{
+			"estimate_agent_usage": {Required: []string{"tables", "template", "prompt", "estimated_records"}},
+		},
+	}
+	if required, _ := c.RequiresAmount(cfg, "estimate_agent_usage"); required {
+		t.Fatalf("optional money field 'scale' must not fail closed, got required=true")
+	}
+
+	// Required money field, schema known → required → fail-closed.
+	cfg2 := &configcache.AgentConfig{
+		EffectiveConstraints: map[string]map[string]any{
+			"transfer_money": {"money_params": []any{"amount_cents"}},
+		},
+		ToolSchemas: map[string]configcache.ToolSchema{
+			"transfer_money": {Required: []string{"amount_cents", "dest_account"}},
+		},
+	}
+	if required, _ := c.RequiresAmount(cfg2, "transfer_money"); !required {
+		t.Fatalf("required money field 'amount_cents' must fail closed, got required=false")
+	}
+
+	// Unknown schema → conservative fail-closed.
+	cfg3 := &configcache.AgentConfig{
+		EffectiveConstraints: map[string]map[string]any{
+			"transfer_money": {"money_params": []any{"amount_cents"}},
+		},
+		ToolSchemas: map[string]configcache.ToolSchema{},
+	}
+	if required, _ := c.RequiresAmount(cfg3, "transfer_money"); !required {
+		t.Fatalf("unknown schema must fail closed conservatively, got required=false")
+	}
+}
 
 // TestExtractAmountCents_MoneyParams verifies the declared-field extraction:
 // _cents fields are taken as-is, non-_cents fields are major units (×100), and

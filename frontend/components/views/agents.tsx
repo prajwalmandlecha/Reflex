@@ -359,7 +359,7 @@ function CreateInstanceForm({ classes, onComplete }: { classes: AgentClass[]; on
           <Button
             type="button"
             onClick={copyToken}
-            className="bg-cyan-600 text-white hover:bg-cyan-500 font-mono text-xs px-4"
+            className="bg-cyan-500 text-slate-950 hover:bg-cyan-400 font-mono text-xs font-semibold px-4 h-8"
           >
             {copied ? <Check className="h-4 w-4 mr-2" /> : <Copy className="h-4 w-4 mr-2" />}
             {copied ? 'Copied!' : 'Copy JWT Token'}
@@ -470,7 +470,7 @@ function CreateInstanceForm({ classes, onComplete }: { classes: AgentClass[]; on
         <Button
           type="submit"
           disabled={loading}
-          className="bg-cyan-600 text-white hover:bg-cyan-500 font-mono text-xs px-5"
+          className="bg-cyan-500 text-slate-950 hover:bg-cyan-400 font-mono text-xs font-semibold px-5 h-8"
         >
           Register & Mint Token
         </Button>
@@ -642,9 +642,9 @@ function AgentDetail({
             <Button
               size="sm"
               onClick={copyToken}
-              className="w-full h-7 font-mono text-xs bg-cyan-600 text-white hover:bg-cyan-500"
+              className="w-full h-8 font-mono text-xs bg-cyan-500 text-slate-950 hover:bg-cyan-400 font-semibold flex items-center justify-center gap-1.5 transition-colors"
             >
-              {copied ? <Check className="h-3 w-3 mr-1.5" /> : <Copy className="h-3 w-3 mr-1.5" />}
+              {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
               {copied ? 'Copied to Clipboard!' : 'Copy JWT Token'}
             </Button>
           </div>
@@ -746,7 +746,7 @@ function AgentDetail({
                   type="button"
                   disabled={savingTools}
                   onClick={() => handleSaveToolOverrides(activeTools)}
-                  className="h-6 px-3 text-[10px] font-mono bg-cyan-600 text-white hover:bg-cyan-500"
+                  className="h-7 px-3 text-[10px] font-mono bg-cyan-500 text-slate-950 hover:bg-cyan-400 font-semibold"
                 >
                   {savingTools ? <RefreshCw className="h-3 w-3 animate-spin mr-1" /> : null}
                   Apply Scoped Down Tools
@@ -993,11 +993,24 @@ function AgentConnectionSnippet({ agent, cls, token }: { agent: AgentInstance; c
         </button>
       </div>
 
-      <div className="text-[10px] text-ink-secondary space-y-0.5 pt-1 font-mono">
+      <div className="text-[10px] text-ink-secondary space-y-1.5 pt-1 font-mono">
         <div>• <strong className="text-white">Gateway Endpoint</strong>: <code className="text-cyan-300">{gatewayUrl}</code></div>
         <div>• <strong className="text-white">Agent ID</strong>: <code className="text-cyan-300">{agent.id}</code></div>
         <div>• <strong className="text-white">Class</strong>: <code className="text-cyan-300">{cls?.name ?? agent.classId}</code></div>
-        <div>• <strong className="text-white">Allowed Tools</strong>: <code className="text-cyan-300">{allowedTools.length > 0 ? allowedTools.join(', ') : 'None assigned'}</code></div>
+        <div className="flex items-start gap-1 flex-wrap">
+          <strong className="text-white shrink-0">• Allowed Tools:</strong>
+          {allowedTools.length > 0 ? (
+            <div className="flex flex-wrap gap-1">
+              {allowedTools.map((tool) => (
+                <code key={tool} className="rounded bg-white/5 border border-white/10 px-1.5 py-0.5 text-[10px] text-cyan-300">
+                  {tool}
+                </code>
+              ))}
+            </div>
+          ) : (
+            <code className="text-cyan-300">None assigned</code>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -1115,7 +1128,7 @@ function AgentConnectionGuideModal({ open, onOpenChange }: { open: boolean; onOp
           />
 
           <div className="flex justify-end pt-2">
-            <Button onClick={() => onOpenChange(false)} className="bg-cyan-600 hover:bg-cyan-500 text-white font-mono text-xs px-5">
+            <Button onClick={() => onOpenChange(false)} className="bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-mono text-xs font-semibold px-5 h-8">
               Got it
             </Button>
           </div>
