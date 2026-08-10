@@ -79,9 +79,8 @@ const (
 // JSON-RPC requests, runs them through the governance pipeline, and proxies
 // allowed calls to downstream MCP or REST servers.
 type MCPProxy struct {
-	targets         map[string]string // effective: env targets + native-MCP connections
-	targetsMux      sync.RWMutex
-	envTargets      map[string]string // static MCP_TARGETS from env, never reloaded
+	targets    map[string]string // populated exclusively from Redis agp:connections
+	targetsMux sync.RWMutex
 	openAPITargets  map[string]*OpenAPISpecTarget
 	openAPIMux      sync.RWMutex
 	connAuth        map[string]*downstreamAuth // connection_id → downstream creds
@@ -115,8 +114,7 @@ func NewMCPProxy(
 	logger *slog.Logger,
 ) *MCPProxy {
 	return &MCPProxy{
-		targets:         targets,
-		envTargets:      targets,
+		targets: targets,
 		openAPITargets:  make(map[string]*OpenAPISpecTarget),
 		connAuth:        make(map[string]*downstreamAuth),
 		toolRouting:     make(map[string]string),
@@ -185,7 +183,8 @@ func (p *MCPProxy) LoadOpenAPISpecs(ctx context.Context) {
 		}
 		baseURL := conn.BaseURL
 		if baseURL == "" {
-			baseURL = "http://localhost:8080"
+			p.logger.Warn("skipping openapi connection with empty base_url", "connection", id)
+			continue
 		}
 		newTargets[id] = &OpenAPISpecTarget{BaseURL: baseURL, Doc: doc}
 	}
@@ -246,16 +245,12 @@ func (p *MCPProxy) authForConnection(connectionID string) *downstreamAuth {
 	return p.connAuth[connectionID]
 }
 
-// LoadNativeTargets rebuilds the effective native-MCP target map by merging the
-// static env MCP_TARGETS with any native_mcp bank_connections cached in Redis.
-// This lets connections registered at runtime become routable without a restart
-// (previously only OpenAPI connections were hot-reloaded). Env targets win on
-// name conflicts so an operator can always override via config.
+// LoadNativeTargets rebuilds the native-MCP target map exclusively from
+// bank_connections cached in Redis (agp:connections). MCP targets are
+// user-managed data registered via the Control Center UI — they are never
+// sourced from environment variables.
 func (p *MCPProxy) LoadNativeTargets(ctx context.Context) {
-	merged := make(map[string]string, len(p.envTargets))
-	for k, v := range p.envTargets {
-		merged[k] = v
-	}
+	targets := make(map[string]string)
 
 	if p.rdb != nil {
 		raw, err := p.rdb.Get(ctx, "agp:connections").Result()
@@ -264,9 +259,7 @@ func (p *MCPProxy) LoadNativeTargets(ctx context.Context) {
 			if err := json.Unmarshal([]byte(raw), &mapping); err == nil {
 				for id, conn := range mapping {
 					if conn.SourceType == "native_mcp" && conn.MCPURL != "" {
-						if _, overridden := p.envTargets[id]; !overridden {
-							merged[id] = conn.MCPURL
-						}
+						targets[id] = conn.MCPURL
 					}
 				}
 			}
@@ -274,9 +267,9 @@ func (p *MCPProxy) LoadNativeTargets(ctx context.Context) {
 	}
 
 	p.targetsMux.Lock()
-	p.targets = merged
+	p.targets = targets
 	p.targetsMux.Unlock()
-	p.logger.Info("loaded native mcp targets", "count", len(merged))
+	p.logger.Info("loaded native mcp targets from db/redis", "count", len(targets))
 }
 
 // getTarget returns the downstream URL for a service name, or the default.
@@ -463,15 +456,24 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve target URL from service name (lock-safe; hot-reloadable)
-	targetURL, ok := p.getTarget(serviceName)
-	if !ok {
-		targetURL = "http://localhost:9000"
-	}
-
 	if method == "tools/list" {
 		// Always aggregate tools from all services
 		p.handleAggregatedToolsList(w, r, bodyBytes, allowedTools)
+		return
+	}
+
+	// Aggregated resources/list and prompts/list across all targets, filtered by
+	// the agent's whitelist (same pattern as tools/list).
+	if method == "resources/list" || method == "prompts/list" {
+		p.handleAggregatedList(w, r, bodyBytes, method, allowedTools)
+		return
+	}
+
+	// Resolve target URL from service name (lock-safe; hot-reloadable)
+	targetURL, ok := p.getTarget(serviceName)
+	if !ok {
+		p.logger.Warn("no downstream target configured for service", "service", serviceName, "agent_id", agentID)
+		p.sendErrorResponse(w, r, reqID, fmt.Sprintf("no downstream MCP target configured for service %q — register a bank connection via the Control Center", serviceName))
 		return
 	}
 
@@ -485,13 +487,6 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// killswitch → constraints → OPA → rate-limit pipeline (no spend commit).
 	if method == "resources/read" || method == "prompts/get" {
 		p.handleGovernedRead(w, r, rpcReq, reqID, method, targetURL, bodyBytes, serviceName, agentID, agentKind, classID, allowedTools, agentCfg, reqStart)
-		return
-	}
-
-	// Aggregated resources/list and prompts/list across all targets, filtered by
-	// the agent's whitelist (same pattern as tools/list).
-	if method == "resources/list" || method == "prompts/list" {
-		p.handleAggregatedList(w, r, bodyBytes, method, allowedTools)
 		return
 	}
 

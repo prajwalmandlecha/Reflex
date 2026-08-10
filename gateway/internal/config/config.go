@@ -2,14 +2,16 @@
 package config
 
 import (
-	"encoding/json"
-	"log/slog"
 	"os"
 	"strconv"
 	"time"
 )
 
 // Config holds gateway configuration sourced from environment variables.
+// NOTE: MCP downstream targets are NOT configured here. They are user-managed
+// data registered via the Control Center UI (bank connections) and discovered
+// by the gateway from the Redis agp:connections cache at startup and via
+// hot-reload on config:updates pub/sub.
 type Config struct {
 	// Server ports
 	MCPPort     string
@@ -36,24 +38,10 @@ type Config struct {
 
 	// Policy
 	PolicyPollInterval time.Duration
-
-	// Downstream MCP Target Servers
-	MCPTargets map[string]string
 }
 
 // Load reads configuration from environment variables with sensible defaults.
 func Load() *Config {
-	targets := make(map[string]string)
-	if targetsJSON := os.Getenv("MCP_TARGETS"); targetsJSON != "" {
-		if err := json.Unmarshal([]byte(targetsJSON), &targets); err != nil {
-			slog.Warn("failed to parse MCP_TARGETS, using defaults only", "error", err)
-		}
-	}
-
-	if _, ok := targets["default"]; !ok {
-		targets["default"] = "http://localhost:9000"
-	}
-
 	return &Config{
 		MCPPort:     envOr("GATEWAY_MCP_PORT", "8080"),
 		MetricsPort: envOr("GATEWAY_METRICS_PORT", "9090"),
@@ -62,8 +50,8 @@ func Load() *Config {
 		RedisPassword: envOr("REDIS_PASSWORD", ""),
 		RedisDB:       envIntOr("REDIS_DB", 0),
 
-		PostgresDSN: envOr("POSTGRES_DSN", "postgres://agp:agp@localhost:5433/agp?sslmode=disable"),
-		BackendURL:  envOr("BACKEND_URL", "http://localhost:8000"),
+		PostgresDSN: envOr("POSTGRES_DSN", ""),
+		BackendURL:  envOr("BACKEND_URL", ""),
 
 		JWTSecret: envOr("GATEWAY_JWT_SECRET", envOr("JWT_SECRET", "dev-secret-2026")),
 		JWTIssuer: envOr("GATEWAY_JWT_ISSUER", envOr("JWT_ISSUER", "agp-gateway")),
@@ -72,8 +60,6 @@ func Load() *Config {
 		AuditFlushInterval: envDurationOr("AUDIT_FLUSH_INTERVAL", 500*time.Millisecond),
 
 		PolicyPollInterval: envDurationOr("POLICY_POLL_INTERVAL", 30*time.Second),
-
-		MCPTargets: targets,
 	}
 }
 

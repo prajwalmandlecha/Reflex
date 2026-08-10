@@ -101,8 +101,11 @@ func main() {
 	}
 
 	// --- MCP Security Interceptor & Proxy ---
+	// MCP targets are user-managed data (bank connections registered via the UI),
+	// not infrastructure config. The proxy starts with an empty target map and
+	// populates it from Redis via LoadNativeTargets() below.
 	mcpInterceptor := proxy.NewMCPProxy(
-		cfg.MCPTargets,
+		map[string]string{},
 		ks,
 		policyEngine,
 		spendLimiter,
@@ -113,7 +116,7 @@ func main() {
 		rdb,
 		logger,
 	)
-	logger.Info("MCP Security Interceptor Proxy initialized", "targets", cfg.MCPTargets)
+	logger.Info("MCP Security Interceptor Proxy initialized")
 
 	// Load OpenAPI virtual targets, tool routing, and native-MCP targets from the
 	// bank-connection cache, and keep them hot-reloaded on config changes (G7).
