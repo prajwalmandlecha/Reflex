@@ -230,7 +230,7 @@ func (l *Logger) writeBatch(ctx context.Context, entries []*Entry) error {
 			ConstraintLatencyMs:  pgtype.Float8{Float64: e.ConstraintLatencyMs, Valid: true},
 			DownstreamLatencyMs:  pgtype.Float8{Float64: e.DownstreamLatencyMs, Valid: true},
 			GovernanceOverheadMs: pgtype.Float8{Float64: e.GovernanceOverheadMs, Valid: true},
-			PrevHash:             pgtype.Text{String: e.PrevHash, Valid: e.PrevHash != ""},
+			PrevHash:             pgtype.Text{String: e.PrevHash, Valid: true},
 			EntryHash:            e.EntryHash,
 		})
 		if err != nil {

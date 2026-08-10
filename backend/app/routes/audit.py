@@ -137,8 +137,9 @@ async def verify_audit_log_integrity():
     prev_hash = ""
     last_good_id = 0
     for r in rows:
+        row_prev_hash = r["prev_hash"] or ""
         # 1. Linkage: this row must chain to the previous row's entry_hash.
-        if r["prev_hash"] != prev_hash:
+        if row_prev_hash != prev_hash:
             return AuditVerificationResult(
                 valid=False,
                 total_records=len(rows),
