@@ -686,10 +686,11 @@ function AgentConnectionSnippet({ agent, cls, token }: { agent: AgentInstance; c
   const [copied, setCopied] = useState(false);
   const bearer = token || '<YOUR_JWT_TOKEN>';
 
-  // Derive the gateway URL dynamically — in production nginx proxies /mcp to the gateway.
+  // Gateway serves /mcp directly on its own port (no reverse proxy in front).
+  // Override with NEXT_PUBLIC_GATEWAY_URL if the gateway is on a different host.
   const gatewayUrl = typeof window !== 'undefined'
-    ? (process.env.NEXT_PUBLIC_GATEWAY_URL || `${window.location.origin}/mcp`)
-    : '/mcp';
+    ? (process.env.NEXT_PUBLIC_GATEWAY_URL || `${window.location.hostname}:8080/mcp`)
+    : 'http://localhost:8080/mcp';
 
   // Pick a sample tool from the agent's allowed tools for the curl example.
   // Arguments are left empty — we don't fabricate fake account IDs / values.
@@ -708,7 +709,6 @@ function AgentConnectionSnippet({ agent, cls, token }: { agent: AgentInstance; c
         url: gatewayUrl,
         headers: {
           Authorization: `Bearer ${bearer}`,
-          'X-Agent-ID': agent.id,
         },
       },
     },
@@ -716,7 +716,6 @@ function AgentConnectionSnippet({ agent, cls, token }: { agent: AgentInstance; c
 
   const curlSnippet = `curl -X POST ${gatewayUrl} \\
   -H "Authorization: Bearer ${bearer}" \\
-  -H "X-Agent-ID: ${agent.id}" \\
   -H "Content-Type: application/json" \\
   -H "Accept: application/json, text/event-stream" \\
   -d '${JSON.stringify({

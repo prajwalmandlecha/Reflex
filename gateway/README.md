@@ -23,8 +23,7 @@ An **In-Flight Security Interceptor & Transparent Reverse Proxy** for AI agents 
 ┌─────────────────────────────────────────────────────────────┐
 │  REFLEX GATEWAY (:8080)  — single /mcp endpoint             │
 │                                                             │
-│  1. Authenticate agent (mandatory Bearer JWT; X-Agent-ID    │
-│     header is only an optional cross-check)                 │
+│  1. Authenticate agent (mandatory Bearer JWT)               │
 │  2. Route tools/call → downstream via tool_name             │
 │     (agp:tool_routing in Redis)                             │
 │  3. Governance gauntlet (tools/call, resources/read,        │
@@ -53,7 +52,7 @@ Downstream targets are a mix of **native MCP servers** (from `MCP_TARGETS` env +
 
 1. **Transparent MCP reverse proxy** — single `/mcp` endpoint; routes `tools/call` to the correct downstream by tool name.
 2. **Governed tools, resources & prompts** — `tools/call`, `resources/read`, and `prompts/get` all pass through the governance pipeline. `resources/list` / `prompts/list` / `tools/list` are aggregated across targets, deduped, and filtered by the agent's whitelist.
-3. **Mandatory JWT authn** — HS256 Bearer tokens validated with issuer check; `X-Agent-ID` header is a cross-check only, never sufficient alone.
+3. **Mandatory JWT authn** — HS256 Bearer tokens validated with issuer check; identity is derived solely from the token claims.
 4. **Embedded OPA/Rego authz** — per-policy modules + aggregator (deny > allow > default-deny), hot-reloaded from Postgres/Redis.
 5. **Atomic spend & rate limiting** — a single Redis Lua script commits rate-limit (sliding-window sub-buckets) and hierarchical spend caps (agent-hourly / class-daily / fleet-daily) all-or-nothing; committed budget is **rolled back** if the downstream call fails.
 6. **Sub-ms killswitch** — fleet / class / agent halt via Redis keys.
@@ -73,8 +72,7 @@ Downstream targets are a mix of **native MCP servers** (from `MCP_TARGETS` env +
 
 **Required headers:**
 
-- `Authorization: Bearer <minted_jwt>` — **required**. Minted by the backend (`POST :8000/api/v1/tokens`).
-- `X-Agent-ID: <agent_id>` — optional cross-check; rejected if it disagrees with the JWT.
+- `Authorization: Bearer <minted_jwt>` — **required**. Minted by the backend (`POST :8000/api/v1/tokens`). Identity is derived solely from the token claims.
 
 ### Operator endpoints on the gateway (`:8080`)
 

@@ -73,10 +73,7 @@ func (p *MCPProxy) sendErrorResponse(w http.ResponseWriter, r *http.Request, req
 }
 
 // extractIdentity authenticates the caller. A valid Bearer JWT is REQUIRED;
-// identity is derived solely from the validated token claims. The X-Agent-ID
-// header is accepted only as an optional consistency cross-check — if present
-// and it disagrees with the token's agent_id, the request is rejected. The
-// header alone is never sufficient to establish identity.
+// identity is derived solely from the validated token claims.
 func (p *MCPProxy) extractIdentity(r *http.Request) (string, string, error) {
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
@@ -87,12 +84,6 @@ func (p *MCPProxy) extractIdentity(r *http.Request) (string, string, error) {
 	claims, err := p.jwtMgr.Validate(token)
 	if err != nil {
 		return "", "", fmt.Errorf("invalid or expired token: %v", err)
-	}
-
-	// Optional cross-check: if the caller also asserts an agent id via header,
-	// it must match the token's identity (prevents confused-deputy mistakes).
-	if headerAgentID := r.Header.Get("X-Agent-ID"); headerAgentID != "" && headerAgentID != claims.AgentID {
-		return "", "", fmt.Errorf("X-Agent-ID header does not match authenticated token identity")
 	}
 
 	return claims.AgentID, claims.AgentKind, nil
