@@ -186,6 +186,14 @@ func (p *MCPProxy) handleOpenAPIRequest(
 // (native MCP targets + OpenAPI virtual targets), merges them, filters by the
 // agent's allowed tools, and returns a single combined response.
 func (p *MCPProxy) handleAggregatedToolsList(w http.ResponseWriter, r *http.Request, bodyBytes []byte, allowedTools []string) {
+	// Lazy self-heal: re-read the connection cache and tool routing from Redis
+	// on every tools/list. This closes the startup race where the gateway loads
+	// 0 native MCP targets (or a stale routing map) and never refreshes until a
+	// config:updates pub/sub message arrives. Cost is one Redis GET per request,
+	// which is negligible compared to the downstream tools/list fan-out below.
+	p.LoadNativeTargets(r.Context())
+	p.LoadToolRouting(r.Context())
+
 	allowedSet := make(map[string]bool)
 	for _, t := range allowedTools {
 		allowedSet[t] = true
