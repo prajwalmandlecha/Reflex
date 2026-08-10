@@ -516,7 +516,7 @@ func (p *MCPProxy) handleToolsCall(
 		if !p.proxyToTarget(w, r, targetURL, bodyBytes, serviceName) {
 			// Downstream unreachable/5xx AFTER governance committed counters:
 			// refund the budget and record a downstream-stage failure.
-``			p.rollbackCommittedEntries(committedEntries, agentID, toolName)
+			p.rollbackCommittedEntries(committedEntries, agentID, toolName)
 			allowed = false
 			denyStage = "downstream"
 			reason = fmt.Sprintf("downstream MCP server (%s) failed", targetURL)
