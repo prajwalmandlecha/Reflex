@@ -142,7 +142,7 @@ func (p *MCPProxy) governCall(
 // rollbackCommittedEntries refunds the governance counters committed in Stage 4
 // when the downstream call fails after governance allowed it — a failed bank
 // call must never consume spend or rate-limit budget.
-func (p *MCPProxy) rollbackCommittedEntries(ctx context.Context, entries []spend.Entry, agentID, toolName string) {
+func (p *MCPProxy) rollbackCommittedEntries(entries []spend.Entry, agentID, toolName string) {
 	if len(entries) == 0 {
 		return
 	}

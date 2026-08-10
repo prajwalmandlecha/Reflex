@@ -112,7 +112,7 @@ func (p *MCPProxy) handleOpenAPIRequest(
 			if err != nil {
 				// Downstream request construction failed after governance allowed:
 				// refund the committed budget and record a downstream-stage failure.
-				p.rollbackCommittedEntries(r.Context(), committedEntries, agentID, toolName)
+				p.rollbackCommittedEntries(committedEntries, agentID, toolName)
 				allowed = false
 				denyStage = "downstream"
 				reason = fmt.Sprintf("invalid tool arguments: %v", err)
@@ -123,7 +123,7 @@ func (p *MCPProxy) handleOpenAPIRequest(
 				injectDownstreamAuth(restReq, p.authForConnection(serviceName))
 				resp, err := p.client.Do(restReq)
 				if err != nil {
-					p.rollbackCommittedEntries(r.Context(), committedEntries, agentID, toolName)
+					p.rollbackCommittedEntries(committedEntries, agentID, toolName)
 					allowed = false
 					denyStage = "downstream"
 					reason = "downstream bank REST API unreachable"
@@ -132,7 +132,7 @@ func (p *MCPProxy) handleOpenAPIRequest(
 					// Downstream 5xx after governance committed: refund budget.
 					// 4xx is a legitimate (if rejected) bank response and stays charged.
 					resp.Body.Close()
-					p.rollbackCommittedEntries(r.Context(), committedEntries, agentID, toolName)
+					p.rollbackCommittedEntries(committedEntries, agentID, toolName)
 					allowed = false
 					denyStage = "downstream"
 					reason = fmt.Sprintf("downstream bank REST API failed (HTTP %d)", resp.StatusCode)

@@ -79,8 +79,8 @@ const (
 // JSON-RPC requests, runs them through the governance pipeline, and proxies
 // allowed calls to downstream MCP or REST servers.
 type MCPProxy struct {
-	targets    map[string]string // populated exclusively from Redis agp:connections
-	targetsMux sync.RWMutex
+	targets         map[string]string // populated exclusively from Redis agp:connections
+	targetsMux      sync.RWMutex
 	openAPITargets  map[string]*OpenAPISpecTarget
 	openAPIMux      sync.RWMutex
 	connAuth        map[string]*downstreamAuth // connection_id → downstream creds
@@ -114,7 +114,7 @@ func NewMCPProxy(
 	logger *slog.Logger,
 ) *MCPProxy {
 	return &MCPProxy{
-		targets: targets,
+		targets:         targets,
 		openAPITargets:  make(map[string]*OpenAPISpecTarget),
 		connAuth:        make(map[string]*downstreamAuth),
 		toolRouting:     make(map[string]string),
@@ -516,7 +516,7 @@ func (p *MCPProxy) handleToolsCall(
 		if !p.proxyToTarget(w, r, targetURL, bodyBytes, serviceName) {
 			// Downstream unreachable/5xx AFTER governance committed counters:
 			// refund the budget and record a downstream-stage failure.
-			p.rollbackCommittedEntries(r.Context(), committedEntries, agentID, toolName)
+``			p.rollbackCommittedEntries(committedEntries, agentID, toolName)
 			allowed = false
 			denyStage = "downstream"
 			reason = fmt.Sprintf("downstream MCP server (%s) failed", targetURL)
@@ -582,7 +582,7 @@ func (p *MCPProxy) handleGovernedRead(
 	downstreamStart := time.Now()
 	if allowed {
 		if !p.proxyToTarget(w, r, targetURL, bodyBytes, serviceName) {
-			p.rollbackCommittedEntries(r.Context(), committedEntries, agentID, actionName)
+			p.rollbackCommittedEntries(committedEntries, agentID, actionName)
 			allowed = false
 			denyStage = "downstream"
 			reason = fmt.Sprintf("downstream MCP server (%s) failed", targetURL)
