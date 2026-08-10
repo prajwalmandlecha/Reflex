@@ -453,7 +453,7 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
             <Input
               value={mcpUrl}
               onChange={(e) => setMcpUrl(e.target.value)}
-              placeholder="http://20.2.83.126:31200/mcp"
+              placeholder="https://your-mcp-server.example.com/mcp"
               className="mt-1 border-white/10 bg-white/5 font-mono text-xs"
               required
             />
@@ -531,7 +531,7 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
             <Input
               value={apiBaseUrl}
               onChange={(e) => setApiBaseUrl(e.target.value)}
-              placeholder="http://api.bank.internal:8080"
+              placeholder="https://your-api.example.com"
               className="mt-1 border-white/10 bg-white/5 font-mono text-xs"
             />
           </div>

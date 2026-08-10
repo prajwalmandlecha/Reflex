@@ -5,11 +5,16 @@ import { useEffect, useRef, useState } from "react";
 function getWsBase(): string {
   if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
   if (typeof window === 'undefined') return '';
+  // Derive from NEXT_PUBLIC_API_URL if set, otherwise use same-origin
+  // (nginx proxies /ws/ paths to the backend).
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+  if (apiUrl) {
+    const url = new URL(apiUrl);
+    const protocol = url.protocol === 'https:' ? 'wss' : 'ws';
+    return `${protocol}://${url.host}`;
+  }
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  const host = window.location.port === '3000'
-    ? `${window.location.hostname}:8000`
-    : window.location.host;
-  return `${protocol}://${host}`;
+  return `${protocol}://${window.location.host}`;
 }
 
 export function useWebSocket<T>(path: string, maxHistory = 100) {

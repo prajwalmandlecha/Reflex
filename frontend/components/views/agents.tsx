@@ -686,10 +686,10 @@ function AgentConnectionSnippet({ agent, cls, token }: { agent: AgentInstance; c
   const [copied, setCopied] = useState(false);
   const bearer = token || '<YOUR_JWT_TOKEN>';
 
-  // Derive the gateway URL from the current host (nginx proxies port 80 → gateway 8080)
+  // Derive the gateway URL dynamically — in production nginx proxies /mcp to the gateway.
   const gatewayUrl = typeof window !== 'undefined'
-    ? `${window.location.protocol}//${window.location.hostname}:8080/mcp`
-    : 'http://localhost:8080/mcp';
+    ? (process.env.NEXT_PUBLIC_GATEWAY_URL || `${window.location.origin}/mcp`)
+    : '/mcp';
 
   // Pick a sample tool from the agent's allowed tools for the curl example.
   // Arguments are left empty — we don't fabricate fake account IDs / values.
