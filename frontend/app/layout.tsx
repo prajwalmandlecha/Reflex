@@ -1,22 +1,11 @@
 import './globals.css';
 import type { Metadata } from 'next';
-import { IBM_Plex_Mono, IBM_Plex_Sans } from 'next/font/google';
 import { Toaster } from '@/components/ui/toaster';
 
-const plexSans = IBM_Plex_Sans({
-  subsets: ['latin'],
-  weight: ['400', '500', '600'],
-  variable: '--font-plex-sans',
-  display: 'swap',
-});
-
-const plexMono = IBM_Plex_Mono({
-  subsets: ['latin'],
-  weight: ['400', '500',
-    '600'],
-  variable: '--font-plex-mono',
-  display: 'swap',
-});
+// NOTE: IBM Plex fonts were previously loaded via next/font/google, but that
+// fetches from Google Fonts at build time and fails in offline/air-gapped
+// build containers (EAI_AGAIN). globals.css already falls back to
+// system-ui, sans-serif, so we rely on the system font stack here.
 
 export const metadata: Metadata = {
   title: 'Governance Control Center — Agent Fleet Operations',
@@ -30,7 +19,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${plexSans.variable} ${plexMono.variable}`}>
+    <html lang="en">
       <body className="font-sans antialiased">
         {children}
         <Toaster />

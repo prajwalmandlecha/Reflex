@@ -12,6 +12,14 @@ const nextConfig = {
         source: '/api/v1/:path*',
         destination: `${backendUrl}/api/v1/:path*`,
       },
+      // Proxy WebSocket upgrades to the backend so the live telemetry
+      // streams (/ws/activity, /ws/metrics, /ws/alerts, /ws/fleet) work
+      // through the same-origin frontend. Without this, the frontend has no
+      // route for /ws/* and the sockets fail (UI falls back to "Polling").
+      {
+        source: '/ws/:path*',
+        destination: `${backendUrl}/ws/:path*`,
+      },
     ];
   },
 };
