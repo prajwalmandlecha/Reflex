@@ -6,13 +6,8 @@ import { Panel } from '@/components/gov/panel';
 import { StatusBadge } from '@/components/gov/status-badge';
 import { SpendBar } from '@/components/gov/spend-bar';
 import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet';
-import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogHeader,
   DialogTitle,
@@ -42,7 +37,7 @@ import { formatCurrency, formatTimestamp, formatDateTime } from '@/lib/format';
 import { useToast } from '@/hooks/use-toast';
 import type { AgentInstance, AgentClass, ActivityEvent } from '@/lib/types';
 import { api } from '@/lib/api';
-import { Search, Ban, Shield, Clock, Wrench, Plus, Key, Copy, Check, RefreshCw, Play, Terminal, Trash2 } from 'lucide-react';
+import { Search, Ban, Shield, Clock, Wrench, Plus, Key, Copy, Check, RefreshCw, Play, Terminal, Trash2, X } from 'lucide-react';
 
 export function AgentsView({
   instances,
@@ -217,8 +212,8 @@ export function AgentsView({
       )}
 
       {/* Instance Detail Drawer */}
-      <Sheet open={!!selectedAgent} onOpenChange={(open) => !open && onSelectAgent(null)}>
-        <SheetContent className="w-full border-white/10 bg-slate-950 text-white sm:max-w-md overflow-y-auto">
+      <Dialog open={!!selectedAgent} onOpenChange={(open) => !open && onSelectAgent(null)}>
+        <DialogContent hideClose className="max-w-4xl border-white/10 bg-slate-950 text-white p-0 gap-0 overflow-hidden">
           {selectedAgent && (
               <AgentDetail
                 agent={selectedAgent}
@@ -257,8 +252,8 @@ export function AgentsView({
                 onRefresh={onRefresh}
               />
           )}
-        </SheetContent>
-      </Sheet>
+        </DialogContent>
+      </Dialog>
 
       {/* Create Instance Dialog */}
       <Dialog open={showCreate} onOpenChange={setShowCreate}>
@@ -596,32 +591,85 @@ function AgentDetail({
   };
 
   return (
-    <div className="flex flex-col gap-4 pt-4">
-      <SheetHeader>
-        <SheetTitle className="font-mono text-sm uppercase tracking-widest text-ink-primary flex items-center justify-between">
-          <span>{agent.id}</span>
-          <div className="flex items-center gap-2">
-            {agent.degraded && (
-              <span className="inline-flex items-center rounded-full border border-signal-caution/20 bg-signal-caution/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-signal-caution">
-                degraded
-              </span>
-            )}
-            <StatusBadge status={agent.status} />
-          </div>
-        </SheetTitle>
-      </SheetHeader>
-
-      <div className="border-b border-white/5 pb-4 space-y-1.5">
-        <div className="font-mono text-xs text-ink-secondary">
-          Class: <span className="text-cyan-400 font-semibold">{cls?.name ?? agent.classId}</span>
+    <div className="flex flex-col">
+      {/* Modal header */}
+      <div className="flex items-center justify-between border-b border-white/10 px-6 py-4">
+        <div className="flex items-center gap-3">
+          <span className="font-mono text-base font-semibold text-ink-primary">{agent.id}</span>
+          <span className="font-mono text-xs text-ink-secondary">
+            Class: <span className="text-cyan-400 font-semibold">{cls?.name ?? agent.classId}</span>
+          </span>
         </div>
-        {agent.degraded && (agent.unreachableTools || []).length > 0 && (
-          <div className="font-mono text-[11px] text-signal-caution">
-            {(agent.unreachableTools || []).length} tool{(agent.unreachableTools || []).length !== 1 ? 's' : ''} unreachable
-            <span className="text-ink-secondary"> — {(agent.unreachableTools || []).join(', ')}</span>
+        <div className="flex items-center gap-2">
+          {agent.degraded && (
+            <span className="inline-flex items-center rounded-full border border-signal-caution/20 bg-signal-caution/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-signal-caution">
+              degraded
+            </span>
+          )}
+          <StatusBadge status={agent.status} />
+          <DialogClose asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-ink-secondary hover:text-white hover:bg-white/10"
+              aria-label="Close"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </DialogClose>
+        </div>
+      </div>
+
+      {agent.degraded && (agent.unreachableTools || []).length > 0 && (
+        <div className="border-b border-white/5 px-6 py-2 font-mono text-[11px] text-signal-caution">
+          {(agent.unreachableTools || []).length} tool{(agent.unreachableTools || []).length !== 1 ? 's' : ''} unreachable
+          <span className="text-ink-secondary"> — {(agent.unreachableTools || []).join(', ')}</span>
+        </div>
+      )}
+
+      {/* Single-column body */}
+      <div className="space-y-4 p-6 overflow-y-auto max-h-[70vh]">
+      {/* JWT Bearer Token Controls */}
+      <div className="border border-white/10 bg-white/[0.02] p-3 rounded space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="font-mono text-[10px] uppercase tracking-widest text-cyan-400 font-semibold flex items-center gap-1.5">
+            <Key className="h-3.5 w-3.5" /> Bearer JWT Token
+          </span>
+          <Button
+            size="sm"
+            onClick={handleMintToken}
+            disabled={loadingToken}
+            className="h-6 px-2 text-[10px] font-mono border border-cyan-500/30 bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20"
+          >
+            {loadingToken ? <RefreshCw className="h-3 w-3 animate-spin" /> : 'Mint Token'}
+          </Button>
+        </div>
+
+        {jwtToken ? (
+          <div className="space-y-2">
+            <textarea
+              readOnly
+              value={jwtToken}
+              className="h-20 w-full border border-white/10 bg-white/5 p-1.5 font-mono text-[10px] leading-relaxed rounded text-cyan-300 select-text focus:outline-none"
+            />
+            <Button
+              size="sm"
+              onClick={copyToken}
+              className="w-full h-7 font-mono text-xs bg-cyan-600 text-white hover:bg-cyan-500"
+            >
+              {copied ? <Check className="h-3 w-3 mr-1.5" /> : <Copy className="h-3 w-3 mr-1.5" />}
+              {copied ? 'Copied to Clipboard!' : 'Copy JWT Token'}
+            </Button>
           </div>
+        ) : (
+          <p className="font-mono text-[10px] text-ink-secondary">
+            Click &quot;Mint Token&quot; to generate an authentication token for this agent.
+          </p>
         )}
       </div>
+
+      {/* Connection Info & Snippets */}
+      <AgentConnectionSnippet agent={agent} cls={cls} token={jwtToken} />
 
       {/* Instance Governance Overrides & Tool Control Card */}
       <div className="border border-white/10 bg-slate-900/90 p-3.5 rounded space-y-3 font-mono text-xs">
@@ -762,48 +810,6 @@ function AgentDetail({
         </div>
       </div>
 
-      {/* JWT Bearer Token Controls */}
-      <div className="border border-white/10 bg-white/[0.02] p-3 rounded space-y-2">
-        <div className="flex items-center justify-between">
-          <span className="font-mono text-[10px] uppercase tracking-widest text-cyan-400 font-semibold flex items-center gap-1.5">
-            <Key className="h-3.5 w-3.5" /> Bearer JWT Token
-          </span>
-          <Button
-            size="sm"
-            onClick={handleMintToken}
-            disabled={loadingToken}
-            className="h-6 px-2 text-[10px] font-mono border border-cyan-500/30 bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20"
-          >
-            {loadingToken ? <RefreshCw className="h-3 w-3 animate-spin" /> : 'Mint Token'}
-          </Button>
-        </div>
-
-        {jwtToken ? (
-          <div className="space-y-2">
-            <textarea
-              readOnly
-              value={jwtToken}
-              className="h-20 w-full border border-white/10 bg-white/5 p-1.5 font-mono text-[10px] leading-relaxed rounded text-cyan-300 select-text focus:outline-none"
-            />
-            <Button
-              size="sm"
-              onClick={copyToken}
-              className="w-full h-7 font-mono text-xs bg-cyan-600 text-white hover:bg-cyan-500"
-            >
-              {copied ? <Check className="h-3 w-3 mr-1.5" /> : <Copy className="h-3 w-3 mr-1.5" />}
-              {copied ? 'Copied to Clipboard!' : 'Copy JWT Token'}
-            </Button>
-          </div>
-        ) : (
-          <p className="font-mono text-[10px] text-ink-secondary">
-            Click &quot;Mint Token&quot; to generate an authentication token for this agent.
-          </p>
-        )}
-      </div>
-
-      {/* Connection Info & Snippets */}
-      <AgentConnectionSnippet agent={agent} cls={cls} token={jwtToken} />
-
       {/* Recent actions */}
       <div className="border-b border-white/5 pb-4">
         <div className="mb-2 flex items-center gap-2">
@@ -902,6 +908,7 @@ function AgentDetail({
           </AlertDialog>
         )}
       </div>
+      </div>{/* end single-column body */}
     </div>
   );
 }
