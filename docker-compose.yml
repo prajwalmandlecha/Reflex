@@ -38,12 +38,12 @@ services:
       - "8000:8000"
     environment:
       DATABASE_URL: "postgresql+asyncpg://agp:agp@postgres:5432/agp"
-      PG_DSN: "postgres://agp:agp@postgres:5432/agp?sslmode=disable"
       REDIS_URL: "redis://redis:6379/0"
       JWT_SECRET: "${JWT_SECRET:?Set JWT_SECRET in .env}"
       JWT_ISSUER: "${JWT_ISSUER:-agp-gateway}"
       FERNET_KEY: "${FERNET_KEY:?Set FERNET_KEY in .env}"
       GATEWAY_URL: "http://gateway:8080"
+      AGP_ENV: "${AGP_ENV:-dev}"
       CORS_ORIGINS: "*"
     networks:
       - frontend
@@ -69,7 +69,6 @@ services:
       POSTGRES_DSN: "postgres://agp:agp@postgres:5432/agp?sslmode=disable"
       BACKEND_URL: "http://backend:8000"
       AGP_ENV: "${AGP_ENV:-dev}"
-      MCP_TARGETS: '{"default":"http://${BANK_HOST:-20.2.83.126}:${BANK_PAYMENTS_PORT:-31200}/mcp","bank-identity":"http://${BANK_HOST:-20.2.83.126}:${BANK_IDENTITY_PORT:-31100}/mcp","bank-payments":"http://${BANK_HOST:-20.2.83.126}:${BANK_PAYMENTS_PORT:-31200}/mcp","bank-financial":"http://${BANK_HOST:-20.2.83.126}:${BANK_FINANCIAL_PORT:-31300}/mcp","bank-risk":"http://${BANK_HOST:-20.2.83.126}:${BANK_RISK_PORT:-31400}/mcp"}'
       GATEWAY_JWT_SECRET: "${JWT_SECRET:?Set JWT_SECRET in .env}"
       GATEWAY_JWT_ISSUER: "${JWT_ISSUER:-agp-gateway}"
     networks:

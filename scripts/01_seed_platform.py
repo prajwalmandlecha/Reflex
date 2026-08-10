@@ -16,8 +16,10 @@ import urllib.error
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 
-# External Bank-of-Anthos demo MCP servers. Configurable via env so the stack
-# isn't hardcoded to one live IP. These are EXTERNAL dependencies.
+# External Bank-of-Anthos demo MCP servers used as SEED DATA.
+# These are NOT gateway infrastructure config — they are passed as payload
+# values to the backend API which stores them in the database. The gateway
+# discovers them from DB/Redis at runtime.
 BANK_HOST = os.getenv("BANK_HOST", "20.2.83.126")
 BANK_IDENTITY_PORT = os.getenv("BANK_IDENTITY_PORT", "31100")
 BANK_PAYMENTS_PORT = os.getenv("BANK_PAYMENTS_PORT", "31200")
