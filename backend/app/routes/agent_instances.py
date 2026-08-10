@@ -110,6 +110,25 @@ async def list_agent_instances():
     return res
 
 
+async def _validate_tool_overrides(conn, class_id: str, tool_overrides: list[str] | None):
+    if not tool_overrides:
+        return
+    cls_row = await conn.fetchrow("SELECT default_allowed_tools FROM agent_classes WHERE id = $1", class_id)
+    if not cls_row:
+        return
+    c_tools = set(cls_row["default_allowed_tools"] or [])
+    disallowed = [t for t in tool_overrides if t not in c_tools]
+    if disallowed:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": f"Invalid tool overrides for class '{class_id}'. Instance tool overrides must be a subset of the assigned class allowed tools.",
+                "disallowed_tools": disallowed,
+                "class_allowed_tools": list(c_tools),
+            },
+        )
+
+
 @router.post("", response_model=AgentInstanceResponse, status_code=status.HTTP_201_CREATED)
 async def register_agent_instance(inst: AgentInstanceCreate):
     pool = get_pool()
@@ -117,6 +136,8 @@ async def register_agent_instance(inst: AgentInstanceCreate):
         cls = await conn.fetchrow("SELECT id, name FROM agent_classes WHERE id = $1", inst.class_id)
         if not cls:
             raise HTTPException(status_code=400, detail=f"Agent class '{inst.class_id}' does not exist")
+
+        await _validate_tool_overrides(conn, inst.class_id, inst.tool_overrides)
 
         row = await conn.fetchrow(
             """
@@ -192,6 +213,9 @@ async def update_agent_instance(agent_id: str, inst: AgentInstanceUpdate):
         constraints = json.dumps(inst.constraint_overrides) if inst.constraint_overrides is not None else row["constraint_overrides"]
         caps = json.dumps(inst.cap_overrides) if inst.cap_overrides is not None else row["cap_overrides"]
         tools = inst.tool_overrides if inst.tool_overrides is not None else row["tool_overrides"]
+
+        if tools is not None:
+            await _validate_tool_overrides(conn, class_id, tools)
 
         updated = await conn.fetchrow(
             """

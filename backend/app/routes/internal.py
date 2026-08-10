@@ -39,7 +39,7 @@ async def get_agent_internal_config(agent_id: str):
 
     c_tools = row["default_allowed_tools"] or []
     i_tools = row["tool_overrides"]
-    effective_tools = i_tools if i_tools is not None else c_tools
+    effective_tools = [t for t in i_tools if t in c_tools] if i_tools is not None else c_tools
 
     c_constraints = json.loads(row["default_constraints"]) if isinstance(row["default_constraints"], str) else (row["default_constraints"] or {})
     i_constraints = json.loads(row["constraint_overrides"]) if isinstance(row["constraint_overrides"], str) else (row["constraint_overrides"] or {})

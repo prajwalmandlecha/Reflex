@@ -64,7 +64,7 @@ async def publish_config_update(change_type: str, item_id: str):
 
 @_non_fatal_cache
 async def cache_agent_class(class_id: str):
-    """Compute and cache AgentClass config in Redis."""
+    """Compute and cache AgentClass config in Redis, and propagate to child instances."""
     pool = get_pool()
     redis = get_redis()
     async with pool.acquire() as conn:
@@ -85,6 +85,12 @@ async def cache_agent_class(class_id: str):
             "status": row["status"],
         }
         await redis.set(f"agp:class:{class_id}", json.dumps(data))
+
+        # Re-compute and cache effective config for all instances belonging to this class
+        inst_rows = await conn.fetch("SELECT id FROM agent_instances WHERE class_id = $1", class_id)
+        for inst_row in inst_rows:
+            await cache_agent_instance(inst_row["id"])
+
 
 
 @_non_fatal_cache
@@ -109,7 +115,8 @@ async def cache_agent_instance(agent_id: str):
 
         c_tools = row["default_allowed_tools"] or []
         i_tools = row["tool_overrides"]
-        effective_tools = i_tools if i_tools is not None else c_tools
+        # Scoped down approach: instance tool overrides are clamped to class default allowed tools
+        effective_tools = [t for t in i_tools if t in c_tools] if i_tools is not None else c_tools
 
         c_constraints = json.loads(row["default_constraints"]) if isinstance(row["default_constraints"], str) else (row["default_constraints"] or {})
         i_constraints = json.loads(row["constraint_overrides"]) if isinstance(row["constraint_overrides"], str) else (row["constraint_overrides"] or {})
