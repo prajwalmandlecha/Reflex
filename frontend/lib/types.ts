@@ -38,7 +38,7 @@ export type AgentInstance = {
   };
   constraint_overrides?: Record<string, unknown>;
   cap_overrides?: Record<string, unknown>;
-  tool_overrides?: string[];
+  tool_overrides?: string[] | null;
   // Derived health (separate from lifecycle status): true when any of the
   // agent's tools is on a bank connection that is currently unreachable.
   degraded?: boolean;

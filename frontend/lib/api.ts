@@ -126,7 +126,7 @@ export const api = {
       class_name: i.class_name,
       constraint_overrides: i.constraint_overrides || {},
       cap_overrides: i.cap_overrides || {},
-      tool_overrides: i.tool_overrides || [],
+      tool_overrides: i.tool_overrides ?? null,
       degraded: i.degraded ?? false,
       unreachableTools: i.unreachable_tools || i.unreachableTools || [],
       unreachable_tools: i.unreachable_tools,
@@ -138,6 +138,22 @@ export const api = {
   ): Promise<AgentInstance> {
     return request<AgentInstance>("/api/v1/agents", {
       method: "POST",
+      body: JSON.stringify(inst),
+    });
+  },
+
+  async updateAgentInstance(
+    agentId: string,
+    inst: Partial<{
+      class_id?: string;
+      status?: string;
+      constraint_overrides?: Record<string, unknown>;
+      cap_overrides?: Record<string, unknown>;
+      tool_overrides?: string[] | null;
+    }>,
+  ): Promise<AgentInstance> {
+    return request<AgentInstance>(`/api/v1/agents/${agentId}`, {
+      method: "PUT",
       body: JSON.stringify(inst),
     });
   },

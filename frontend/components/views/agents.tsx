@@ -254,6 +254,7 @@ export function AgentsView({
                     toast({ variant: 'destructive', title: 'Failed to delete agent', description: err.message || 'Unknown error' });
                   }
                 }}
+                onRefresh={onRefresh}
               />
           )}
         </SheetContent>
@@ -291,6 +292,18 @@ function CreateInstanceForm({ classes, onComplete }: { classes: AgentClass[]; on
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  const selectedClass = useMemo(() => classes.find((c) => c.id === classId), [classes, classId]);
+  const classTools = useMemo(
+    () => selectedClass?.allowedTools || selectedClass?.defaultAllowedTools || [],
+    [selectedClass]
+  );
+  const [selectedTools, setSelectedTools] = useState<string[]>(classTools);
+  const [useScopeDown, setUseScopeDown] = useState(false);
+
+  useEffect(() => {
+    setSelectedTools(classTools);
+  }, [classTools]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -302,10 +315,12 @@ function CreateInstanceForm({ classes, onComplete }: { classes: AgentClass[]; on
 
     setLoading(true);
     try {
+      const toolOverrides = useScopeDown ? selectedTools : null;
       const res = await api.registerAgentInstance({
         id,
         class_id: classId,
         status: 'active',
+        tool_overrides: toolOverrides,
       } as any);
 
       if (res && (res as any).jwt_token) {
@@ -404,6 +419,63 @@ function CreateInstanceForm({ classes, onComplete }: { classes: AgentClass[]; on
         </Select>
       </div>
 
+      <div>
+        <div className="flex items-center justify-between mb-1.5">
+          <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary flex items-center gap-1.5">
+            <Wrench className="h-3 w-3 text-cyan-400" />
+            Tool Governance (Scoped Down)
+          </Label>
+          <button
+            type="button"
+            onClick={() => {
+              if (!useScopeDown) setSelectedTools(classTools);
+              setUseScopeDown(!useScopeDown);
+            }}
+            className="font-mono text-[10px] text-cyan-400 hover:underline"
+          >
+            {useScopeDown ? 'Reset to Inherit All' : 'Scope Down Tools'}
+          </button>
+        </div>
+
+        {useScopeDown ? (
+          <div className="border border-white/10 bg-white/5 p-3 rounded space-y-2">
+            <p className="font-mono text-[10px] text-ink-secondary">
+              Select allowed tools from class permissions ({classTools.length} available):
+            </p>
+            {classTools.length === 0 ? (
+              <p className="font-mono text-[11px] text-amber-400/80">No tools configured on parent class.</p>
+            ) : (
+              <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                {classTools.map((tool) => (
+                  <label key={tool} className="flex items-center gap-2 cursor-pointer font-mono text-xs text-white">
+                    <input
+                      type="checkbox"
+                      checked={selectedTools.includes(tool)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedTools([...selectedTools, tool]);
+                        } else {
+                          setSelectedTools(selectedTools.filter((t) => t !== tool));
+                        }
+                      }}
+                      className="rounded border-white/20 bg-slate-900 text-cyan-500 focus:ring-cyan-500"
+                    />
+                    <span className={selectedTools.includes(tool) ? 'text-cyan-300' : 'text-ink-secondary line-through'}>
+                      {tool}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="border border-white/10 bg-white/[0.02] p-2.5 rounded font-mono text-[11px] text-ink-secondary flex items-center justify-between">
+            <span>Inheriting all {classTools.length} tool(s) from class</span>
+            <span className="text-emerald-400 text-[10px] uppercase tracking-wider font-semibold">Full Inheritance</span>
+          </div>
+        )}
+      </div>
+
       <div className="flex justify-end gap-2 pt-3">
         <Button
           type="button"
@@ -432,6 +504,7 @@ function AgentDetail({
   onRevoke,
   onRevive,
   onDelete,
+  onRefresh,
 }: {
   agent: AgentInstance;
   cls?: AgentClass;
@@ -439,19 +512,58 @@ function AgentDetail({
   onRevoke: () => void;
   onRevive?: () => void;
   onDelete?: () => void;
+  onRefresh?: () => void;
 }) {
+  const { toast } = useToast();
   const [jwtToken, setJwtToken] = useState('');
   const [copied, setCopied] = useState(false);
   const [loadingToken, setLoadingToken] = useState(false);
   const [spendToday, setSpendToday] = useState<number | null>(null);
+
+  const classTools = useMemo(() => cls?.allowedTools || cls?.defaultAllowedTools || [], [cls]);
+  const isCustomized = agent.tool_overrides !== null && agent.tool_overrides !== undefined;
+
+  const [editingTools, setEditingTools] = useState(false);
+  const [activeTools, setActiveTools] = useState<string[]>(
+    isCustomized ? (agent.tool_overrides || []).filter((t) => classTools.includes(t)) : classTools
+  );
+  const [savingTools, setSavingTools] = useState(false);
+
+  useEffect(() => {
+    const isOverridden = agent.tool_overrides !== null && agent.tool_overrides !== undefined;
+    setActiveTools(isOverridden ? (agent.tool_overrides || []).filter((t) => classTools.includes(t)) : classTools);
+  }, [agent.tool_overrides, classTools]);
+
+  const handleSaveToolOverrides = async (overrideValue: string[] | null) => {
+    setSavingTools(true);
+    try {
+      await api.updateAgentInstance(agent.id, { tool_overrides: overrideValue });
+      toast({
+        title: 'Tool Governance Updated',
+        description:
+          overrideValue === null
+            ? `Reset ${agent.id} to inherit all class tools.`
+            : `Scoped down ${agent.id} to ${overrideValue.length} tool(s).`,
+      });
+      setEditingTools(false);
+      if (onRefresh) onRefresh();
+    } catch (err: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Failed to update tool governance',
+        description: err.message || 'Unknown error',
+      });
+    } finally {
+      setSavingTools(false);
+    }
+  };
 
   const agentActivity = useMemo(
     () => activityFeed.filter((a) => a.agentId === agent.id),
     [activityFeed, agent.id]
   );
 
-  // Fetch the real per-agent spend counter from the backend (previously the
-  // endpoint existed but was never called, so the drawer showed no spend data).
+  // Fetch the real per-agent spend counter from the backend
   useEffect(() => {
     let cancelled = false;
     api.getAgentSpend(agent.id)
@@ -511,29 +623,142 @@ function AgentDetail({
         )}
       </div>
 
-      {/* Instance Governance Overrides Summary Card */}
-      <div className="border border-white/10 bg-slate-900/90 p-3 rounded space-y-1.5 font-mono text-xs">
-        <div className="flex items-center justify-between text-ink-secondary uppercase tracking-widest text-[10px]">
-          <span>Instance Governance Overrides</span>
-          <span className="text-cyan-400 font-semibold">{agent.id}</span>
+      {/* Instance Governance Overrides & Tool Control Card */}
+      <div className="border border-white/10 bg-slate-900/90 p-3.5 rounded space-y-3 font-mono text-xs">
+        <div className="flex items-center justify-between border-b border-white/5 pb-2 text-ink-secondary uppercase tracking-widest text-[10px]">
+          <span className="flex items-center gap-1.5 text-cyan-400 font-semibold">
+            <Wrench className="h-3.5 w-3.5" /> Tool Governance (Scoped Down)
+          </span>
+          <span className="text-[10px] text-ink-secondary">{agent.id}</span>
         </div>
+
         <div className="flex items-center justify-between">
           <span className="text-ink-secondary text-[11px]">Spend Today:</span>
           <span className="text-emerald-400 font-bold tabular">
             {spendToday !== null ? formatCurrency(spendToday) : '—'}
           </span>
         </div>
-        <div className="flex items-center justify-between">
-          <span className="text-ink-secondary text-[11px]">Spend Cap Override:</span>
-          <span className="text-emerald-400 font-bold">
-            {agent.instanceOverrides?.capOverride?.amount ? `$${agent.instanceOverrides.capOverride.amount}` : 'Inherited from Class'}
-          </span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="text-ink-secondary text-[11px]">Tool Overrides:</span>
-          <span className="text-cyan-300">
-            {agent.instanceOverrides?.tools?.length ? `${agent.instanceOverrides.tools.length} custom tools` : 'Inherited from Class'}
-          </span>
+
+        <div>
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-ink-secondary text-[11px]">Active Instance Tools:</span>
+            <span
+              className={cn(
+                'px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider border',
+                isCustomized
+                  ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                  : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+              )}
+            >
+              {isCustomized
+                ? `Scoped Down (${(agent.tool_overrides || []).length}/${classTools.length})`
+                : 'Inherited from Class'}
+            </span>
+          </div>
+
+          {editingTools ? (
+            <div className="border border-cyan-500/30 bg-slate-950 p-2.5 rounded space-y-2.5 mt-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-ink-secondary">Select allowed tools from Class permissions:</span>
+                <Button
+                  size="sm"
+                  type="button"
+                  onClick={() => handleSaveToolOverrides(null)}
+                  disabled={savingTools}
+                  className="h-5 px-2 text-[9px] font-mono border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20"
+                >
+                  Reset to Inherit All
+                </Button>
+              </div>
+
+              {classTools.length === 0 ? (
+                <p className="font-mono text-[11px] text-amber-400/80">No tools configured on parent class.</p>
+              ) : (
+                <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                  {classTools.map((tool) => (
+                    <label key={tool} className="flex items-center gap-2 cursor-pointer font-mono text-xs text-white">
+                      <input
+                        type="checkbox"
+                        checked={activeTools.includes(tool)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setActiveTools([...activeTools, tool]);
+                          } else {
+                            setActiveTools(activeTools.filter((t) => t !== tool));
+                          }
+                        }}
+                        className="rounded border-white/20 bg-slate-900 text-cyan-500 focus:ring-cyan-500"
+                      />
+                      <span className={activeTools.includes(tool) ? 'text-cyan-300' : 'text-ink-secondary line-through'}>
+                        {tool}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-1 border-t border-white/10">
+                <Button
+                  size="sm"
+                  type="button"
+                  onClick={() => setEditingTools(false)}
+                  className="h-6 px-2 text-[10px] font-mono border border-white/10 bg-transparent text-ink-secondary"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  type="button"
+                  disabled={savingTools}
+                  onClick={() => handleSaveToolOverrides(activeTools)}
+                  className="h-6 px-3 text-[10px] font-mono bg-cyan-600 text-white hover:bg-cyan-500"
+                >
+                  {savingTools ? <RefreshCw className="h-3 w-3 animate-spin mr-1" /> : null}
+                  Apply Scoped Down Tools
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2 mt-1">
+              <div className="flex flex-wrap gap-1">
+                {classTools.length === 0 ? (
+                  <span className="font-mono text-[11px] text-ink-secondary">No tools on parent class</span>
+                ) : (
+                  classTools.map((tool) => {
+                    const isEnabled = !isCustomized || (agent.tool_overrides || []).includes(tool);
+                    return (
+                      <span
+                        key={tool}
+                        className={cn(
+                          'inline-flex items-center gap-1 px-2 py-0.5 rounded font-mono text-[10px] border',
+                          isEnabled
+                            ? 'bg-white/5 text-cyan-300 border-white/10'
+                            : 'bg-white/[0.02] text-ink-secondary/50 border-white/5 line-through'
+                        )}
+                      >
+                        {isEnabled ? (
+                          <Check className="h-2.5 w-2.5 text-emerald-400" />
+                        ) : (
+                          <Ban className="h-2.5 w-2.5 text-rose-400" />
+                        )}
+                        {tool}
+                      </span>
+                    );
+                  })
+                )}
+              </div>
+
+              <Button
+                size="sm"
+                type="button"
+                onClick={() => setEditingTools(true)}
+                className="w-full h-7 font-mono text-[11px] border border-cyan-500/30 bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20 mt-2"
+              >
+                <Wrench className="h-3 w-3 mr-1.5" />
+                Edit Tool Governance
+              </Button>
+            </div>
+          )}
         </div>
       </div>
 
