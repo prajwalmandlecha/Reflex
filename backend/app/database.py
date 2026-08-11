@@ -195,6 +195,45 @@ async def init_db_schema():
     ('usr_auditor_01', 'auditor@reflex.local', 'Compliance Auditor', 'pbkdf2_sha256$100000$salt_audit_2026$87e76b939cca6635208fcefc3fc3cb240112e9dda19eedd259c5db833b28e232', 'auditor', 'active', false)
     ON CONFLICT (email) DO NOTHING;
 
+    -- Default Rego Security Policy (global scope baseline). Mirrors
+    -- db/migrations/002_seed.sql so the backend is self-sufficient and does
+    -- not depend on the docker-entrypoint-initdb.d mount.
+    INSERT INTO policies (name, scope, target_id, type, version, rego_source, status) VALUES
+    ('default', 'global', NULL, 'rego', 1, '
+package agp.authz
+
+import rego.v1
+
+default allow := false
+default deny := false
+
+# Rule 1: Explicit Per-Agent Allowed Tools Whitelist (ABAC)
+allow if {
+	count(input.allowed_tools) > 0
+	input.action in input.allowed_tools
+	not deny
+}
+
+reason := sprintf("action ''%s'' allowed by agent profile whitelist", [input.action]) if {
+	count(input.allowed_tools) > 0
+	input.action in input.allowed_tools
+	not deny
+}
+
+reason := sprintf("action ''%s'' is not permitted by agent profile whitelist", [input.action]) if {
+	count(input.allowed_tools) > 0
+	not (input.action in input.allowed_tools)
+}
+
+# Catch-all deny reason
+reason := sprintf("agent kind ''%s'' is not allowed to perform action ''%s''", [input.agent_kind, input.action]) if {
+	count(input.allowed_tools) == 0
+	not allow
+	not deny
+}
+', 'active')
+    ON CONFLICT DO NOTHING;
+
     -- Indexes required by upserts and hot query paths. These mirror
     -- db/migrations/001_schema.sql; without them the policies ON CONFLICT
     -- upsert raises 42P10 and audit queries full-table-scan on a DB that was
