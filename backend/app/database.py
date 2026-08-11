@@ -148,6 +148,53 @@ async def init_db_schema():
         created_at              TIMESTAMPTZ DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS users (
+        id                      VARCHAR(64) PRIMARY KEY,
+        email                   VARCHAR(255) NOT NULL UNIQUE,
+        full_name               VARCHAR(128) NOT NULL,
+        password_hash           VARCHAR(255) NOT NULL,
+        role                    VARCHAR(32) NOT NULL DEFAULT 'auditor',
+        status                  VARCHAR(32) NOT NULL DEFAULT 'active',
+        must_change_password    BOOLEAN DEFAULT false,
+        created_at              TIMESTAMPTZ DEFAULT NOW(),
+        updated_at              TIMESTAMPTZ DEFAULT NOW(),
+        last_login_at           TIMESTAMPTZ
+    );
+
+    CREATE TABLE IF NOT EXISTS user_sessions (
+        id                      VARCHAR(64) PRIMARY KEY,
+        user_id                 VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token_jti               VARCHAR(64) NOT NULL UNIQUE,
+        ip_address              VARCHAR(45) DEFAULT '',
+        user_agent              TEXT DEFAULT '',
+        created_at              TIMESTAMPTZ DEFAULT NOW(),
+        expires_at              TIMESTAMPTZ NOT NULL,
+        revoked                 BOOLEAN DEFAULT false
+    );
+
+    CREATE TABLE IF NOT EXISTS user_audit_log (
+        id                      BIGSERIAL PRIMARY KEY,
+        actor_id                VARCHAR(64) NOT NULL,
+        actor_email             VARCHAR(255) NOT NULL,
+        action                  VARCHAR(64) NOT NULL,
+        target_user_id          VARCHAR(64) DEFAULT '',
+        target_email            VARCHAR(255) DEFAULT '',
+        details                 JSONB DEFAULT '{}',
+        created_at              TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
+    CREATE INDEX IF NOT EXISTS idx_users_role ON users (role);
+    CREATE INDEX IF NOT EXISTS idx_users_status ON users (status);
+    CREATE INDEX IF NOT EXISTS idx_sessions_user ON user_sessions (user_id);
+    CREATE INDEX IF NOT EXISTS idx_sessions_jti ON user_sessions (token_jti);
+
+    INSERT INTO users (id, email, full_name, password_hash, role, status, must_change_password) VALUES
+    ('usr_admin_01', 'admin@reflex.local', 'System Admin', 'pbkdf2_sha256$100000$salt_admin_2026$3f10cb61337a3178f2db704ea826f7e019dc7882f5b6f14fdc4579df96a15e5f', 'admin', 'active', false),
+    ('usr_operator_01', 'operator@reflex.local', 'Lead Operator', 'pbkdf2_sha256$100000$salt_oper_2026$260a845794d4c671033f3d1d4bb3ab83196cb0f605c132cd5fdb06d1e4a3bc76', 'operator', 'active', false),
+    ('usr_auditor_01', 'auditor@reflex.local', 'Compliance Auditor', 'pbkdf2_sha256$100000$salt_audit_2026$87e76b939cca6635208fcefc3fc3cb240112e9dda19eedd259c5db833b28e232', 'auditor', 'active', false)
+    ON CONFLICT (email) DO NOTHING;
+
     -- Indexes required by upserts and hot query paths. These mirror
     -- db/migrations/001_schema.sql; without them the policies ON CONFLICT
     -- upsert raises 42P10 and audit queries full-table-scan on a DB that was
