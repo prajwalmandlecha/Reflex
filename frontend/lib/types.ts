@@ -236,3 +236,36 @@ export type AlertItem = {
   detail: string;
   source: string;
 };
+
+export type UserRole = "admin" | "operator" | "auditor";
+export type UserStatus = "active" | "suspended";
+
+export type PlatformUser = {
+  id: string;
+  email: string;
+  full_name: string;
+  role: UserRole;
+  status: UserStatus;
+  must_change_password?: boolean;
+  created_at?: string;
+  updated_at?: string;
+  last_login_at?: string | null;
+  permissions?: string[];
+};
+
+export type RoleDefinition = {
+  id: UserRole;
+  name: string;
+  description: string;
+  permissions: string[];
+};
+
+export type UserSession = {
+  id: string;
+  ip_address: string;
+  user_agent: string;
+  created_at: string;
+  expires_at: string;
+  revoked: boolean;
+};
+
