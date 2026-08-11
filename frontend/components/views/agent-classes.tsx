@@ -33,7 +33,8 @@ import {
 import { formatCurrency } from '@/lib/format';
 import type { AgentClass, AgentInstance, BankTool } from '@/lib/types';
 import { api } from '@/lib/api';
-import { Plus, Ban, Wrench, DollarSign, Clock, Settings2, Search, X, CheckCircle2, Trash2, ChevronDown } from 'lucide-react';
+import { useAuth } from '@/lib/auth-context';
+import { Plus, Ban, Wrench, DollarSign, Clock, Settings2, Search, X, CheckCircle2, Trash2, ChevronDown, Eye } from 'lucide-react';
 
 export function AgentClassesView({
   classes,
@@ -44,6 +45,10 @@ export function AgentClassesView({
   instances: AgentInstance[];
   onRefresh?: () => void;
 }) {
+  const { hasPermission } = useAuth();
+  const canCreate = hasPermission('classes:create');
+  const canUpdate = hasPermission('classes:update');
+
   const [editClass, setEditClass] = useState<AgentClass | null>(null);
   const [showCreate, setShowCreate] = useState(false);
 
@@ -58,13 +63,15 @@ export function AgentClassesView({
             Define default permissions, constraints, and spend caps for groups of agents.
           </p>
         </div>
-        <Button
-          onClick={() => setShowCreate(true)}
-          className="border border-accent/30 bg-accent/10 text-accent hover:bg-accent/20 font-mono text-xs"
-        >
-          <Plus className="mr-1.5 h-4 w-4" />
-          New class
-        </Button>
+        {canCreate && (
+          <Button
+            onClick={() => setShowCreate(true)}
+            className="border border-accent/30 bg-accent/10 text-accent hover:bg-accent/20 font-mono text-xs"
+          >
+            <Plus className="mr-1.5 h-4 w-4" />
+            New class
+          </Button>
+        )}
       </div>
 
       {classes.length > 0 ? (
@@ -319,7 +326,15 @@ export function AgentClassesView({
   );
 }
 
-function ClassForm({ classData, onComplete }: { classData: AgentClass | null; onComplete: () => void }) {
+function ClassForm({
+  classData,
+  onComplete,
+}: {
+  classData: AgentClass | null;
+  onComplete: () => void;
+}) {
+  const { hasPermission } = useAuth();
+  const canEdit = classData ? hasPermission('classes:update') : hasPermission('classes:create');
   const [tools, setTools] = useState<BankTool[]>([]);
   const [selectedTools, setSelectedTools] = useState<string[]>(
     classData?.allowedTools || classData?.defaultAllowedTools || []
@@ -639,13 +654,20 @@ function ClassForm({ classData, onComplete }: { classData: AgentClass | null; on
         >
           Cancel
         </Button>
-        <Button
-          type="submit"
-          disabled={loading}
-          className="bg-cyan-500 text-slate-950 hover:bg-cyan-400 font-mono text-xs font-semibold px-5 h-8"
-        >
-          {classData ? 'Save Changes' : 'Create Class'}
-        </Button>
+        {!canEdit ? (
+          <div className="flex items-center gap-1.5 px-3 py-1 font-mono text-xs text-blue-400 bg-blue-500/10 border border-blue-500/30 rounded">
+            <Eye className="h-3.5 w-3.5" />
+            Read-Only (Auditor View)
+          </div>
+        ) : (
+          <Button
+            type="submit"
+            disabled={loading}
+            className="bg-cyan-500 text-slate-950 hover:bg-cyan-400 font-mono text-xs font-semibold px-5 h-8"
+          >
+            {classData ? 'Save Changes' : 'Create Class'}
+          </Button>
+        )}
       </div>
     </form>
   );

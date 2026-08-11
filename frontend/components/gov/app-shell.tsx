@@ -30,9 +30,16 @@ import {
   Settings,
   Bell,
   HelpCircle,
+  Users,
+  LogOut,
+  ShieldCheck,
+  Shield,
+  Info,
 } from 'lucide-react';
 
 import { useWebSocket } from '@/hooks/useWebSocket';
+import { AuthProvider, useAuth } from '@/lib/auth-context';
+import { LoginView } from '@/components/views/login';
 
 import { CommandCenterView } from '@/components/views/command-center';
 import { AgentsView } from '@/components/views/agents';
@@ -44,6 +51,7 @@ import { PerformanceView } from '@/components/views/performance';
 import { AuditLogView } from '@/components/views/audit-log';
 import { EmergencyStopView } from '@/components/views/emergency-stop';
 import { SettingsView } from '@/components/views/settings';
+import { UsersView } from '@/components/views/users';
 
 export type ViewId =
   | 'command'
@@ -55,22 +63,38 @@ export type ViewId =
   | 'performance'
   | 'audit'
   | 'estop'
-  | 'settings';
+  | 'settings'
+  | 'users';
 
-const navItems: { id: ViewId; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
-  { id: 'command', label: 'Command Center', icon: LayoutDashboard },
-  { id: 'agents', label: 'Agents', icon: Bot },
-  { id: 'classes', label: 'Agent Classes', icon: Boxes },
-  { id: 'policies', label: 'Policies', icon: ScrollText },
-  { id: 'bank', label: 'Bank Connections', icon: Plug },
-  { id: 'activity', label: 'Activity', icon: Activity },
-  { id: 'performance', label: 'Performance & Latency', icon: Gauge },
-  { id: 'audit', label: 'Audit Log', icon: FileClock },
-  { id: 'estop', label: 'Emergency Stop', icon: Octagon },
-  { id: 'settings', label: 'Settings', icon: Settings },
+const navItems: {
+  id: ViewId;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  allowedRoles: ('admin' | 'operator' | 'auditor')[];
+}[] = [
+  { id: 'command', label: 'Command Center', icon: LayoutDashboard, allowedRoles: ['admin', 'operator'] },
+  { id: 'agents', label: 'Agents', icon: Bot, allowedRoles: ['admin', 'operator'] },
+  { id: 'classes', label: 'Agent Classes', icon: Boxes, allowedRoles: ['admin', 'operator'] },
+  { id: 'policies', label: 'Policies', icon: ScrollText, allowedRoles: ['admin', 'operator'] },
+  { id: 'bank', label: 'Bank Connections', icon: Plug, allowedRoles: ['admin', 'operator'] },
+  { id: 'activity', label: 'Activity', icon: Activity, allowedRoles: ['admin', 'operator'] },
+  { id: 'performance', label: 'Performance & Latency', icon: Gauge, allowedRoles: ['admin', 'operator'] },
+  { id: 'audit', label: 'Audit Log', icon: FileClock, allowedRoles: ['admin', 'auditor'] },
+  { id: 'estop', label: 'Emergency Stop', icon: Octagon, allowedRoles: ['admin', 'operator'] },
+  { id: 'users', label: 'User Management', icon: Users, allowedRoles: ['admin'] },
+  { id: 'settings', label: 'Settings', icon: Settings, allowedRoles: ['admin'] },
 ];
 
 export function AppShell() {
+  return (
+    <AuthProvider>
+      <AppShellContent />
+    </AuthProvider>
+  );
+}
+
+function AppShellContent() {
+  const { user, loading, logout, hasRole, hasPermission } = useAuth();
   const [view, setView] = useState<ViewId>('command');
   const [instances, setInstances] = useState<AgentInstance[]>([]);
   const [classes, setClasses] = useState<AgentClass[]>([]);
@@ -80,7 +104,6 @@ export function AppShell() {
   const [stopEvents, setStopEvents] = useState<StopEvent[]>([]);
   const [alertItems, setAlertItems] = useState<AlertItem[]>([]);
   const [activityFeed, setActivityFeed] = useState<ActivityEvent[]>([]);
-  const [operator, setOperator] = useState('Mr. P');
   const [fleetStatus, setFleetStatus] = useState<FleetStatus>('healthy');
   const [fleetSpend, setFleetSpend] = useState({ spent: 0, cap: 0 });
   const [denialsLastHour, setDenialsLastHour] = useState(0);
@@ -92,6 +115,8 @@ export function AppShell() {
   const [isVisible, setIsVisible] = useState(true);
   const [apiError, setApiError] = useState<string | null>(null);
   const [connectionsLoading, setConnectionsLoading] = useState(false);
+
+  const operatorName = user?.full_name || 'Operator';
 
   // Record an API failure so the operator sees it instead of a silent empty
   // dashboard. Stores a readable message; cleared on the next successful load.
@@ -106,6 +131,15 @@ export function AppShell() {
     setHideHelpOnStartup(dismissed);
     if (!dismissed) setShowHelpModal(true);
   }, []);
+
+  // Redirect user to an allowed view if current view is restricted for their role
+  useEffect(() => {
+    if (!user) return;
+    const allowed = navItems.filter((item) => item.allowedRoles.includes(user.role as any)).map((i) => i.id);
+    if (!allowed.includes(view)) {
+      setView(user.role === 'auditor' ? 'audit' : 'command');
+    }
+  }, [user, view]);
 
   // Pause polling when browser tab is hidden
   useEffect(() => {
@@ -123,9 +157,6 @@ export function AppShell() {
   const { history: wsActivities, isConnected: isActivityWsConnected } = useWebSocket<ActivityEvent>('/ws/activity');
   const { history: wsFleet } = useWebSocket<any>('/ws/fleet');
 
-  // Fleet channel: operator-initiated stops/resumes arrive here in real time
-  // (backend publishes them to gateway:events → /ws/fleet). Refresh fleet status
-  // and the agent list immediately instead of waiting for the 30s poll.
   useEffect(() => {
     if (wsFleet.length > 0) {
       api.getFleetStatus().then((res) => {
@@ -161,7 +192,6 @@ export function AppShell() {
   // Global Keyboard Shortcuts Listener
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't trigger if user is typing in an input, textarea, or select
       const activeTag = document.activeElement?.tagName.toLowerCase();
       if (activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select') {
         return;
@@ -196,16 +226,16 @@ export function AppShell() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Lightweight refresh for header-critical data (fleet status badge + active count)
   const refreshHeader = useCallback(() => {
+    if (!user) return;
     api.getFleetStatus().then((res) => {
       if (res && res.status) setFleetStatus(res.status);
     }).catch(() => {});
     api.getAgentInstances().then(setInstances).catch(() => {});
-  }, []);
+  }, [user]);
 
-  // Fetch only the data relevant to the currently active view
   const fetchForView = useCallback((v: ViewId) => {
+    if (!user) return;
     switch (v) {
       case 'command':
         api.getAgentClasses().then(setClasses).catch(() => {});
@@ -232,9 +262,6 @@ export function AppShell() {
         api.getPolicies().then(setPolicies).catch(() => {});
         break;
       case 'bank':
-        // Bank connections are expensive to re-poll because the backend can
-        // block on upstream discovery. Only fetch when we don't already have a
-        // populated snapshot; manual refresh still goes through reloadData().
         if (connections.length === 0) {
           setConnectionsLoading(true);
           api.getBankConnections()
@@ -244,7 +271,6 @@ export function AppShell() {
         }
         break;
       case 'activity':
-        // Activity is primarily WebSocket-driven; light poll for catch-up
         api.getDashboardActivity().then((act) => {
           if (Array.isArray(act)) setActivityFeed(act);
         }).catch(() => {});
@@ -258,13 +284,11 @@ export function AppShell() {
           if (Array.isArray(evs)) setStopEvents(evs);
         }).catch(() => {});
         break;
-      // 'performance' and 'settings' don't need polling — performance uses WebSocket
     }
-  }, []);
+  }, [user, connections.length]);
 
   const reloadData = useCallback(() => {
-    // The fleet-status probe doubles as the liveness signal: if it succeeds the
-    // backend is reachable, so clear any prior error; if it fails, surface it.
+    if (!user) return;
     api.getFleetStatus().then((res) => {
       if (res && res.status) setFleetStatus(res.status);
       setApiError(null);
@@ -292,30 +316,25 @@ export function AppShell() {
     api.getStopEvents().then((evs) => {
       if (Array.isArray(evs)) setStopEvents(evs);
     }).catch(noteApiError('Failed to load stop events'));
-  }, [noteApiError]);
+  }, [user, noteApiError]);
 
-  // ── Smart Polling ──────────────────────────────────────────────────
-  // Initial full load (runs once on mount to populate all views)
   useEffect(() => {
-    reloadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (user) reloadData();
+  }, [user, reloadData]);
 
-  // Header-critical polling: fleet status + agent count (every 30s, pauses when tab is hidden)
   useEffect(() => {
-    if (!isVisible) return;
+    if (!isVisible || !user) return;
     refreshHeader();
     const timer = setInterval(refreshHeader, 30_000);
     return () => clearInterval(timer);
-  }, [isVisible, refreshHeader]);
+  }, [isVisible, user, refreshHeader]);
 
-  // View-specific polling: only fetch data the active view needs (every 10s, pauses when hidden)
   useEffect(() => {
-    if (!isVisible) return;
+    if (!isVisible || !user) return;
     fetchForView(view);
     const timer = setInterval(() => fetchForView(view), 10_000);
     return () => clearInterval(timer);
-  }, [view, isVisible, fetchForView]);
+  }, [view, isVisible, user, fetchForView]);
 
   const handleFleetAction = async (action: 'stop' | 'resume') => {
     if (action === 'stop') {
@@ -346,6 +365,48 @@ export function AppShell() {
     setView('agents');
   };
 
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#0B0F14] text-[#E4E9EE] flex items-center justify-center font-mono text-xs">
+        <div className="flex items-center gap-3">
+          <span className="w-3 h-3 rounded-full bg-[#4C8DFF] animate-ping" />
+          <span>Verifying session security credentials...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <LoginView />;
+  }
+
+  const visibleNavItems = navItems.filter((item) =>
+    item.allowedRoles.includes(user.role as any)
+  );
+
+  const getRoleBadge = (role: string) => {
+    switch (role) {
+      case 'admin':
+        return (
+          <span className="px-1.5 py-0.5 rounded border border-blue-500/30 bg-blue-500/10 text-blue-400 font-mono text-[9px] font-bold uppercase flex items-center gap-1">
+            <ShieldCheck className="w-2.5 h-2.5" /> Admin
+          </span>
+        );
+      case 'operator':
+        return (
+          <span className="px-1.5 py-0.5 rounded border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 font-mono text-[9px] font-bold uppercase flex items-center gap-1">
+            <Shield className="w-2.5 h-2.5" /> Operator
+          </span>
+        );
+      default:
+        return (
+          <span className="px-1.5 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-400 font-mono text-[9px] font-bold uppercase flex items-center gap-1">
+            <Info className="w-2.5 h-2.5" /> Auditor
+          </span>
+        );
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#0B0F14] text-[#E4E9EE] flex font-sans antialiased">
       {/* Sidebar */}
@@ -365,7 +426,7 @@ export function AppShell() {
         </div>
 
         <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
-          {navItems.map((item) => {
+          {visibleNavItems.map((item) => {
             const Icon = item.icon;
             const active = view === item.id;
             return (
@@ -386,16 +447,41 @@ export function AppShell() {
           })}
         </nav>
 
-        <div className="p-3 border-t border-[#232B35] text-[11px] font-mono text-[#8B96A3] flex justify-between items-center bg-[#0B0F14]/50">
-          <span>Operator: <strong className="text-[#E4E9EE]">{operator}</strong></span>
-          {/* Reflects live fleet status — not an unconditional green light */}
-          <span
-            className={cn(
-              'w-2 h-2 rounded-full animate-pulse',
-              fleetStatus === 'healthy' ? 'bg-emerald-500' : fleetStatus === 'degraded' ? 'bg-amber-400' : 'bg-rose-500'
-            )}
-            title={`Fleet ${fleetStatus}`}
-          />
+        {/* User Profile Footer */}
+        <div className="p-3 border-t border-[#232B35] bg-[#0B0F14]/60 space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="min-w-0 flex-1 pr-2">
+              <div className="text-xs font-mono font-bold text-[#E4E9EE] truncate">
+                {user.full_name}
+              </div>
+              <div className="text-[10px] font-mono text-[#8B96A3] truncate">
+                {user.email}
+              </div>
+            </div>
+            {getRoleBadge(user.role)}
+          </div>
+
+          <div className="pt-2 border-t border-[#232B35]/40 flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-[10px] font-mono text-[#8B96A3]">
+              <span
+                className={cn(
+                  'w-2 h-2 rounded-full animate-pulse',
+                  fleetStatus === 'healthy' ? 'bg-emerald-500' : fleetStatus === 'degraded' ? 'bg-amber-400' : 'bg-rose-500'
+                )}
+                title={`Fleet ${fleetStatus}`}
+              />
+              <span className="capitalize">{fleetStatus}</span>
+            </div>
+
+            <button
+              onClick={logout}
+              className="p-1 rounded text-[#8B96A3] hover:text-rose-400 hover:bg-rose-500/10 transition-colors flex items-center gap-1 font-mono text-[10px]"
+              title="Sign Out"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Logout</span>
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -430,14 +516,17 @@ export function AppShell() {
               <span>Shortcuts</span>
             </button>
 
-            <EmergencyStopControl
-              isStopped={fleetStatus === 'stopped'}
-              onConfirm={() => handleFleetAction(fleetStatus === 'stopped' ? 'resume' : 'stop')}
-            />
+            {/* Hide emergency stop button for Auditor role */}
+            {user.role !== 'auditor' && (
+              <EmergencyStopControl
+                isStopped={fleetStatus === 'stopped'}
+                onConfirm={() => handleFleetAction(fleetStatus === 'stopped' ? 'resume' : 'stop')}
+              />
+            )}
           </div>
         </header>
 
-        {/* API error banner — surfaces backend outages instead of a silent empty dashboard */}
+        {/* API error banner */}
         {apiError && (
           <div className="flex items-center gap-2 border-b border-rose-500/30 bg-rose-500/10 px-6 py-2">
             <span className="inline-block h-2 w-2 rounded-full bg-rose-500 animate-pulse" />
@@ -490,7 +579,7 @@ export function AppShell() {
               instances={instances}
               classes={classes}
               stopEvents={stopEvents}
-              operator={operator}
+              operator={operatorName}
               fleetStatus={fleetStatus}
               onStopInstance={handleRevokeAgent}
               onStopClass={(classId) => api.revokeAgentClass(classId).then(reloadData)}
@@ -499,7 +588,8 @@ export function AppShell() {
               onResumeInstance={handleReviveAgent}
             />
           )}
-          {view === 'settings' && <SettingsView operator={operator} />}
+          {view === 'users' && <UsersView />}
+          {view === 'settings' && <SettingsView operator={operatorName} />}
         </main>
       </div>
 

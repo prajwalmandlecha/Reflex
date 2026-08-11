@@ -35,7 +35,8 @@ import {
 import type { BankConnection } from '@/lib/types';
 import { formatRelative } from '@/lib/format';
 import { api } from '@/lib/api';
-import { Plus, Check, RefreshCw, Server, AlertCircle, FileUp, Link2, Plug, Loader2, Trash2 } from 'lucide-react';
+import { useAuth } from '@/lib/auth-context';
+import { Plus, Check, RefreshCw, Server, AlertCircle, FileUp, Link2, Plug, Loader2, Trash2, Eye } from 'lucide-react';
 
 const sourceTypeLabel: Record<string, string> = {
   native_mcp: 'Native MCP',
@@ -52,6 +53,11 @@ export function BankConnectionsView({
   isLoading?: boolean;
   onRefresh?: () => void;
 }) {
+  const { hasPermission } = useAuth();
+  const canCreate = hasPermission('bank:create');
+  const canDelete = hasPermission('bank:delete');
+  const canProbe = hasPermission('bank:probe');
+
   const [showWizard, setShowWizard] = useState(false);
   const [syncingId, setSyncingId] = useState<string | null>(null);
 
@@ -78,13 +84,15 @@ export function BankConnectionsView({
             Manage connected financial APIs and Model Context Protocol tool servers.
           </p>
         </div>
-        <Button
-          onClick={() => setShowWizard(true)}
-          className="border border-accent/30 bg-accent/10 text-accent hover:bg-accent/20"
-        >
-          <Plus className="mr-1.5 h-4 w-4" />
-          Add connection
-        </Button>
+        {canCreate && (
+          <Button
+            onClick={() => setShowWizard(true)}
+            className="border border-accent/30 bg-accent/10 text-accent hover:bg-accent/20"
+          >
+            <Plus className="mr-1.5 h-4 w-4" />
+            Add connection
+          </Button>
+        )}
       </div>
 
       {connections.length > 0 ? (
@@ -124,14 +132,16 @@ export function BankConnectionsView({
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button
-                    disabled={syncingId === conn.id}
-                    onClick={() => handleSync(conn.id)}
-                    className="flex h-7 w-7 items-center justify-center rounded border border-white/10 bg-white/5 text-ink-secondary transition-colors hover:border-accent/30 hover:bg-accent/10 hover:text-accent cursor-pointer disabled:opacity-50"
-                    title="Reload — re-probe the server and re-discover tools & status"
-                  >
-                    <RefreshCw className={cn('h-3.5 w-3.5', syncingId === conn.id && 'animate-spin')} />
-                  </button>
+                  {canProbe && (
+                    <button
+                      disabled={syncingId === conn.id}
+                      onClick={() => handleSync(conn.id)}
+                      className="flex h-7 w-7 items-center justify-center rounded border border-white/10 bg-white/5 text-ink-secondary transition-colors hover:border-accent/30 hover:bg-accent/10 hover:text-accent cursor-pointer disabled:opacity-50"
+                      title="Reload — re-probe the server and re-discover tools & status"
+                    >
+                      <RefreshCw className={cn('h-3.5 w-3.5', syncingId === conn.id && 'animate-spin')} />
+                    </button>
+                  )}
                   <StatusBadge status={conn.status} />
                 </div>
               </div>

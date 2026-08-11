@@ -37,7 +37,8 @@ import { formatCurrency, formatTimestamp, formatDateTime } from '@/lib/format';
 import { useToast } from '@/hooks/use-toast';
 import type { AgentInstance, AgentClass, ActivityEvent } from '@/lib/types';
 import { api } from '@/lib/api';
-import { Search, Ban, Shield, Clock, Wrench, Plus, Key, Copy, Check, RefreshCw, Play, Terminal, Trash2, X } from 'lucide-react';
+import { useAuth } from '@/lib/auth-context';
+import { Search, Ban, Shield, Clock, Wrench, Plus, Key, Copy, Check, RefreshCw, Play, Terminal, Trash2, X, Eye } from 'lucide-react';
 
 export function AgentsView({
   instances,
@@ -56,6 +57,8 @@ export function AgentsView({
   initialFilter?: { classId?: string; status?: string } | null;
   onRefresh?: () => void;
 }) {
+  const { hasPermission } = useAuth();
+  const canCreate = hasPermission('instances:create');
   const [search, setSearch] = useState('');
   const [classFilter, setClassFilter] = useState<string>(
     initialFilter?.classId ?? 'all'
@@ -137,13 +140,15 @@ export function AgentsView({
             Connection Guide
           </Button>
 
-          <Button
-            onClick={() => setShowCreate(true)}
-            className="border border-cyan-500/30 bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 font-mono text-xs"
-          >
-            <Plus className="mr-1.5 h-4 w-4" />
-            Register Instance
-          </Button>
+          {canCreate && (
+            <Button
+              onClick={() => setShowCreate(true)}
+              className="border border-cyan-500/30 bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 font-mono text-xs"
+            >
+              <Plus className="mr-1.5 h-4 w-4" />
+              Register Instance
+            </Button>
+          )}
         </div>
       </div>
 
@@ -496,6 +501,12 @@ function AgentDetail({
   onDelete?: () => void;
   onRefresh?: () => void;
 }) {
+  const { hasPermission } = useAuth();
+  const canMint = hasPermission('instances:mint_token');
+  const canUpdate = hasPermission('instances:update');
+  const canRevoke = hasPermission('instances:revoke');
+  const canRevive = hasPermission('instances:revive');
+
   const { toast } = useToast();
   const [jwtToken, setJwtToken] = useState('');
   const [copied, setCopied] = useState(false);
@@ -622,14 +633,16 @@ function AgentDetail({
           <span className="font-mono text-[10px] uppercase tracking-widest text-cyan-400 font-semibold flex items-center gap-1.5">
             <Key className="h-3.5 w-3.5" /> Bearer JWT Token
           </span>
-          <Button
-            size="sm"
-            onClick={handleMintToken}
-            disabled={loadingToken}
-            className="h-6 px-2 text-[10px] font-mono border border-cyan-500/30 bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20"
-          >
-            {loadingToken ? <RefreshCw className="h-3 w-3 animate-spin" /> : 'Mint Token'}
-          </Button>
+          {canMint && (
+            <Button
+              size="sm"
+              onClick={handleMintToken}
+              disabled={loadingToken}
+              className="h-6 px-2 text-[10px] font-mono border border-cyan-500/30 bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20"
+            >
+              {loadingToken ? <RefreshCw className="h-3 w-3 animate-spin" /> : 'Mint Token'}
+            </Button>
+          )}
         </div>
 
         {jwtToken ? (
@@ -783,15 +796,17 @@ function AgentDetail({
                 )}
               </div>
 
-              <Button
-                size="sm"
-                type="button"
-                onClick={() => setEditingTools(true)}
-                className="w-full h-7 font-mono text-[11px] border border-cyan-500/30 bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20 mt-2"
-              >
-                <Wrench className="h-3 w-3 mr-1.5" />
-                Edit Tool Governance
-              </Button>
+              {canUpdate && (
+                <Button
+                  size="sm"
+                  type="button"
+                  onClick={() => setEditingTools(true)}
+                  className="w-full h-7 font-mono text-[11px] border border-cyan-500/30 bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20 mt-2"
+                >
+                  <Wrench className="h-3 w-3 mr-1.5" />
+                  Edit Tool Governance
+                </Button>
+              )}
             </div>
           )}
         </div>
@@ -842,22 +857,26 @@ function AgentDetail({
       {/* Instance Lifecycle controls */}
       <div className="space-y-2 pt-2">
         {agent.status !== 'killed' && agent.status !== 'revoked' ? (
-          <Button
-            variant="outline"
-            onClick={onRevoke}
-            className="w-full border-amber-500/30 text-amber-400 hover:bg-amber-500/10 font-mono text-xs cursor-pointer"
-          >
-            <Ban className="mr-2 h-4 w-4" />
-            Revoke this instance
-          </Button>
+          canRevoke && (
+            <Button
+              variant="outline"
+              onClick={onRevoke}
+              className="w-full border-amber-500/30 text-amber-400 hover:bg-amber-500/10 font-mono text-xs cursor-pointer"
+            >
+              <Ban className="mr-2 h-4 w-4" />
+              Revoke this instance
+            </Button>
+          )
         ) : (
-          <Button
-            onClick={onRevive}
-            className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-xs font-bold uppercase tracking-wider cursor-pointer flex items-center justify-center gap-2 py-2.5 shadow-[0_0_15px_-3px_rgba(52,211,153,0.4)]"
-          >
-            <Play className="h-4 w-4" />
-            Start / Reactivate Instance
-          </Button>
+          canRevive && (
+            <Button
+              onClick={onRevive}
+              className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-xs font-bold uppercase tracking-wider cursor-pointer flex items-center justify-center gap-2 py-2.5 shadow-[0_0_15px_-3px_rgba(52,211,153,0.4)]"
+            >
+              <Play className="h-4 w-4" />
+              Start / Reactivate Instance
+            </Button>
+          )
         )}
 
         {onDelete && (

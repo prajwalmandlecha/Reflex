@@ -15,12 +15,18 @@ import type {
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const token = typeof window !== "undefined" ? localStorage.getItem("reflex_auth_token") : null;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(options?.headers as Record<string, string>),
+  };
+  if (token && !headers["Authorization"]) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options?.headers,
-    },
+    headers,
   });
   if (!res.ok) {
     const errorText = await res.text();
@@ -51,6 +57,26 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   }
   const text = await res.text();
   return (text ? JSON.parse(text) : undefined) as T;
+}
+
+async function requestText(path: string, options?: RequestInit): Promise<string> {
+  const token = typeof window !== "undefined" ? localStorage.getItem("reflex_auth_token") : null;
+  const headers: Record<string, string> = {
+    ...(options?.headers as Record<string, string>),
+  };
+  if (token && !headers["Authorization"]) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers,
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Export failed (${res.status}): ${errorText}`);
+  }
+  return await res.text();
 }
 
 export const api = {
@@ -330,10 +356,25 @@ export const api = {
     return request<any>("/api/v1/audit/verify");
   },
 
-  // Server-side export: full audit log (up to 5000 rows), properly CSV-escaped
-  // by the backend — not limited to the rows currently rendered on screen.
   getAuditExportUrl(): string {
     return `${API_BASE}/api/v1/audit/export?format=csv`;
+  },
+
+  async exportAuditLogCsv(): Promise<void> {
+    const text = await requestText("/api/v1/audit/export?format=csv");
+    const blob = new Blob([text], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", `audit_log_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  },
+
+  async getSystemAuditLog(): Promise<any[]> {
+    return request<any[]>("/api/v1/audit/system-log");
   },
 
   async getAuditLog(params?: {
@@ -446,6 +487,78 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(data),
     });
+  },
+
+  // --- Auth & User Management ---
+  async login(email: string, password: string): Promise<any> {
+    return request<any>("/api/v1/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    });
+  },
+
+  async getMe(): Promise<any> {
+    return request<any>("/api/v1/auth/me");
+  },
+
+  async logout(): Promise<void> {
+    await request("/api/v1/auth/logout", { method: "POST" });
+  },
+
+  async changePassword(oldPassword: string, newPassword: string): Promise<any> {
+    return request<any>("/api/v1/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
+    });
+  },
+
+  async getUsers(params?: { query?: string; role?: string; status?: string }): Promise<any[]> {
+    const q = new URLSearchParams();
+    if (params?.query) q.set("query", params.query);
+    if (params?.role) q.set("role", params.role);
+    if (params?.status) q.set("status", params.status);
+    return request<any[]>(`/api/v1/users?${q.toString()}`);
+  },
+
+  async createUser(userData: {
+    email: string;
+    full_name: string;
+    password: string;
+    role: string;
+    must_change_password?: boolean;
+  }): Promise<any> {
+    return request<any>("/api/v1/users", {
+      method: "POST",
+      body: JSON.stringify(userData),
+    });
+  },
+
+  async updateUser(userId: string, data: { full_name?: string; email?: string; role?: string }): Promise<any> {
+    return request<any>(`/api/v1/users/${userId}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  },
+
+  async suspendUser(userId: string, action: "suspend" | "activate"): Promise<any> {
+    return request<any>(`/api/v1/users/${userId}/suspend?action=${action}`, {
+      method: "POST",
+    });
+  },
+
+  async resetUserPassword(userId: string, newPassword: string): Promise<any> {
+    return request<any>(`/api/v1/users/${userId}/reset-password`, {
+      method: "POST",
+      body: JSON.stringify({ new_password: newPassword }),
+    });
+  },
+
+  async deleteUser(userId: string): Promise<any> {
+    return request<any>(`/api/v1/users/${userId}`, { method: "DELETE" });
+  },
+
+  async getRolePermissionsMatrix(): Promise<any> {
+    return request<any>("/api/v1/users/roles/permissions");
   },
 };
 

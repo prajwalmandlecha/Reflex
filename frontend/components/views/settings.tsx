@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Panel } from '@/components/gov/panel';
 import { Label } from '@/components/ui/label';
 import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import { User, Mail, Shield, Server, Database, CheckCircle2, XCircle, Cpu } from 'lucide-react';
 
 type SystemHealth = { gateway: string; redis: string; opa: string; database: string };
@@ -28,6 +29,7 @@ function EngineStatus({ status }: { status?: string }) {
 }
 
 export function SettingsView({ operator }: { operator: string }) {
+  const { user } = useAuth();
   const [health, setHealth] = useState<SystemHealth | null>(null);
 
   // Engine badges reflect live probes (DB ping, Redis ping, gateway /health),
@@ -49,6 +51,12 @@ export function SettingsView({ operator }: { operator: string }) {
     };
   }, []);
 
+  const roleTitle = user?.role === 'admin' 
+    ? 'System Administrator (Full Platform Control)' 
+    : user?.role === 'operator' 
+    ? 'Lead Governance Operator (Policy & Fleet Control)' 
+    : 'Compliance Auditor (Read-Only Audit & Verification)';
+
   return (
     <div className="flex flex-col gap-4 p-4">
       <div>
@@ -62,16 +70,16 @@ export function SettingsView({ operator }: { operator: string }) {
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {/* Compliance Operator Profile */}
-        <Panel title="Compliance Operator Profile">
+        <Panel title="Authenticated Session Profile">
           <div className="space-y-4 p-4">
             <div className="flex items-center gap-3">
               <div className="flex h-12 w-12 items-center justify-center border border-accent/30 bg-accent/10">
                 <User className="h-6 w-6 text-accent" />
               </div>
               <div>
-                <div className="font-mono text-sm text-ink-primary font-semibold">{operator}</div>
+                <div className="font-mono text-sm text-ink-primary font-semibold">{user?.full_name || operator}</div>
                 <div className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
-                  Chief Compliance & Security Officer
+                  {roleTitle}
                 </div>
               </div>
             </div>
@@ -83,17 +91,18 @@ export function SettingsView({ operator }: { operator: string }) {
                 </Label>
                 <div className="mt-1 flex items-center gap-2">
                   <Mail className="h-3.5 w-3.5 text-ink-secondary" />
-                  <span className="font-mono text-xs text-ink-primary">{operator}@bank.example</span>
+                  <span className="font-mono text-xs text-ink-primary">{user?.email || `${operator}@reflex.local`}</span>
                 </div>
               </div>
 
               <div>
                 <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
-                  RBAC Role & Authority
+                  RBAC Role & Scope
                 </Label>
                 <div className="mt-1 flex items-center gap-2">
                   <Shield className="h-3.5 w-3.5 text-signal-healthy" />
-                  <span className="font-mono text-xs text-signal-healthy font-semibold">Full Governance Authority (Fleet Revocation & Policy Authoring)</span>
+                  <span className="font-mono text-xs text-signal-healthy font-semibold uppercase">{user?.role || 'operator'}</span>
+                  <span className="font-mono text-[10px] text-ink-secondary">({(user?.permissions || []).length} permissions active)</span>
                 </div>
               </div>
             </div>

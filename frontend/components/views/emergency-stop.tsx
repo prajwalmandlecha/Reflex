@@ -18,7 +18,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { formatDateTime, formatRelative } from '@/lib/format';
 import type { AgentInstance, AgentClass, StopEvent } from '@/lib/types';
-import { Octagon, Ban, Play, History } from 'lucide-react';
+import { useAuth } from '@/lib/auth-context';
+import { Octagon, Ban, Play, History, Eye } from 'lucide-react';
 
 export function EmergencyStopView({
   instances,
@@ -43,6 +44,8 @@ export function EmergencyStopView({
   onResumeFleet?: () => void;
   onResumeInstance: (id: string) => void;
 }) {
+  const { hasPermission } = useAuth();
+  const canTrigger = hasPermission('estop:trigger');
   const activeCount = instances.filter((i) => i.status === 'active').length;
   const killedCount = instances.filter((i) => i.status === 'killed').length;
   const revokedCount = instances.filter((i) => i.status === 'revoked').length;
@@ -73,7 +76,12 @@ export function EmergencyStopView({
                 : `Immediately kills all ${activeCount} active agents across every class. All pending actions will be denied.`}
             </p>
           </div>
-          {isFleetStopped ? (
+          {!canTrigger ? (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs text-blue-400 bg-blue-500/10 border border-blue-500/30 rounded">
+              <Eye className="h-4 w-4" />
+              Read-Only Compliance View (Auditor)
+            </div>
+          ) : isFleetStopped ? (
             <Button
               onClick={onResumeFleet || onStopFleet}
               className="bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-xs font-bold uppercase tracking-wider px-5 py-2 flex items-center gap-2 cursor-pointer shadow-[0_0_20px_-4px_rgba(52,211,153,0.4)]"

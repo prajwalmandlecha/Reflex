@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import { Panel } from '@/components/gov/panel';
 import { Input } from '@/components/ui/input';
@@ -32,8 +32,22 @@ const entryTypeColor: Record<string, string> = {
 };
 
 export function AuditLogView({ entries }: { entries: AuditLogEntry[] }) {
+  const [activeTab, setActiveTab] = useState<'tools' | 'system'>('tools');
   const [search, setSearch] = useState('');
   const [outcomeFilter, setOutcomeFilter] = useState('all');
+
+  const [systemLogs, setSystemLogs] = useState<any[]>([]);
+  const [loadingSystem, setLoadingSystem] = useState(false);
+
+  useEffect(() => {
+    if (activeTab === 'system') {
+      setLoadingSystem(true);
+      api.getSystemAuditLog()
+        .then(setSystemLogs)
+        .catch((err) => console.error('Failed to load system audit log:', err))
+        .finally(() => setLoadingSystem(false));
+    }
+  }, [activeTab]);
 
   const [verifying, setVerifying] = useState(false);
   const [verifyResult, setVerifyResult] = useState<{
@@ -112,13 +126,12 @@ export function AuditLogView({ entries }: { entries: AuditLogEntry[] }) {
             {/* Server-side export: full audit log (up to 5000 rows), properly
                 CSV-escaped by the backend — not limited to on-screen rows. */}
             <Button
-              onClick={() => {
-                const link = document.createElement('a');
-                link.href = api.getAuditExportUrl();
-                link.setAttribute('download', `audit_log_${new Date().toISOString().slice(0, 10)}.csv`);
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
+              onClick={async () => {
+                try {
+                  await api.exportAuditLogCsv();
+                } catch (err: any) {
+                  alert(`Export failed: ${err.message || 'Unknown error'}`);
+                }
               }}
               variant="outline"
               className="border-border text-ink-secondary hover:bg-white/5 font-mono text-xs"
@@ -130,149 +143,236 @@ export function AuditLogView({ entries }: { entries: AuditLogEntry[] }) {
         </div>
       </div>
 
-      {/* Verification Result Banner */}
-      {verifyResult && (
-        <div
+      {/* Sub-Tab Selection: Agent Tool Calls vs System & Admin Operations */}
+      <div className="flex items-center gap-2 border-b border-white/10 pb-2">
+        <button
+          onClick={() => setActiveTab('tools')}
           className={cn(
-            'flex items-center justify-between border p-3 font-mono text-xs',
-            verifyResult.valid
-              ? 'border-signal-healthy/40 bg-signal-healthy/10 text-signal-healthy'
-              : 'border-signal-stopped/40 bg-signal-stopped/10 text-signal-stopped'
+            'px-3 py-1.5 font-mono text-xs rounded transition-colors cursor-pointer',
+            activeTab === 'tools'
+              ? 'bg-accent/15 text-accent border border-accent/30 font-bold'
+              : 'text-ink-secondary hover:text-ink-primary hover:bg-white/5'
           )}
         >
-          <div className="flex items-center gap-2">
-            {verifyResult.valid ? (
-              <ShieldCheck className="h-5 w-5 shrink-0 text-signal-healthy" />
-            ) : (
-              <AlertTriangle className="h-5 w-5 shrink-0 text-signal-stopped" />
-            )}
-            <div>
-              <div className="font-bold uppercase tracking-wider">
-                {verifyResult.valid
-                  ? 'Cryptographic Audit Chain Intact — 0 Tampered Records'
-                  : 'AUDIT LOG INTEGRITY FAILURE DETECTED'}
+          Agent Tool Calls (SHA-256 Chained)
+        </button>
+        <button
+          onClick={() => setActiveTab('system')}
+          className={cn(
+            'px-3 py-1.5 font-mono text-xs rounded transition-colors cursor-pointer',
+            activeTab === 'system'
+              ? 'bg-accent/15 text-accent border border-accent/30 font-bold'
+              : 'text-ink-secondary hover:text-ink-primary hover:bg-white/5'
+          )}
+        >
+          System & Admin Operations Trail
+        </button>
+      </div>
+
+      {activeTab === 'tools' ? (
+        <>
+          {/* Verification Result Banner */}
+          {verifyResult && (
+            <div
+              className={cn(
+                'flex items-center justify-between border p-3 font-mono text-xs',
+                verifyResult.valid
+                  ? 'border-signal-healthy/40 bg-signal-healthy/10 text-signal-healthy'
+                  : 'border-signal-stopped/40 bg-signal-stopped/10 text-signal-stopped'
+              )}
+            >
+              <div className="flex items-center gap-2">
+                {verifyResult.valid ? (
+                  <ShieldCheck className="h-5 w-5 shrink-0 text-signal-healthy" />
+                ) : (
+                  <AlertTriangle className="h-5 w-5 shrink-0 text-signal-stopped" />
+                )}
+                <div>
+                  <div className="font-bold uppercase tracking-wider">
+                    {verifyResult.valid
+                      ? 'Cryptographic Audit Chain Intact — 0 Tampered Records'
+                      : 'AUDIT LOG INTEGRITY FAILURE DETECTED'}
+                  </div>
+                  <div className="text-[11px] opacity-90">
+                    {verifyResult.valid
+                      ? `Successfully validated SHA-256 hash signatures across all ${verifyResult.total_records} database records.`
+                      : verifyResult.error_message || 'Database records have been tampered with or modified.'}
+                  </div>
+                  {!verifyResult.valid && failedRecordId && (
+                    <div className="mt-1 font-mono text-[11px] font-bold uppercase tracking-wider">
+                      First broken record: #{failedRecordId} — highlighted in the table below.
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="text-[11px] opacity-90">
-                {verifyResult.valid
-                  ? `Successfully validated SHA-256 hash signatures across all ${verifyResult.total_records} database records.`
-                  : verifyResult.error_message || 'Database records have been tampered with or modified.'}
-              </div>
-              {!verifyResult.valid && failedRecordId && (
-                <div className="mt-1 font-mono text-[11px] font-bold uppercase tracking-wider">
-                  First broken record: #{failedRecordId} — highlighted in the table below.
+            </div>
+          )}
+
+          {/* Filters */}
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative flex-1 min-w-[200px]">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-secondary" />
+              <Input
+                placeholder="Search agent, action, operator, reason…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="border-white/10 bg-white/[0.02] pl-9 font-mono text-sm placeholder:text-ink-secondary/50"
+              />
+            </div>
+            <Select value={outcomeFilter} onValueChange={setOutcomeFilter}>
+              <SelectTrigger className="w-[120px] border-white/10 bg-white/[0.02] font-mono text-xs">
+                <SelectValue placeholder="Outcome" />
+              </SelectTrigger>
+              <SelectContent className="border-border bg-slate-900 text-white">
+                <SelectItem value="all">All outcomes</SelectItem>
+                <SelectItem value="allow">Allow</SelectItem>
+                <SelectItem value="deny">Deny</SelectItem>
+              </SelectContent>
+            </Select>
+            <span className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
+              {filtered.length} entries
+            </span>
+          </div>
+
+          {/* Table */}
+          <Panel>
+            <div className="max-h-[calc(100vh-320px)] overflow-auto">
+              <table className="w-full">
+                <thead className="sticky top-0 bg-[rgba(14,20,28,0.9)] backdrop-blur-xl">
+                  <tr className="border-b border-white/5">
+                    {['ID', 'Timestamp', 'Agent', 'Action', 'Outcome', 'Reason / Change', 'Latency'].map(
+                      (h) => (
+                        <th
+                          key={h}
+                          className="px-4 py-2.5 text-left font-mono text-[10px] uppercase tracking-widest text-ink-secondary"
+                        >
+                          {h}
+                        </th>
+                      )
+                    )}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((entry) => (
+                    <tr
+                      key={entry.id}
+                      className={cn(
+                        'border-b border-white/5 transition-colors hover:bg-white/5',
+                        failedRecordId &&
+                          entry.id === failedRecordId &&
+                          'bg-signal-stopped/10 ring-1 ring-inset ring-signal-stopped/50'
+                      )}
+                    >
+                      <td className="whitespace-nowrap px-4 py-2 font-mono text-[10px] tabular text-ink-secondary/70">
+                        #{entry.id}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-2 font-mono text-[10px] text-ink-secondary tabular">
+                        {formatTimestamp(entry.timestamp)}
+                        <div className="text-[9px] text-ink-secondary/60">
+                          {formatDateTime(entry.timestamp)}
+                        </div>
+                      </td>
+                      <td className="px-4 py-2 font-mono text-[10px] text-accent font-medium">
+                        {entry.agentId === '-' ? '—' : entry.agentId}
+                      </td>
+                      <td className="px-4 py-2 font-mono text-xs text-ink-primary font-semibold">
+                        {entry.action}
+                      </td>
+                      <td className="px-4 py-2">
+                        <span
+                          className={cn(
+                            'font-mono text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-sm border',
+                            entry.decision === 'allow'
+                              ? 'bg-signal-healthy/10 text-signal-healthy border-signal-healthy/30'
+                              : 'bg-signal-stopped/10 text-signal-stopped border-signal-stopped/30'
+                          )}
+                        >
+                          {entry.decision}
+                        </span>
+                      </td>
+                      <td className="max-w-[300px] px-4 py-2 font-sans text-[11px] text-ink-secondary">
+                        {entry.reason}
+                        {entry.oldValue && entry.newValue && (
+                          <div className="mt-0.5 flex items-center gap-1 font-mono text-[10px]">
+                            <span className="text-signal-stopped">{entry.oldValue}</span>
+                            <ArrowRight className="h-3 w-3 text-ink-secondary" />
+                            <span className="text-signal-healthy">{entry.newValue}</span>
+                          </div>
+                        )}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-2 font-mono text-[10px] text-ink-secondary tabular">
+                        {entry.latencyMs || entry.total_latency_ms ? `${entry.latencyMs || entry.total_latency_ms}ms` : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {filtered.length === 0 && (
+                <div className="p-8 text-center font-mono text-xs text-ink-secondary">
+                  No audit entries match the current filters.
                 </div>
               )}
             </div>
+          </Panel>
+        </>
+      ) : (
+        /* System & Admin Operations Table */
+        <Panel title="Administrative, Policy & System Event Log">
+          <div className="max-h-[calc(100vh-280px)] overflow-auto">
+            {loadingSystem ? (
+              <div className="p-8 text-center font-mono text-xs text-ink-secondary">
+                Loading administrative audit logs…
+              </div>
+            ) : (
+              <table className="w-full">
+                <thead className="sticky top-0 bg-[rgba(14,20,28,0.9)] backdrop-blur-xl">
+                  <tr className="border-b border-white/5">
+                    {['ID', 'Timestamp', 'Operator / Actor', 'Action', 'Target Resource', 'Event Details'].map((h) => (
+                      <th
+                        key={h}
+                        className="px-4 py-2.5 text-left font-mono text-[10px] uppercase tracking-widest text-ink-secondary"
+                      >
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {systemLogs.map((item) => (
+                    <tr key={item.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="whitespace-nowrap px-4 py-2 font-mono text-[10px] tabular text-ink-secondary/70">
+                        #{item.id}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-2 font-mono text-[10px] text-ink-secondary tabular">
+                        {item.created_at ? formatDateTime(item.created_at) : '—'}
+                      </td>
+                      <td className="px-4 py-2 font-mono text-xs text-accent font-medium">
+                        {item.actor_email || item.actor_id}
+                      </td>
+                      <td className="px-4 py-2">
+                        <span className="font-mono text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-sm border border-accent/30 bg-accent/10 text-accent">
+                          {item.action}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 font-mono text-xs text-ink-primary">
+                        {item.target_email || item.target_id || '—'}
+                      </td>
+                      <td className="px-4 py-2 font-mono text-[10px] text-ink-secondary">
+                        {JSON.stringify(item.details)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {!loadingSystem && systemLogs.length === 0 && (
+              <div className="p-8 text-center font-mono text-xs text-ink-secondary">
+                No system or admin operation logs recorded yet.
+              </div>
+            )}
           </div>
-        </div>
+        </Panel>
       )}
-
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-secondary" />
-          <Input
-            placeholder="Search agent, action, operator, reason…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="border-white/10 bg-white/[0.02] pl-9 font-mono text-sm placeholder:text-ink-secondary/50"
-          />
-        </div>
-        <Select value={outcomeFilter} onValueChange={setOutcomeFilter}>
-          <SelectTrigger className="w-[120px] border-white/10 bg-white/[0.02] font-mono text-xs">
-            <SelectValue placeholder="Outcome" />
-          </SelectTrigger>
-          <SelectContent className="border-border bg-slate-900 text-white">
-            <SelectItem value="all">All outcomes</SelectItem>
-            <SelectItem value="allow">Allow</SelectItem>
-            <SelectItem value="deny">Deny</SelectItem>
-          </SelectContent>
-        </Select>
-        <span className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
-          {filtered.length} entries
-        </span>
-      </div>
-
-      {/* Table */}
-      <Panel>
-        <div className="max-h-[calc(100vh-280px)] overflow-auto">
-          <table className="w-full">
-            <thead className="sticky top-0 bg-[rgba(14,20,28,0.9)] backdrop-blur-xl">
-              <tr className="border-b border-white/5">
-                {['ID', 'Timestamp', 'Agent', 'Action', 'Outcome', 'Reason / Change', 'Latency'].map(
-                  (h) => (
-                    <th
-                      key={h}
-                      className="px-4 py-2.5 text-left font-mono text-[10px] uppercase tracking-widest text-ink-secondary"
-                    >
-                      {h}
-                    </th>
-                  )
-                )}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((entry) => (
-                <tr
-                  key={entry.id}
-                  className={cn(
-                    'border-b border-white/5 transition-colors hover:bg-white/5',
-                    failedRecordId &&
-                      entry.id === failedRecordId &&
-                      'bg-signal-stopped/10 ring-1 ring-inset ring-signal-stopped/50'
-                  )}
-                >
-                  <td className="whitespace-nowrap px-4 py-2 font-mono text-[10px] tabular text-ink-secondary/70">
-                    #{entry.id}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-2 font-mono text-[10px] text-ink-secondary tabular">
-                    {formatTimestamp(entry.timestamp)}
-                    <div className="text-[9px] text-ink-secondary/60">
-                      {formatDateTime(entry.timestamp)}
-                    </div>
-                  </td>
-                  <td className="px-4 py-2 font-mono text-[10px] text-accent font-medium">
-                    {entry.agentId === '-' ? '—' : entry.agentId}
-                  </td>
-                  <td className="px-4 py-2 font-mono text-xs text-ink-primary font-semibold">
-                    {entry.action}
-                  </td>
-                  <td className="px-4 py-2">
-                    <span
-                      className={cn(
-                        'font-mono text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-sm border',
-                        entry.decision === 'allow'
-                          ? 'bg-signal-healthy/10 text-signal-healthy border-signal-healthy/30'
-                          : 'bg-signal-stopped/10 text-signal-stopped border-signal-stopped/30'
-                      )}
-                    >
-                      {entry.decision}
-                    </span>
-                  </td>
-                  <td className="max-w-[300px] px-4 py-2 font-sans text-[11px] text-ink-secondary">
-                    {entry.reason}
-                    {entry.oldValue && entry.newValue && (
-                      <div className="mt-0.5 flex items-center gap-1 font-mono text-[10px]">
-                        <span className="text-signal-stopped">{entry.oldValue}</span>
-                        <ArrowRight className="h-3 w-3 text-ink-secondary" />
-                        <span className="text-signal-healthy">{entry.newValue}</span>
-                      </div>
-                    )}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-2 font-mono text-[10px] text-ink-secondary tabular">
-                    {entry.latencyMs || entry.total_latency_ms ? `${entry.latencyMs || entry.total_latency_ms}ms` : '—'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {filtered.length === 0 && (
-            <div className="p-8 text-center font-mono text-xs text-ink-secondary">
-              No audit entries match the current filters.
-            </div>
-          )}
-        </div>
-      </Panel>
     </div>
   );
 }

@@ -18,7 +18,8 @@ import {
 import { formatDateTime, formatRelative } from '@/lib/format';
 import type { Policy, AgentClass, AgentInstance, VisualRule, RuleCondition, BankConnection, BankTool } from '@/lib/types';
 import { api } from '@/lib/api';
-import { Plus, Code2, FileJson, Play, CheckCircle2, XCircle, Pencil, FileText, FlaskConical, AlertTriangle, Layers, User, Shield, Sliders, LayoutGrid, Check, Trash2 } from 'lucide-react';
+import { useAuth } from '@/lib/auth-context';
+import { Plus, Code2, FileJson, Play, CheckCircle2, XCircle, Pencil, FileText, FlaskConical, AlertTriangle, Layers, User, Shield, Sliders, LayoutGrid, Check, Trash2, Eye } from 'lucide-react';
 
 export function PoliciesView({
   policies,
@@ -31,6 +32,8 @@ export function PoliciesView({
   instances?: AgentInstance[];
   onRefresh?: () => void;
 }) {
+  const { hasPermission } = useAuth();
+  const canCreate = hasPermission('policies:create');
   const [selectedPolicy, setSelectedPolicy] = useState<Policy | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [connections, setConnections] = useState<BankConnection[]>([]);
@@ -50,16 +53,18 @@ export function PoliciesView({
             Author governance rules visually or in Rego code. Test custom inputs and validate before activating.
           </p>
         </div>
-        <Button
-          onClick={() => {
-            setSelectedPolicy(null);
-            setShowCreate(true);
-          }}
-          className="border border-accent/30 bg-accent/10 text-accent hover:bg-accent/20 font-mono text-xs"
-        >
-          <Plus className="mr-1.5 h-4 w-4" />
-          New Policy
-        </Button>
+        {canCreate && (
+          <Button
+            onClick={() => {
+              setSelectedPolicy(null);
+              setShowCreate(true);
+            }}
+            className="border border-accent/30 bg-accent/10 text-accent hover:bg-accent/20 font-mono text-xs"
+          >
+            <Plus className="mr-1.5 h-4 w-4" />
+            New Policy
+          </Button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -157,6 +162,10 @@ function PolicyEditor({
   onComplete?: (savedPolicy?: Policy) => void;
   onCancel?: () => void;
 }) {
+  const { hasPermission } = useAuth();
+  const canEdit = hasPermission('policies:update') || hasPermission('policies:create');
+  const canArchive = hasPermission('policies:archive');
+
   const [name, setName] = useState(policy?.name ?? '');
   const [scope, setScope] = useState<'global' | 'class' | 'instance'>(policy?.scope ?? 'global');
   
@@ -830,9 +839,9 @@ function PolicyEditor({
 
         {/* Save / Activate / Delete */}
         <div className="mt-4 flex justify-between">
-          {/* Delete (left side) — only for existing policies */}
+          {/* Delete (left side) — only for existing policies and users with archive permission */}
           <div>
-            {policy && policy.id && !isNew && (
+            {policy && policy.id && !isNew && canArchive && (
               confirmDelete ? (
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-xs text-red-400">Delete this policy?</span>
@@ -875,24 +884,34 @@ function PolicyEditor({
                 Cancel
               </Button>
             )}
-            {/* Only show Save Draft for new or draft policies — don't allow demoting active policies */}
-            {(isNew || policy?.status !== 'active') && (
-              <Button
-                onClick={() => handleSave('draft')}
-                disabled={loading}
-                variant="outline"
-                className="border-border text-ink-secondary font-mono text-xs"
-              >
-                Save draft
-              </Button>
+
+            {!canEdit ? (
+              <div className="flex items-center gap-1.5 px-3 py-1 font-mono text-xs text-blue-400 bg-blue-500/10 border border-blue-500/30 rounded">
+                <Eye className="h-3.5 w-3.5" />
+                Read-Only (Auditor View)
+              </div>
+            ) : (
+              <>
+                {/* Only show Save Draft for new or draft policies */}
+                {(isNew || policy?.status !== 'active') && (
+                  <Button
+                    onClick={() => handleSave('draft')}
+                    disabled={loading}
+                    variant="outline"
+                    className="border-border text-ink-secondary font-mono text-xs"
+                  >
+                    Save draft
+                  </Button>
+                )}
+                <Button
+                  onClick={() => handleSave('active')}
+                  disabled={loading}
+                  className="bg-signal-healthy text-black hover:bg-signal-healthy/90 font-mono text-xs font-semibold"
+                >
+                  {policy?.status === 'active' ? 'Save & Keep Active' : 'Activate Policy'}
+                </Button>
+              </>
             )}
-            <Button
-              onClick={() => handleSave('active')}
-              disabled={loading}
-              className="bg-signal-healthy text-black hover:bg-signal-healthy/90 font-mono text-xs font-semibold"
-            >
-              {policy?.status === 'active' ? 'Save & Keep Active' : 'Activate Policy'}
-            </Button>
           </div>
         </div>
       </div>
