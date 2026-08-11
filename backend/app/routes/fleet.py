@@ -3,7 +3,8 @@
 import datetime
 
 import httpx
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, Depends
+from app.auth import get_current_user, log_system_action, require_permission
 from app.config import settings
 from app.database import get_pool
 from app.redis_client import get_redis
@@ -38,7 +39,7 @@ async def publish_fleet_event(event_type: str, target_id: str, reason: str = "")
 
 
 @router.get("/system-health")
-async def get_system_health():
+async def get_system_health(current_user: dict = Depends(get_current_user)):
     """Live health probes for the governance engines — nothing here is asserted,
     every status comes from an actual round-trip."""
     db_ok = False
@@ -76,7 +77,7 @@ async def get_system_health():
 
 
 @router.get("/status")
-async def get_fleet_status():
+async def get_fleet_status(current_user: dict = Depends(get_current_user)):
     pool = get_pool()
     redis = get_redis()
     async with pool.acquire() as conn:
@@ -118,7 +119,7 @@ async def get_fleet_status():
 
 
 @router.get("/events")
-async def get_stop_events(limit: int = 50):
+async def get_stop_events(limit: int = 50, current_user: dict = Depends(get_current_user)):
     pool = get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -145,7 +146,7 @@ async def get_stop_events(limit: int = 50):
 
 
 @router.post("/halt")
-async def halt_fleet(payload: dict = Body(default={})):
+async def halt_fleet(payload: dict = Body(default={}), current_user: dict = Depends(require_permission("estop:trigger"))):
     reason = payload.get("reason", "Fleet emergency stop triggered by operator")
     redis = get_redis()
     await redis.set("agp:kill:fleet", "1")
@@ -155,11 +156,12 @@ async def halt_fleet(payload: dict = Body(default={})):
         await conn.execute("UPDATE agent_instances SET status = 'killed', updated_at = NOW() WHERE status = 'active'")
     await publish_config_update("halt_fleet", "fleet")
     await publish_fleet_event("halt_fleet", "fleet", reason)
+    await log_system_action(current_user, "fleet_halted", "fleet", "", {"reason": reason})
     return await get_fleet_status()
 
 
 @router.delete("/halt")
-async def resume_fleet():
+async def resume_fleet(current_user: dict = Depends(require_permission("estop:trigger"))):
     redis = get_redis()
     await redis.delete("agp:kill:fleet")
     pool = get_pool()
@@ -168,5 +170,5 @@ async def resume_fleet():
         await conn.execute("UPDATE agent_instances SET status = 'active', updated_at = NOW() WHERE status = 'killed'")
     await publish_config_update("resume_fleet", "fleet")
     await publish_fleet_event("resume_fleet", "fleet", "Fleet resumed by operator")
+    await log_system_action(current_user, "fleet_resumed", "fleet")
     return await get_fleet_status()
-

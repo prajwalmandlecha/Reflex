@@ -1,7 +1,8 @@
 """Agent Classes routes (/api/v1/classes)."""
 
 import json
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from app.auth import get_current_user, log_system_action, require_permission
 from app.database import get_pool
 from app.models.agent_class import AgentClassCreate, AgentClassResponse, AgentClassUpdate
 from app.redis_client import get_redis
@@ -14,7 +15,7 @@ router = APIRouter(prefix="/api/v1/classes", tags=["Agent Classes"])
 
 
 @router.get("", response_model=list[AgentClassResponse])
-async def list_agent_classes():
+async def list_agent_classes(current_user: dict = Depends(get_current_user)):
     pool = get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -60,7 +61,7 @@ async def list_agent_classes():
 
 
 @router.post("", response_model=AgentClassResponse, status_code=status.HTTP_201_CREATED)
-async def create_agent_class(cls: AgentClassCreate):
+async def create_agent_class(cls: AgentClassCreate, current_user: dict = Depends(require_permission("classes:create"))):
     validation_errors = await validate_class_config(cls.default_allowed_tools, cls.default_constraints)
     if validation_errors:
         raise HTTPException(
@@ -92,6 +93,7 @@ async def create_agent_class(cls: AgentClassCreate):
 
     await cache_agent_class(class_id)
     await publish_config_update("class", class_id)
+    await log_system_action(current_user, "class_created", class_id, cls.name)
 
     constraints = json.loads(row["default_constraints"]) if isinstance(row["default_constraints"], str) else (row["default_constraints"] or {})
     caps = json.loads(row["default_caps"]) if isinstance(row["default_caps"], str) else (row["default_caps"] or {})
@@ -104,7 +106,7 @@ async def create_agent_class(cls: AgentClassCreate):
 
 
 @router.get("/{class_id}", response_model=AgentClassResponse)
-async def get_agent_class(class_id: str):
+async def get_agent_class(class_id: str, current_user: dict = Depends(get_current_user)):
     pool = get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -133,7 +135,7 @@ async def get_agent_class(class_id: str):
 
 
 @router.put("/{class_id}", response_model=AgentClassResponse)
-async def update_agent_class(class_id: str, cls: AgentClassUpdate):
+async def update_agent_class(class_id: str, cls: AgentClassUpdate, current_user: dict = Depends(require_permission("classes:update"))):
     pool = get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow("SELECT * FROM agent_classes WHERE id = $1", class_id)
@@ -175,6 +177,7 @@ async def update_agent_class(class_id: str, cls: AgentClassUpdate):
 
     await cache_agent_class(class_id)
     await publish_config_update("class", class_id)
+    await log_system_action(current_user, "class_updated", class_id, name)
 
     u_constraints = json.loads(updated["default_constraints"]) if isinstance(updated["default_constraints"], str) else (updated["default_constraints"] or {})
     u_caps = json.loads(updated["default_caps"]) if isinstance(updated["default_caps"], str) else (updated["default_caps"] or {})
@@ -187,7 +190,7 @@ async def update_agent_class(class_id: str, cls: AgentClassUpdate):
 
 
 @router.post("/{class_id}/revoke")
-async def revoke_agent_class(class_id: str):
+async def revoke_agent_class(class_id: str, current_user: dict = Depends(require_permission("classes:update"))):
     redis = get_redis()
     await redis.set(f"agp:kill:class:{class_id}", "1")
     pool = get_pool()
@@ -196,11 +199,12 @@ async def revoke_agent_class(class_id: str):
         await conn.execute("UPDATE agent_instances SET status = 'killed', updated_at = NOW() WHERE class_id = $1 AND status = 'active'", class_id)
     await publish_config_update("kill_class", class_id)
     await publish_fleet_event("kill_class", class_id, "Class stop triggered by operator")
+    await log_system_action(current_user, "class_revoked", class_id)
     return {"status": "revoked", "class_id": class_id}
 
 
 @router.delete("/{class_id}/revoke")
-async def revive_agent_class(class_id: str):
+async def revive_agent_class(class_id: str, current_user: dict = Depends(require_permission("classes:update"))):
     redis = get_redis()
     await redis.delete(f"agp:kill:class:{class_id}")
     pool = get_pool()
@@ -209,11 +213,12 @@ async def revive_agent_class(class_id: str):
         await conn.execute("UPDATE agent_instances SET status = 'active', updated_at = NOW() WHERE class_id = $1 AND status = 'killed'", class_id)
     await publish_config_update("revive_class", class_id)
     await publish_fleet_event("revive_class", class_id, "Class resumed by operator")
+    await log_system_action(current_user, "class_revived", class_id)
     return {"status": "active", "class_id": class_id}
 
 
 @router.delete("/{class_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_agent_class(class_id: str):
+async def delete_agent_class(class_id: str, current_user: dict = Depends(require_permission("classes:delete"))):
     pool = get_pool()
     async with pool.acquire() as conn:
         res = await conn.execute("DELETE FROM agent_classes WHERE id = $1", class_id)
@@ -223,4 +228,5 @@ async def delete_agent_class(class_id: str):
     await redis.delete(f"agp:class:{class_id}")
     await redis.delete(f"agp:kill:class:{class_id}")
     await publish_config_update("class", class_id)
+    await log_system_action(current_user, "class_deleted", class_id)
     return None

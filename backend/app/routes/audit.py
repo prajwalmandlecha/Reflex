@@ -1,12 +1,11 @@
-"""Audit Log routes (/api/v1/audit)."""
-
 import csv
 import datetime
 import hashlib
 import io
 import json
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import PlainTextResponse
+from app.auth import require_permission
 from app.database import get_pool
 from app.models.audit import AuditLogResponse, AuditVerificationResult
 
@@ -62,6 +61,7 @@ async def list_audit_log(
     decision: str | None = Query(None),
     limit: int = Query(50, ge=1, le=1000),
     offset: int = Query(0, ge=0),
+    current_user: dict = Depends(require_permission("audit:read")),
 ):
     pool = get_pool()
     query = "SELECT * FROM audit_log WHERE 1=1"
@@ -120,7 +120,7 @@ async def list_audit_log(
 
 
 @router.get("/verify", response_model=AuditVerificationResult)
-async def verify_audit_log_integrity():
+async def verify_audit_log_integrity(current_user: dict = Depends(require_permission("audit:verify"))):
     pool = get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -167,7 +167,7 @@ async def verify_audit_log_integrity():
 
 
 @router.get("/export")
-async def export_audit_log(format: str = "csv"):
+async def export_audit_log(format: str = "csv", current_user: dict = Depends(require_permission("audit:export"))):
     pool = get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch("SELECT * FROM audit_log ORDER BY id ASC LIMIT 5000")
@@ -182,6 +182,43 @@ async def export_audit_log(format: str = "csv"):
                 r["deny_stage"], r["reason"], r["spend_delta"], r["total_latency_ms"],
                 r["governance_overhead_ms"], r["entry_hash"],
             ])
-        return PlainTextResponse(buf.getvalue(), media_type="text/csv")
+        return PlainTextResponse(
+            buf.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=audit_log.csv"},
+        )
 
     return [dict(r) for r in rows]
+
+
+@router.get("/system-log")
+async def list_system_audit_log(
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    current_user: dict = Depends(require_permission("audit:read")),
+):
+    """Retrieve system, administrative, governance, policy, fleet, and connection operation logs."""
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, actor_id, actor_email, action, target_user_id, target_email, details, created_at
+            FROM user_audit_log
+            ORDER BY id DESC
+            LIMIT $1 OFFSET $2
+            """,
+            limit, offset
+        )
+    return [
+        {
+            "id": r["id"],
+            "actor_id": r["actor_id"],
+            "actor_email": r["actor_email"],
+            "action": r["action"],
+            "target_id": r["target_user_id"],
+            "target_email": r["target_email"],
+            "details": json.loads(r["details"]) if isinstance(r["details"], str) else (r["details"] or {}),
+            "created_at": r["created_at"].isoformat() if r["created_at"] else "",
+        }
+        for r in rows
+    ]

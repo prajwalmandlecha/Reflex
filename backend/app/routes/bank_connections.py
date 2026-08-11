@@ -1,9 +1,8 @@
-"""Bank Connections routes (/api/v1/connections)."""
-
 import asyncio
 from collections import defaultdict
 import json
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from app.auth import get_current_user, log_system_action, require_permission
 from app.config import settings
 from app.crypto import encrypt
 from app.database import get_pool
@@ -32,7 +31,7 @@ async def _probe_connection(source_type: str, mcp_url: str | None, openapi_spec:
 
 
 @router.get("", response_model=list[BankConnectionResponse])
-async def list_bank_connections():
+async def list_bank_connections(current_user: dict = Depends(get_current_user)):
     redis = get_redis()
     cached = await redis.get("agp:bank_connections:list")
     if cached:
@@ -123,7 +122,7 @@ async def _replace_tools(conn, connection_id: str, tools: list[dict], with_ops: 
 
 
 @router.post("", response_model=BankConnectionResponse, status_code=status.HTTP_201_CREATED)
-async def create_bank_connection(b: BankConnectionCreate):
+async def create_bank_connection(b: BankConnectionCreate, current_user: dict = Depends(require_permission("bank:create"))):
     # Derive a stable, URL-safe id from the display name when the client didn't
     # supply one explicitly.
     conn_id = b.id or slugify(b.name, fallback="connection")
@@ -174,6 +173,7 @@ async def create_bank_connection(b: BankConnectionCreate):
     await cache_bank_connections_list()
     await cache_tool_routing()
     await publish_config_update("connection", conn_id)
+    await log_system_action(current_user, "connection_created", conn_id, b.name, {"source_type": b.source_type})
 
     return BankConnectionResponse(
         id=row["id"], name=row["name"], source_type=row["source_type"],
@@ -185,7 +185,7 @@ async def create_bank_connection(b: BankConnectionCreate):
 
 
 @router.post("/{connection_id}/sync", response_model=BankConnectionResponse)
-async def sync_bank_connection(connection_id: str):
+async def sync_bank_connection(connection_id: str, current_user: dict = Depends(require_permission("bank:probe"))):
     """Re-probe the upstream and refresh the connection's tools and status.
 
     This is how a stale 'connected' row gets corrected: status reflects the
@@ -245,6 +245,7 @@ async def sync_bank_connection(connection_id: str):
     await cache_bank_connections_list()
     await cache_tool_routing()
     await publish_config_update("connection", connection_id)
+    await log_system_action(current_user, "connection_synced", connection_id, "", {"status": status_val})
 
     return BankConnectionResponse(
         id=row["id"], name=row["name"], source_type=row["source_type"],
@@ -256,7 +257,7 @@ async def sync_bank_connection(connection_id: str):
 
 
 @router.put("/{connection_id}", response_model=BankConnectionResponse)
-async def update_bank_connection(connection_id: str, b: BankConnectionUpdate):
+async def update_bank_connection(connection_id: str, b: BankConnectionUpdate, current_user: dict = Depends(require_permission("bank:update"))):
     """Update a connection's mutable fields. Only provided fields are changed.
     If credentials are supplied they are re-encrypted; if the spec/url changes,
     tools are NOT auto-refreshed — call /sync to re-probe."""
@@ -304,6 +305,7 @@ async def update_bank_connection(connection_id: str, b: BankConnectionUpdate):
     await cache_bank_connections_list()
     await cache_tool_routing()
     await publish_config_update("connection", connection_id)
+    await log_system_action(current_user, "connection_updated", connection_id, name)
 
     return BankConnectionResponse(
         id=updated["id"], name=updated["name"], source_type=updated["source_type"],
@@ -315,7 +317,7 @@ async def update_bank_connection(connection_id: str, b: BankConnectionUpdate):
 
 
 @router.delete("/all")
-async def delete_all_connections():
+async def delete_all_connections(current_user: dict = Depends(require_permission("bank:delete"))):
     """Delete all registered bank connections and tools for clean testing."""
     pool = get_pool()
     async with pool.acquire() as conn:
@@ -328,7 +330,7 @@ async def delete_all_connections():
 
 
 @router.delete("/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_bank_connection(connection_id: str):
+async def delete_bank_connection(connection_id: str, current_user: dict = Depends(require_permission("bank:delete"))):
     pool = get_pool()
     async with pool.acquire() as conn:
         res = await conn.execute("DELETE FROM bank_connections WHERE id = $1", connection_id)
@@ -338,11 +340,12 @@ async def delete_bank_connection(connection_id: str):
     await cache_bank_connections_list()
     await cache_tool_routing()
     await publish_config_update("connection", connection_id)
+    await log_system_action(current_user, "connection_deleted", connection_id)
     return None
 
 
 @router.post("/{connection_id}/openapi")
-async def register_openapi_spec(connection_id: str, payload: dict):
+async def register_openapi_spec(connection_id: str, payload: dict, current_user: dict = Depends(require_permission("bank:create"))):
     spec_text = payload.get("spec", "")
     if not spec_text:
         raise HTTPException(status_code=400, detail="Missing 'spec' in request body")
@@ -397,6 +400,7 @@ async def register_openapi_spec(connection_id: str, payload: dict):
     await cache_bank_connections_list()
     await cache_tool_routing()
     await publish_config_update("openapi", connection_id)
+    await log_system_action(current_user, "openapi_imported", connection_id, name, {"tools_imported": len(inserted_tools)})
 
     return {
         "status": "registered",

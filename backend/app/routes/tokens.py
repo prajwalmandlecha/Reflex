@@ -1,8 +1,9 @@
 """JWT Minting routes (/api/v1/tokens)."""
 
 import datetime
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 import jwt
+from app.auth import log_system_action, require_permission
 from app.config import settings
 
 router = APIRouter(prefix="/api/v1/tokens", tags=["Tokens"], redirect_slashes=False)
@@ -30,6 +31,7 @@ async def mint_token(
     agent_id: str | None = None,
     agent_kind: str | None = None,
     policy_version: int | None = None,
+    current_user: dict = Depends(require_permission("instances:mint_token")),
 ):
     """Mint an agent JWT.
 
@@ -44,4 +46,5 @@ async def mint_token(
     resolved_version = int(payload.get("policy_version") or policy_version or 1)
 
     token = create_agent_jwt(resolved_id, resolved_kind, resolved_version)
+    await log_system_action(current_user, "token_minted", resolved_id, resolved_kind)
     return {"token": token, "agent_id": resolved_id, "expires_in_minutes": settings.jwt_ttl_minutes}

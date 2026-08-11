@@ -2,7 +2,8 @@
 
 import json
 import secrets
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from app.auth import get_current_user, log_system_action, require_permission
 from app.database import get_pool
 from app.models.agent_instance import AgentInstanceCreate, AgentInstanceResponse, AgentInstanceUpdate
 from app.redis_client import get_redis
@@ -15,7 +16,7 @@ router = APIRouter(prefix="/api/v1/agents", tags=["Agent Instances"])
 
 
 @router.get("", response_model=list[AgentInstanceResponse])
-async def list_agent_instances():
+async def list_agent_instances(current_user: dict = Depends(get_current_user)):
     pool = get_pool()
     redis = get_redis()
     fleet_halted = bool(await redis.get("agp:kill:fleet"))
@@ -132,7 +133,7 @@ async def _validate_tool_overrides(conn, class_id: str, tool_overrides: list[str
 
 
 @router.post("", response_model=AgentInstanceResponse, status_code=status.HTTP_201_CREATED)
-async def register_agent_instance(inst: AgentInstanceCreate):
+async def register_agent_instance(inst: AgentInstanceCreate, current_user: dict = Depends(require_permission("instances:create"))):
     pool = get_pool()
     async with pool.acquire() as conn:
         cls = await conn.fetchrow("SELECT id, name FROM agent_classes WHERE id = $1", inst.class_id)
@@ -164,6 +165,7 @@ async def register_agent_instance(inst: AgentInstanceCreate):
 
     await cache_agent_instance(agent_id)
     await publish_config_update("instance", agent_id)
+    await log_system_action(current_user, "agent_registered", agent_id, inst.class_id)
 
     # Mint signed JWT for the newly created agent instance
     token = create_agent_jwt(agent_id, agent_kind=inst.class_id)
@@ -179,7 +181,7 @@ async def register_agent_instance(inst: AgentInstanceCreate):
 
 
 @router.get("/{agent_id}", response_model=AgentInstanceResponse)
-async def get_agent_instance(agent_id: str):
+async def get_agent_instance(agent_id: str, current_user: dict = Depends(get_current_user)):
     pool = get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -207,7 +209,7 @@ async def get_agent_instance(agent_id: str):
 
 
 @router.put("/{agent_id}", response_model=AgentInstanceResponse)
-async def update_agent_instance(agent_id: str, inst: AgentInstanceUpdate):
+async def update_agent_instance(agent_id: str, inst: AgentInstanceUpdate, current_user: dict = Depends(require_permission("instances:update"))):
     pool = get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow("SELECT * FROM agent_instances WHERE id = $1", agent_id)
@@ -236,6 +238,7 @@ async def update_agent_instance(agent_id: str, inst: AgentInstanceUpdate):
 
     await cache_agent_instance(agent_id)
     await publish_config_update("instance", agent_id)
+    await log_system_action(current_user, "agent_updated", agent_id)
 
     u_constraints = json.loads(updated["constraint_overrides"]) if isinstance(updated["constraint_overrides"], str) else (updated["constraint_overrides"] or {})
     u_caps = json.loads(updated["cap_overrides"]) if isinstance(updated["cap_overrides"], str) else (updated["cap_overrides"] or {})
@@ -247,7 +250,7 @@ async def update_agent_instance(agent_id: str, inst: AgentInstanceUpdate):
 
 
 @router.get("/{agent_id}/spend")
-async def get_agent_spend(agent_id: str):
+async def get_agent_spend(agent_id: str, current_user: dict = Depends(get_current_user)):
     pool = get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow("SELECT id FROM agent_instances WHERE id = $1", agent_id)
@@ -262,7 +265,7 @@ async def get_agent_spend(agent_id: str):
 
 
 @router.post("/{agent_id}/revoke")
-async def revoke_agent_instance(agent_id: str):
+async def revoke_agent_instance(agent_id: str, current_user: dict = Depends(require_permission("instances:revoke"))):
     pool = get_pool()
     async with pool.acquire() as conn:
         await conn.execute("UPDATE agent_instances SET status = 'revoked', updated_at = NOW() WHERE id = $1", agent_id)
@@ -272,11 +275,12 @@ async def revoke_agent_instance(agent_id: str):
     await cache_agent_instance(agent_id)
     await publish_config_update("kill_agent", agent_id)
     await publish_fleet_event("kill_agent", agent_id, "Agent stopped by operator")
+    await log_system_action(current_user, "agent_revoked", agent_id)
     return {"status": "revoked", "agent_id": agent_id}
 
 
 @router.delete("/{agent_id}/revoke")
-async def revive_agent_instance(agent_id: str):
+async def revive_agent_instance(agent_id: str, current_user: dict = Depends(require_permission("instances:revive"))):
     """Revive a single agent instance.
 
     Only clears THIS agent's kill key and status. It must NOT touch the
@@ -294,11 +298,12 @@ async def revive_agent_instance(agent_id: str):
     await cache_agent_instance(agent_id)
     await publish_config_update("revive_agent", agent_id)
     await publish_fleet_event("revive_agent", agent_id, "Agent revived by operator")
+    await log_system_action(current_user, "agent_revived", agent_id)
     return {"status": "active", "agent_id": agent_id}
 
 
 @router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_agent_instance(agent_id: str):
+async def delete_agent_instance(agent_id: str, current_user: dict = Depends(require_permission("instances:revoke"))):
     pool = get_pool()
     async with pool.acquire() as conn:
         res = await conn.execute("DELETE FROM agent_instances WHERE id = $1", agent_id)
@@ -308,6 +313,7 @@ async def delete_agent_instance(agent_id: str):
     await redis.delete(f"agp:agent:{agent_id}")
     await redis.delete(f"agp:kill:agent:{agent_id}")
     await publish_config_update("instance", agent_id)
+    await log_system_action(current_user, "agent_deleted", agent_id)
     return None
 
 

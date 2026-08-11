@@ -11,8 +11,8 @@ from app.database import close_pool, init_pool
 from app.event_processor import init_event_processor, stop_event_processor
 from app.redis_client import close_redis, init_redis
 from app.routes import (
-    agent_classes, agent_instances, audit, bank_connections,
-    dashboard, fleet, internal, metrics, policies, tokens, tools, websockets,
+    agent_classes, agent_instances, audit, auth, bank_connections,
+    dashboard, fleet, internal, metrics, policies, tokens, tools, users, websockets,
 )
 from app.services.config_propagation import (
     cache_active_policies, cache_bank_connections, cache_tool_routing,
@@ -84,6 +84,8 @@ async def health_check():
     return {"status": "ok", "service": "agp-backend"}
 
 # Register Routers
+app.include_router(auth.router)
+app.include_router(users.router)
 app.include_router(agent_classes.router)
 app.include_router(agent_instances.router)
 app.include_router(bank_connections.router)

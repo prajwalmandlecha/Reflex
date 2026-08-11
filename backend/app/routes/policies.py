@@ -1,7 +1,8 @@
 """Policies routes (/api/v1/policies)."""
 
 import json
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from app.auth import get_current_user, log_system_action, require_permission
 from app.database import get_pool
 from typing import Any
 from app.models.policy import (
@@ -17,7 +18,7 @@ router = APIRouter(prefix="/api/v1/policies", tags=["Policies"])
 
 
 @router.get("", response_model=list[PolicyResponse])
-async def list_policies():
+async def list_policies(current_user: dict = Depends(get_current_user)):
     pool = get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch("SELECT * FROM policies ORDER BY id ASC")
@@ -44,7 +45,7 @@ async def list_policies():
 # NOTE: registered BEFORE /{policy_id} so FastAPI doesn't capture "changelog"
 # as an integer policy_id (routes match in registration order).
 @router.get("/changelog")
-async def get_policy_changelog(policy_id: int | None = None, limit: int = 100):
+async def get_policy_changelog(policy_id: int | None = None, limit: int = 100, current_user: dict = Depends(get_current_user)):
     """Expose the policy_changelog audit trail (written on every mutation but
     previously never readable)."""
     pool = get_pool()
@@ -74,7 +75,7 @@ async def get_policy_changelog(policy_id: int | None = None, limit: int = 100):
 
 
 @router.post("", response_model=PolicyResponse, status_code=status.HTTP_201_CREATED)
-async def create_policy(p: PolicyCreate):
+async def create_policy(p: PolicyCreate, current_user: dict = Depends(require_permission("policies:create"))):
     pool = get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -94,14 +95,16 @@ async def create_policy(p: PolicyCreate):
             json.dumps(p.visual_rules), p.status,
         )
 
-        # Log policy creation in policy_changelog
+        # Log policy creation in policy_changelog & system audit log
         await conn.execute(
             """
             INSERT INTO policy_changelog (policy_id, changed_by, change_type, new_value)
-            VALUES ($1, 'operator', 'create', $2::jsonb)
+            VALUES ($1, $2, 'create', $3::jsonb)
             """,
-            row["id"], json.dumps({"name": p.name, "status": p.status, "scope": p.scope}),
+            row["id"], current_user.get("email", "operator"), json.dumps({"name": p.name, "status": p.status, "scope": p.scope}),
         )
+
+    await log_system_action(current_user, "policy_created", str(row["id"]), p.name, {"scope": p.scope, "type": p.type, "status": p.status})
 
     if p.status == "active":
         await cache_active_policies()
@@ -116,7 +119,7 @@ async def create_policy(p: PolicyCreate):
 
 
 @router.get("/{policy_id}", response_model=PolicyResponse)
-async def get_policy(policy_id: int):
+async def get_policy(policy_id: int, current_user: dict = Depends(get_current_user)):
     pool = get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow("SELECT * FROM policies WHERE id = $1", policy_id)
@@ -132,7 +135,7 @@ async def get_policy(policy_id: int):
 
 
 @router.put("/{policy_id}", response_model=PolicyResponse)
-async def update_policy(policy_id: int, p: PolicyUpdate):
+async def update_policy(policy_id: int, p: PolicyUpdate, current_user: dict = Depends(require_permission("policies:update"))):
     pool = get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow("SELECT * FROM policies WHERE id = $1", policy_id)
@@ -162,12 +165,15 @@ async def update_policy(policy_id: int, p: PolicyUpdate):
         await conn.execute(
             """
             INSERT INTO policy_changelog (policy_id, changed_by, change_type, old_value, new_value)
-            VALUES ($1, 'operator', 'update', $2::jsonb, $3::jsonb)
+            VALUES ($1, $2, 'update', $3::jsonb, $4::jsonb)
             """,
             policy_id,
+            current_user.get("email", "operator"),
             json.dumps({"version": row["version"], "status": row["status"]}),
             json.dumps({"version": new_version, "status": status_val}),
         )
+
+    await log_system_action(current_user, "policy_updated", str(policy_id), name, {"version": new_version, "status": status_val})
 
     await cache_active_policies()
     await publish_config_update("policy", str(policy_id))
@@ -181,12 +187,12 @@ async def update_policy(policy_id: int, p: PolicyUpdate):
 
 
 @router.post("/{policy_id}/activate", response_model=PolicyResponse)
-async def activate_policy(policy_id: int):
+async def activate_policy(policy_id: int, current_user: dict = Depends(require_permission("policies:update"))):
     return await update_policy(policy_id, PolicyUpdate(status="active"))
 
 
 @router.delete("/{policy_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_policy(policy_id: int):
+async def delete_policy(policy_id: int, current_user: dict = Depends(require_permission("policies:archive"))):
     pool = get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow("SELECT * FROM policies WHERE id = $1", policy_id)
@@ -198,23 +204,25 @@ async def delete_policy(policy_id: int):
         await conn.execute(
             """
             INSERT INTO policy_changelog (policy_id, changed_by, change_type, old_value)
-            VALUES ($1, 'operator', 'delete', $2::jsonb)
+            VALUES ($1, $2, 'delete', $3::jsonb)
             """,
-            None, json.dumps({"id": policy_id, "name": row["name"], "status": row["status"]}),
+            None, current_user.get("email", "operator"), json.dumps({"id": policy_id, "name": row["name"], "status": row["status"]}),
         )
+
+    await log_system_action(current_user, "policy_deleted", str(policy_id), row["name"])
 
     await cache_active_policies()
     await publish_config_update("policy", str(policy_id))
 
 
 @router.post("/validate", response_model=PolicyValidateResponse)
-async def validate_policy(req: PolicyValidateRequest):
+async def validate_policy(req: PolicyValidateRequest, current_user: dict = Depends(get_current_user)):
     valid, errors = await validate_rego(req.rego_source)
     return PolicyValidateResponse(valid=valid, errors=errors)
 
 
 @router.post("/compile-visual")
-async def compile_visual_rules(payload: dict[str, Any]):
+async def compile_visual_rules(payload: dict[str, Any], current_user: dict = Depends(get_current_user)):
     rules = payload.get("rules", []) if isinstance(payload, dict) and "rules" in payload else (payload if isinstance(payload, list) else [])
     target_id = payload.get("target_id") if isinstance(payload, dict) else None
     scope = payload.get("scope", "global") if isinstance(payload, dict) else "global"
@@ -223,13 +231,13 @@ async def compile_visual_rules(payload: dict[str, Any]):
 
 
 @router.post("/test-input", response_model=PolicyTestInputResponse)
-async def test_policy_input(req: PolicyTestInputRequest):
+async def test_policy_input(req: PolicyTestInputRequest, current_user: dict = Depends(get_current_user)):
     res = await evaluate_rego_testcase(req.rego_source, req.visual_rules, req.input_payload)
     return PolicyTestInputResponse(**res)
 
 
 @router.post("/dry-run", response_model=PolicyDryRunResult)
-async def dry_run_policy(req: PolicyDryRunRequest):
+async def dry_run_policy(req: PolicyDryRunRequest, current_user: dict = Depends(get_current_user)):
     """Evaluate a candidate policy against recent audit-log decisions to show what
     WOULD change if it were activated — without touching the live policy set.
 
