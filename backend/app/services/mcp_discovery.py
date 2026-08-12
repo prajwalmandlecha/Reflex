@@ -25,13 +25,13 @@ async def fetch_mcp_tools(mcp_url: str, timeout: float = 2.0) -> list[dict] | No
         }
 
         async with httpx.AsyncClient(timeout=timeout) as client:
-            # 1. Send initialize
+            # 1. Send initialize (stateless protocol 2025-06-18; session optional)
             init_payload = {
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": "initialize",
                 "params": {
-                    "protocolVersion": "2024-11-05",
+                    "protocolVersion": "2025-06-18",
                     "capabilities": {},
                     "clientInfo": {"name": "agp-backend-discovery", "version": "1.0"},
                 },
@@ -39,6 +39,7 @@ async def fetch_mcp_tools(mcp_url: str, timeout: float = 2.0) -> list[dict] | No
             resp1 = await client.post(mcp_url, json=init_payload, headers=headers)
             resp1.raise_for_status()
 
+            # Stateless servers may not return a session; only forward it if present.
             session_id = resp1.headers.get("Mcp-Session-Id", "")
 
             # 2. Send tools/list

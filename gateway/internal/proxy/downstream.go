@@ -208,7 +208,7 @@ func (p *MCPProxy) getOrCreateDownstreamSession(ctx context.Context, targetURL s
 		"id":      1,
 		"method":  "initialize",
 		"params": map[string]any{
-			"protocolVersion": "2024-11-05",
+			"protocolVersion": "2025-06-18",
 			"capabilities":    map[string]any{},
 			"clientInfo":      map[string]any{"name": "reflex-gateway", "version": "1.0.0"},
 		},
@@ -227,6 +227,7 @@ func (p *MCPProxy) getOrCreateDownstreamSession(ctx context.Context, targetURL s
 	}
 	defer resp.Body.Close()
 
+	// Stateless servers may not return a session; only cache it if present.
 	sessID := resp.Header.Get("Mcp-Session-Id")
 	if sessID != "" && p.rdb != nil {
 		key := fmt.Sprintf("mcp:auto_session:%s", targetURL)
@@ -251,7 +252,7 @@ func (p *MCPProxy) createDownstreamSession(ctx context.Context, targetURL string
 		"id":      1,
 		"method":  "initialize",
 		"params": map[string]any{
-			"protocolVersion": "2024-11-05",
+			"protocolVersion": "2025-06-18",
 			"capabilities":    map[string]any{},
 			"clientInfo":      map[string]any{"name": "reflex-gateway", "version": "1.0.0"},
 		},
@@ -270,6 +271,7 @@ func (p *MCPProxy) createDownstreamSession(ctx context.Context, targetURL string
 	}
 	defer resp.Body.Close()
 
+	// Stateless servers may not return a session; only cache it if present.
 	sessID := resp.Header.Get("Mcp-Session-Id")
 	if sessID != "" && p.rdb != nil {
 		key := fmt.Sprintf("mcp:auto_session:%s", targetURL)

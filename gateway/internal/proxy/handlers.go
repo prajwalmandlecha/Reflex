@@ -40,7 +40,8 @@ func (p *MCPProxy) handleOpenAPIRequest(
 		w.Header().Set("Mcp-Session-Id", sessionID)
 		p.trackSession(r.Context(), sessionID, agentID, agentKind, serviceName)
 
-		clientProtocol := "2024-11-05"
+		// Stateless protocol 2025-06-18; echo back the client's requested version.
+		clientProtocol := "2025-06-18"
 		if params, ok := rpcReq["params"].(map[string]any); ok {
 			if pv, ok := params["protocolVersion"].(string); ok && pv != "" {
 				clientProtocol = pv

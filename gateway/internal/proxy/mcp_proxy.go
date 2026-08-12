@@ -435,8 +435,8 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Mcp-Session-Id", sessionID)
 		p.trackSession(r.Context(), sessionID, agentID, agentKind, serviceName)
 
-		// Echo back the client's requested protocol version, defaulting to 2024-11-05
-		clientProtocol := "2024-11-05"
+		// Echo back the client's requested protocol version, defaulting to 2025-06-18
+		clientProtocol := "2025-06-18"
 		if params, ok := rpcReq["params"].(map[string]any); ok {
 			if pv, ok := params["protocolVersion"].(string); ok && pv != "" {
 				clientProtocol = pv

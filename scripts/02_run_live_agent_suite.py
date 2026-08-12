@@ -43,7 +43,7 @@ def mcp_call(route: str, agent_token: str, method: str, params: dict = None, req
     # Session Initialization handshake
     init_body = json.dumps({
         "jsonrpc": "2.0", "id": 1, "method": "initialize",
-        "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "live_suite", "version": "1.0"}}
+        "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "live_suite", "version": "1.0"}}
     }).encode('utf-8')
 
     init_req = urllib.request.Request(f"{GATEWAY_URL}{route}", data=init_body, headers=headers, method="POST")
