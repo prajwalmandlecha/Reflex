@@ -109,11 +109,19 @@ func NewLimiter(rdb *redis.Client) *Limiter {
 
 // Commit atomically increments every entry's counter with all-or-nothing
 // semantics: if any cap would be breached, no counter retains an increment.
-// Entries with a non-positive Amount are skipped.
+//
+// Entries with a non-positive Amount are kept when they carry a Group: the
+// sliding-window rate limiter emits 10 sub-bucket entries where only the
+// current bucket has Amount=1 and the other 9 have Amount=0. Those zero-amount
+// entries exist solely to register their keys in the group so the Lua script
+// can sum the FULL window (all live sub-buckets) against the cap. Dropping them
+// would shrink the group to the current sub-bucket and let a burst straddling a
+// sub-bucket boundary bypass the rate limit. Only true no-ops (Amount<=0 AND no
+// group) are skipped.
 func (l *Limiter) Commit(ctx context.Context, entries []Entry) (*CommitResult, error) {
 	active := make([]Entry, 0, len(entries))
 	for _, e := range entries {
-		if e.Amount > 0 {
+		if e.Amount > 0 || e.Group != "" {
 			active = append(active, e)
 		}
 	}

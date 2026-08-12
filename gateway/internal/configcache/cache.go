@@ -145,8 +145,12 @@ func (c *ConfigCache) subscribeUpdates(ctx context.Context) {
 				if update.Type == "instance" || update.Type == "kill_agent" || update.Type == "revive_agent" {
 					c.agents.Delete(update.ID)
 					c.logger.Info("invalidated agent config cache", "agent_id", update.ID)
-				} else if update.Type == "class" || update.Type == "policy" || update.Type == "halt_fleet" || update.Type == "resume_fleet" {
-					// Clear all in-memory agent configs on class/policy/fleet changes
+				} else if update.Type == "class" || update.Type == "policy" || update.Type == "halt_fleet" || update.Type == "resume_fleet" || update.Type == "fleet_caps" {
+					// Clear all in-memory agent configs on class/policy/fleet changes.
+					// "fleet_caps" is included because fleet-scoped shared_caps and
+					// shared_rate_limits are injected into every agent's
+					// effective_constraints; without invalidating here the gateway
+					// would keep serving stale configs that lack the new fleet caps.
 					c.agents.Range(func(key, value any) bool {
 						c.agents.Delete(key)
 						return true
