@@ -30,11 +30,11 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
-import { formatCurrency } from '@/lib/format';
+
 import type { AgentClass, AgentInstance, BankTool } from '@/lib/types';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
-import { Plus, Ban, Wrench, DollarSign, Clock, Settings2, Search, X, CheckCircle2, Trash2, ChevronDown, Eye } from 'lucide-react';
+import { Plus, Ban, Wrench, DollarSign, Clock, Settings2, Search, X, CheckCircle2, Trash2, ChevronDown, Eye, Layers } from 'lucide-react';
 
 export function AgentClassesView({
   classes,
@@ -60,7 +60,7 @@ export function AgentClassesView({
             Agent Classes
           </h2>
           <p className="font-sans text-xs text-ink-secondary">
-            Define default permissions, constraints, and spend caps for groups of agents.
+            Define default permissions and constraints for groups of agents.
           </p>
         </div>
         {canCreate && (
@@ -134,17 +134,17 @@ export function AgentClassesView({
                       })}
                     </div>
                   </div>
-                  <div className="bg-white/[0.02] p-3">
+                <div className="bg-white/[0.02] p-3">
                     <div className="flex items-center gap-1.5">
                       <DollarSign className="h-3 w-3 text-ink-secondary" />
                       <span className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
-                        Hourly Cap
+                        Param Caps
                       </span>
                     </div>
                     <div className="mt-1.5 font-mono text-xs text-ink-primary tabular font-medium">
-                      {cls.defaultCap?.amount > 0
-                        ? `${formatCurrency(cls.defaultCap.amount)}`
-                        : 'No spend cap'}
+                      {Object.values(cls.defaultConstraints || {}).some((c: any) => c?.params && Object.keys(c.params).length > 0)
+                        ? `${Object.values(cls.defaultConstraints || {}).reduce((n: number, c: any) => n + Object.keys(c?.params || {}).length, 0)} configured`
+                        : 'No param caps'}
                     </div>
                   </div>
                 </div>
@@ -283,7 +283,7 @@ export function AgentClassesView({
             No Agent Classes Configured
           </h3>
           <p className="mt-1 font-sans text-xs text-ink-secondary max-w-sm mx-auto">
-            Agent classes group agents together to define default tool access, rate limits, and spend caps across instances.
+            Agent classes group agents together to define default tool access, rate limits, and parameter-level spend caps across instances.
           </p>
           <Button
             onClick={() => setShowCreate(true)}
@@ -343,12 +343,6 @@ function ClassForm({
   const [toolFilter, setToolFilter] = useState<'all' | 'selected' | 'unselected'>('all');
   const [name, setName] = useState(classData?.name || '');
   const [description, setDescription] = useState(classData?.description || '');
-  const caps = (classData as any)?.defaultCaps || (classData as any)?.default_caps || {};
-  const initHourly = caps.hourly?.amount_cents != null ? (caps.hourly.amount_cents / 100).toString() : '';
-  const initDaily = caps.daily?.amount_cents != null ? (caps.daily.amount_cents / 100).toString() : '';
-
-  const [hourlyCap, setHourlyCap] = useState(initHourly);
-  const [dailyCap, setDailyCap] = useState(initDaily);
 
   const [constraintsJson, setConstraintsJson] = useState(
     JSON.stringify(classData?.defaultConstraints || {}, null, 2)
@@ -409,14 +403,6 @@ function ClassForm({
       return;
     }
 
-    const defaultCaps: Record<string, any> = {};
-    if (hourlyCap.trim() !== '') {
-      defaultCaps.hourly = { amount_cents: Math.max(0, (parseFloat(hourlyCap) || 0) * 100) };
-    }
-    if (dailyCap.trim() !== '') {
-      defaultCaps.daily = { amount_cents: Math.max(0, (parseFloat(dailyCap) || 0) * 100) };
-    }
-
     setLoading(true);
     try {
       const payload = {
@@ -425,7 +411,7 @@ function ClassForm({
         description,
         default_allowed_tools: selectedTools,
         default_constraints: parsedConstraints,
-        default_caps: defaultCaps,
+        default_caps: {},
         status: 'active',
       };
 
@@ -476,33 +462,6 @@ function ClassForm({
         />
       </div>
 
-      <div>
-        <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary mb-1 block">
-          Spend Caps Configuration ($ USD — Optional)
-        </Label>
-        <div className="grid grid-cols-2 gap-3 border border-white/10 bg-white/[0.02] p-2.5 rounded-lg">
-          <div>
-            <Label className="font-mono text-[10px] text-ink-secondary/80">Hourly Cap ($)</Label>
-            <Input
-              type="number"
-              value={hourlyCap}
-              onChange={(e) => setHourlyCap(e.target.value)}
-              placeholder="e.g. 5000"
-              className="mt-1 h-8 border-white/10 bg-slate-900/80 font-mono text-xs text-white placeholder:text-ink-secondary/40"
-            />
-          </div>
-          <div>
-            <Label className="font-mono text-[10px] text-ink-secondary/80">Daily Cap ($)</Label>
-            <Input
-              type="number"
-              value={dailyCap}
-              onChange={(e) => setDailyCap(e.target.value)}
-              placeholder="e.g. 50000"
-              className="mt-1 h-8 border-white/10 bg-slate-900/80 font-mono text-xs text-white placeholder:text-ink-secondary/40"
-            />
-          </div>
-        </div>
-      </div>
 
       <div>
         <div className="flex items-center justify-between mb-1.5">
@@ -692,12 +651,15 @@ function VisualConstraintEditor({
   // never asked for.
   const [maxCalls, setMaxCalls] = useState<string>('');
   const [windowSec, setWindowSec] = useState<string>('');
+  const [rlScope, setRlScope] = useState<'instance' | 'class'>('instance');
   const [startTime, setStartTime] = useState<string>('');
   const [endTime, setEndTime] = useState<string>('');
   const [paramName, setParamName] = useState<string>('');
   const [paramMax, setParamMax] = useState<string>('');
-  const [paramDailyCap, setParamDailyCap] = useState<string>('');
-  const [paramHourlyCap, setParamHourlyCap] = useState<string>('');
+  const [accWindow, setAccWindow] = useState<'daily' | 'hourly' | 'monthly'>('daily');
+  const [accScope, setAccScope] = useState<'instance' | 'class'>('instance');
+  const [accLimit, setAccLimit] = useState<string>('');
+  const [capError, setCapError] = useState<string>('');
   const [constraintsOpen, setConstraintsOpen] = useState(false);
 
   useEffect(() => {
@@ -706,9 +668,6 @@ function VisualConstraintEditor({
     }
   }, [selectedTools]);
 
-  // Numeric parameters declared in the selected tool's input_schema. These are
-  // the candidate parameters a per-param cap can bound (e.g. amount_cents,
-  // dest_amount, attendee_share) — sourced straight from tools.input_schema.
   const targetToolMeta = useMemo(
     () => tools.find((t) => t.name === targetTool),
     [tools, targetTool]
@@ -724,9 +683,6 @@ function VisualConstraintEditor({
       .map(([name]) => name);
   }, [targetToolMeta]);
 
-  // Fields the tool schema marks as REQUIRED (including anyOf/oneOf branches).
-  // The gateway only fails closed on a money field that is required — an
-  // optional one (e.g. a "scale" multiplier) may legitimately be omitted.
   const requiredParams = useMemo(() => {
     const schema = (targetToolMeta?.input_schema || {}) as Record<string, any>;
     const req = new Set<string>(schema.required || []);
@@ -740,8 +696,6 @@ function VisualConstraintEditor({
     return req;
   }, [targetToolMeta]);
 
-  // Reset the param pick whenever the tool (and thus its param list) changes,
-  // so a stale field from another tool can't leak into the rule.
   useEffect(() => {
     if (paramName && !numericParams.includes(paramName)) {
       setParamName('');
@@ -759,14 +713,28 @@ function VisualConstraintEditor({
   const handleAddConstraint = () => {
     if (!targetTool) return;
     const current = { ...parsedObj };
-
     const toolRule: Record<string, any> = current[targetTool] || {};
 
     if (maxCalls.trim() && windowSec.trim()) {
-      toolRule.rate_limit = {
-        max_calls: parseInt(maxCalls) || 60,
-        window_seconds: parseInt(windowSec) || 3600,
-      };
+      const maxCallsNum = parseInt(maxCalls) || 60;
+      const windowSecNum = parseInt(windowSec) || 3600;
+      if (rlScope === 'instance') {
+        toolRule.rate_limit = {
+          max_calls: maxCallsNum,
+          window_seconds: windowSecNum,
+        };
+      } else {
+        // Class-scoped rate limit: shared across every agent in the class via
+        // shared_rate_limits with scope "class". Fleet scope is managed globally
+        // in Fleet Caps, so it is intentionally not offered here.
+        const shared: any[] = Array.isArray(toolRule.shared_rate_limits)
+          ? toolRule.shared_rate_limits.filter(
+              (srl: any) => !(srl.scope === 'class' && srl.max_calls === maxCallsNum && srl.window_seconds === windowSecNum)
+            )
+          : [];
+        shared.push({ scope: 'class', max_calls: maxCallsNum, window_seconds: windowSecNum });
+        toolRule.shared_rate_limits = shared;
+      }
     }
 
     if (startTime.trim() && endTime.trim()) {
@@ -777,22 +745,92 @@ function VisualConstraintEditor({
       };
     }
 
-    // Per-parameter caps: bound the input knob itself (max per call) and its
-    // accumulation over time (daily_cents / hourly_cents). Values are stored in
-    // cents to match the gateway, and the per-call max is sign-agnostic.
-    if (paramName.trim()) {
-      const rule: Record<string, any> = {};
-      if (paramMax.trim() !== '') {
-        rule.max = Math.max(0, parseFloat(paramMax) || 0);
+    if (paramName.trim() && paramMax.trim() !== '') {
+      const params = { ...(toolRule.params || {}) };
+      const prule = { ...(params[paramName.trim()] || {}) };
+      prule.max = Math.max(0, parseFloat(paramMax) || 0);
+      params[paramName.trim()] = prule;
+      toolRule.params = params;
+    }
+
+    current[targetTool] = toolRule;
+    setConstraintsJson(JSON.stringify(current, null, 2));
+  };
+
+  const handleAddAccCap = () => {
+    if (!targetTool || !paramName || !accLimit.trim()) return;
+    // A param named *_cents is already in cents (no ×100); major-unit params
+    // are dollars and must be converted to cents. This must match the gateway's
+    // SharedCapEntries / ParamCounterEntries convention exactly.
+    const isCentsParam = paramName.endsWith('_cents');
+    const cents = Math.max(0, Math.round((parseFloat(accLimit) || 0) * (isCentsParam ? 1 : 100)));
+    if (cents <= 0) return;
+
+    const current = { ...parsedObj };
+    const toolRule: Record<string, any> = current[targetTool] || {};
+    const sharedCaps: any[] = Array.isArray(toolRule.shared_caps) ? toolRule.shared_caps : [];
+
+    if (accScope === 'instance') {
+      const classCap = sharedCaps.find((sc) => sc.scope === 'class' && sc.param === paramName && sc.window === accWindow);
+      if (classCap && cents > classCap.limit_cents) {
+        setCapError(`Instance cap cannot exceed Class-level cap ($${(classCap.limit_cents / 100).toLocaleString()}) for ${paramName} (${accWindow}).`);
+        return;
       }
-      if (paramDailyCap.trim() !== '') {
-        rule.daily_cents = Math.max(0, Math.round((parseFloat(paramDailyCap) || 0) * 100));
+    }
+
+    setCapError('');
+
+    if (accScope === 'instance') {
+      const params = { ...(toolRule.params || {}) };
+      const prule = { ...(params[paramName] || {}) };
+      if (accWindow === 'daily') prule.daily_cents = cents;
+      else if (accWindow === 'hourly') prule.hourly_cents = cents;
+      else if (accWindow === 'monthly') prule.monthly_cents = cents;
+      params[paramName] = prule;
+      toolRule.params = params;
+    } else {
+      let existing: any[] = Array.isArray(toolRule.shared_caps) ? [...toolRule.shared_caps] : [];
+      existing = existing.filter(
+        (c: any) => !(c.scope === accScope && c.param === paramName && c.window === accWindow)
+      );
+      existing.push({
+        scope: accScope,
+        param: paramName,
+        window: accWindow,
+        limit_cents: cents,
+      });
+      toolRule.shared_caps = existing;
+    }
+
+    current[targetTool] = toolRule;
+    setConstraintsJson(JSON.stringify(current, null, 2));
+    setAccLimit('');
+  };
+
+  const handleRemoveAccCap = (win: string, scope: string) => {
+    if (!targetTool || !paramName) return;
+    const current = { ...parsedObj };
+    const toolRule: Record<string, any> = current[targetTool] || {};
+
+    if (scope === 'instance') {
+      if (toolRule.params && toolRule.params[paramName]) {
+        const prule = { ...toolRule.params[paramName] };
+        if (win === 'daily') delete prule.daily_cents;
+        if (win === 'hourly') delete prule.hourly_cents;
+        if (win === 'monthly') delete prule.monthly_cents;
+        if (Object.keys(prule).length > 0) {
+          toolRule.params[paramName] = prule;
+        } else {
+          delete toolRule.params[paramName];
+          if (Object.keys(toolRule.params).length === 0) delete toolRule.params;
+        }
       }
-      if (paramHourlyCap.trim() !== '') {
-        rule.hourly_cents = Math.max(0, Math.round((parseFloat(paramHourlyCap) || 0) * 100));
-      }
-      if (Object.keys(rule).length > 0) {
-        toolRule.params = { ...(toolRule.params || {}), [paramName.trim()]: rule };
+    } else {
+      if (Array.isArray(toolRule.shared_caps)) {
+        toolRule.shared_caps = toolRule.shared_caps.filter(
+          (c: any) => !(c.scope === scope && c.param === paramName && c.window === win)
+        );
+        if (toolRule.shared_caps.length === 0) delete toolRule.shared_caps;
       }
     }
 
@@ -806,25 +844,23 @@ function VisualConstraintEditor({
     setConstraintsJson(JSON.stringify(current, null, 2));
   };
 
-  // Load an existing tool's constraint back into the form so the user can edit
-  // it in place instead of deleting and re-adding from scratch.
   const handleEditToolConstraint = (tName: string) => {
     const conf = parsedObj[tName] || {};
     setTargetTool(tName);
-    setMaxCalls(conf.rate_limit?.max_calls?.toString() ?? '');
-    setWindowSec(conf.rate_limit?.window_seconds?.toString() ?? '');
-    setStartTime(conf.time_window?.start ?? '');
-    setEndTime(conf.time_window?.end ?? '');
+    const classRl = (conf.shared_rate_limits || []).find((srl: any) => srl.scope === 'class');
+    if (classRl) {
+      setRlScope('class');
+      setMaxCalls(classRl.max_calls?.toString() ?? '');
+      setWindowSec(classRl.window_seconds?.toString() ?? '');
+    } else {
+      setRlScope('instance');
+      setMaxCalls(conf.rate_limit?.max_calls?.toString() ?? '');
+      setWindowSec(conf.rate_limit?.window_seconds?.toString() ?? '');
+    }
     const firstParam = Object.keys(conf.params || {})[0] || '';
     setParamName(firstParam);
     const prule = (conf.params || {})[firstParam] || {};
     setParamMax(prule.max != null ? prule.max.toString() : '');
-    setParamDailyCap(
-      prule.daily_cents != null ? (prule.daily_cents / 100).toString() : ''
-    );
-    setParamHourlyCap(
-      prule.hourly_cents != null ? (prule.hourly_cents / 100).toString() : ''
-    );
     setEditorMode('visual');
   };
 
@@ -844,7 +880,7 @@ function VisualConstraintEditor({
           />
           <Clock className="h-4 w-4 text-cyan-400 shrink-0" />
           <span className="font-mono text-xs uppercase tracking-widest text-ink-primary font-semibold">
-            Dynamic Operational Constraints (Rate Limits, Time Windows & Spend Caps)
+            Dynamic Operational Constraints (Rate Limits & Parameter Spend Caps)
           </span>
         </CollapsibleTrigger>
 
@@ -896,8 +932,16 @@ function VisualConstraintEditor({
                       {conf.rate_limit && (
                         <span>Rate Limit: <strong className="text-white">{conf.rate_limit.max_calls} calls</strong> / {conf.rate_limit.window_seconds}s</span>
                       )}
-                      {conf.time_window && (
-                        <span>Hours: <strong className="text-amber-300">{conf.time_window.start} - {conf.time_window.end} UTC</strong></span>
+                      {Array.isArray(conf.shared_rate_limits) && conf.shared_rate_limits.length > 0 && (
+                        <span className="flex items-center gap-1">
+                          <Layers className="h-3 w-3 text-violet-400" />
+                          <strong className="text-violet-300">
+                            {(conf.shared_rate_limits as any[])
+                              .filter((srl: any) => srl.scope === 'class')
+                              .map((srl: any) => `Class: ≤ ${srl.max_calls} calls / ${srl.window_seconds}s`)
+                              .join('; ')}
+                          </strong>
+                        </span>
                       )}
                       {conf.params && Object.keys(conf.params).length > 0 && (
                         <span>
@@ -910,9 +954,21 @@ function VisualConstraintEditor({
                                 if (rule.max != null) bits.push(`max $${rule.max}`);
                                 if (rule.daily_cents != null) bits.push(`daily $${(rule.daily_cents / 100).toLocaleString()}`);
                                 if (rule.hourly_cents != null) bits.push(`hourly $${(rule.hourly_cents / 100).toLocaleString()}`);
+                                if (rule.monthly_cents != null) bits.push(`monthly $${(rule.monthly_cents / 100).toLocaleString()}`);
                                 return `${p} (${bits.join(', ')})`;
                               })
                               .join('; ')}
+                          </strong>
+                        </span>
+                      )}
+                      {Array.isArray(conf.shared_caps) && conf.shared_caps.length > 0 && (
+                        <span className="flex items-center gap-1">
+                          <Layers className="h-3 w-3 text-violet-400" />
+                          <strong className="text-violet-300">
+                            {(conf.shared_caps as any[]).map((sc: any) => {
+                              const label = sc.scope === 'fleet' ? 'Fleet' : 'Class';
+                              return `${label}: ${sc.param} ≤ $${((sc.limit_cents || 0) / 100).toLocaleString()}/${sc.window}`;
+                            }).join('; ')}
                           </strong>
                         </span>
                       )}
@@ -944,7 +1000,7 @@ function VisualConstraintEditor({
               ))
             ) : (
               <span className="font-mono text-[10px] text-ink-secondary/60 block py-1">
-                No tool rate limits or time windows configured yet. Use form below to add.
+                No tool rate limits or parameter caps configured yet. Use form below to add.
               </span>
             )}
           </div>
@@ -996,40 +1052,141 @@ function VisualConstraintEditor({
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-2">
-              <div>
-                <Label className="font-mono text-[10px] text-ink-secondary">Per-Call Max ($)</Label>
-                <Input
-                  type="number"
-                  value={paramMax}
-                  onChange={(e) => setParamMax(e.target.value)}
-                  placeholder="e.g. 1200"
-                  className="mt-1 h-8 border-white/10 bg-slate-900 font-mono text-xs text-white"
-                />
-              </div>
-              <div>
-                <Label className="font-mono text-[10px] text-ink-secondary">Daily Cap ($)</Label>
-                <Input
-                  type="number"
-                  value={paramDailyCap}
-                  onChange={(e) => setParamDailyCap(e.target.value)}
-                  placeholder="e.g. 5000"
-                  className="mt-1 h-8 border-white/10 bg-slate-900 font-mono text-xs text-white"
-                />
-              </div>
-              <div>
-                <Label className="font-mono text-[10px] text-ink-secondary">Hourly Cap ($)</Label>
-                <Input
-                  type="number"
-                  value={paramHourlyCap}
-                  onChange={(e) => setParamHourlyCap(e.target.value)}
-                  placeholder="e.g. 1000"
-                  className="mt-1 h-8 border-white/10 bg-slate-900 font-mono text-xs text-white"
-                />
-              </div>
+            {/* Per-Call Max Ceiling */}
+            <div>
+              <Label className="font-mono text-[10px] text-ink-secondary">
+                {paramName ? `Per-Call Max Ceiling for "${paramName}" ($)` : 'Per-Call Max Ceiling ($) — select param above'}
+              </Label>
+              <Input
+                type="number"
+                value={paramMax}
+                onChange={(e) => setParamMax(e.target.value)}
+                placeholder="e.g. 1200"
+                disabled={!paramName}
+                className="mt-1 h-8 border-white/10 bg-slate-900 font-mono text-xs text-white disabled:opacity-40"
+              />
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
+            {/* Time-Window Accumulation Caps Section (Dynamic Window + Scope + Limit Row) */}
+            <div className="border border-white/5 bg-slate-900/60 p-2.5 rounded space-y-2">
+              <span className="font-mono text-[10px] text-ink-secondary uppercase tracking-widest font-semibold block">
+                {paramName ? `Time-Window Accumulation Caps for "${paramName}"` : 'Time-Window Accumulation Caps — select param above'}
+              </span>
+
+              {/* Active Accumulation Caps Badges for current tool & param */}
+              {(() => {
+                if (!targetTool || !paramName) return null;
+                const toolConf = parsedObj[targetTool] || {};
+                const prule = (toolConf.params || {})[paramName] || {};
+                const sharedCaps = (toolConf.shared_caps || []).filter((sc: any) => sc.param === paramName);
+
+                const activeItems: { window: string; scope: string; limitCents: number; key: string }[] = [];
+                if (prule.daily_cents != null) activeItems.push({ window: 'daily', scope: 'instance', limitCents: prule.daily_cents, key: 'p-daily' });
+                if (prule.hourly_cents != null) activeItems.push({ window: 'hourly', scope: 'instance', limitCents: prule.hourly_cents, key: 'p-hourly' });
+                if (prule.monthly_cents != null) activeItems.push({ window: 'monthly', scope: 'instance', limitCents: prule.monthly_cents, key: 'p-monthly' });
+
+                sharedCaps.forEach((sc: any, idx: number) => {
+                  activeItems.push({ window: sc.window, scope: sc.scope, limitCents: sc.limit_cents, key: `s-${idx}` });
+                });
+
+                if (activeItems.length === 0) return null;
+
+                return (
+                  <div className="flex flex-wrap gap-1.5 py-1 border-b border-white/5 pb-2">
+                    {activeItems.map((item) => {
+                      const scopeLabel = item.scope === 'fleet' ? '🌐 Fleet' : item.scope === 'class' ? '📦 Class' : '🤖 Instance';
+                      return (
+                        <div key={item.key} className="flex items-center gap-1.5 border border-white/10 bg-slate-950 px-2 py-1 rounded font-mono text-[11px]">
+                          <span className="text-white font-semibold">{scopeLabel}</span>
+                          <span className="text-amber-300 font-semibold uppercase">{item.window}:</span>
+                          <span className="text-cyan-300 font-bold">${(item.limitCents / 100).toLocaleString()}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveAccCap(item.window, item.scope)}
+                            className="text-rose-400 hover:text-rose-300 cursor-pointer ml-0.5"
+                            title="Remove this cap"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+
+              {/* Single Dynamic Input Row: Window + Scope + Amount + Add Button */}
+              <div className="grid grid-cols-4 gap-2 items-end">
+                <div>
+                  <Label className="font-mono text-[10px] text-ink-secondary">Window</Label>
+                  <select
+                    value={accWindow}
+                    onChange={(e) => setAccWindow(e.target.value as any)}
+                    disabled={!paramName}
+                    className="mt-1 h-8 w-full border border-white/10 bg-slate-900 px-2 font-mono text-xs text-white rounded disabled:opacity-40"
+                  >
+                    <option value="daily">Daily</option>
+                    <option value="hourly">Hourly</option>
+                    <option value="monthly">Monthly</option>
+                  </select>
+                </div>
+
+                <div>
+                  <Label className="font-mono text-[10px] text-ink-secondary">Scope</Label>
+                  <select
+                    value={accScope}
+                    onChange={(e) => setAccScope(e.target.value as any)}
+                    disabled={!paramName}
+                    className="mt-1 h-8 w-full border border-white/10 bg-slate-900 px-2 font-mono text-xs text-white rounded disabled:opacity-40"
+                  >
+                    <option value="instance">Per Agent Instance</option>
+                    <option value="class">Across Agent Class</option>
+                  </select>
+                </div>
+
+                <div>
+                  <Label className="font-mono text-[10px] text-ink-secondary">Cap Limit ($)</Label>
+                  <Input
+                    type="number"
+                    value={accLimit}
+                    onChange={(e) => setAccLimit(e.target.value)}
+                    placeholder="e.g. 5000"
+                    disabled={!paramName}
+                    className="mt-1 h-8 border-white/10 bg-slate-900 font-mono text-xs text-white disabled:opacity-40"
+                  />
+                </div>
+
+                <div>
+                  <Button
+                    type="button"
+                    onClick={handleAddAccCap}
+                    disabled={!paramName || !accLimit.trim()}
+                    className="h-8 w-full border border-cyan-500/30 bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20 font-mono text-xs disabled:opacity-40"
+                  >
+                    <Plus className="h-3 w-3 mr-1" /> Add Cap
+                  </Button>
+                </div>
+              </div>
+
+              {capError && (
+                <div className="font-mono text-xs text-rose-400 bg-rose-500/10 border border-rose-500/20 p-2 rounded">
+                  {capError}
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <Label className="font-mono text-[10px] text-ink-secondary">Rate Limit Scope</Label>
+                <select
+                  value={rlScope}
+                  onChange={(e) => setRlScope(e.target.value as any)}
+                  className="mt-1 h-8 w-full border border-white/10 bg-slate-900 px-2 font-mono text-xs text-white rounded"
+                >
+                  <option value="instance">Per Agent Instance</option>
+                  <option value="class">Across Agent Class</option>
+                </select>
+              </div>
               <div>
                 <Label className="font-mono text-[10px] text-ink-secondary">Rate Limit (Max Calls)</Label>
                 <Input
@@ -1052,29 +1209,6 @@ function VisualConstraintEditor({
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <Label className="font-mono text-[10px] text-ink-secondary">Business Hours Start (UTC)</Label>
-                <Input
-                  type="text"
-                  value={startTime}
-                  onChange={(e) => setStartTime(e.target.value)}
-                  placeholder="09:00"
-                  className="mt-1 h-8 border-white/10 bg-slate-900 font-mono text-xs text-white"
-                />
-              </div>
-              <div>
-                <Label className="font-mono text-[10px] text-ink-secondary">Business Hours End (UTC)</Label>
-                <Input
-                  type="text"
-                  value={endTime}
-                  onChange={(e) => setEndTime(e.target.value)}
-                  placeholder="17:00"
-                  className="mt-1 h-8 border-white/10 bg-slate-900 font-mono text-xs text-white"
-                />
-              </div>
-            </div>
-
             <Button
               type="button"
               onClick={handleAddConstraint}
@@ -1088,7 +1222,7 @@ function VisualConstraintEditor({
         <textarea
           value={constraintsJson}
           onChange={(e) => setConstraintsJson(e.target.value)}
-          placeholder={`{\n  "transfer_money": {\n    "params": {\n      "amount_cents": {"max": 120000, "daily_cents": 500000, "hourly_cents": 100000}\n    },\n    "rate_limit": {"max_calls": 60, "window_seconds": 3600},\n    "time_window": {"start": "09:00", "end": "17:00", "tz": "UTC"}\n  }\n}`}
+          placeholder={`{\n  "transfer_money": {\n    "params": {\n      "amount_cents": {"max": 120000, "daily_cents": 500000, "hourly_cents": 100000}\n    },\n    "rate_limit": {"max_calls": 60, "window_seconds": 3600}\n  }\n}`}
           className="mt-1 h-36 w-full border border-white/10 bg-slate-900 p-2 font-mono text-[11px] leading-relaxed rounded text-white focus:outline-none focus:border-cyan-500"
         />
       )}

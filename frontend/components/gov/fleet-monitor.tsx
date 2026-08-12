@@ -3,8 +3,7 @@
 import { useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import { StatusBadge } from '@/components/gov/status-badge';
-import { SpendBar } from '@/components/gov/spend-bar';
-import { formatCurrency, pct } from '@/lib/format';
+import { formatCurrency } from '@/lib/format';
 import type { AgentInstance, AgentClass, ActivityEvent } from '@/lib/types';
 import {
   ResponsiveContainer,
@@ -15,7 +14,7 @@ import {
   Tooltip,
   CartesianGrid,
 } from 'recharts';
-import { Activity, TrendingUp, Zap, AlertTriangle } from 'lucide-react';
+import { Activity, Zap, AlertTriangle } from 'lucide-react';
 
 /**
  * Fleet Monitor — a live operations panel replacing the Fleet Radar.
@@ -54,47 +53,7 @@ export function FleetMonitor({
     return buckets;
   }, [activityFeed]);
 
-  // Spend trajectory — REAL cumulative spend built from the activity feed's
-  // allow events (spend_delta_cents) within the LAST 24h only, bucketed per 2h.
-  // Events older than the window are excluded so stale spend isn't mis-bucketed
-  // onto the axis. X labels are real clock times, not "0h/8h/…" offsets.
-  const spendTrajectory = useMemo(() => {
-    const totalCap = instances.reduce((s, i) => s + i.capToday, 0);
-    const now = Date.now();
-    const bucketMs = 2 * 60 * 60 * 1000; // 2h buckets over 24h
-    const buckets = 12;
-    const windowStart = now - buckets * bucketMs; // 24h ago
 
-    // Collect real spend events INSIDE the 24h window, with timestamps.
-    const spendEvents = activityFeed
-      .filter((e) => e.decision === 'allow')
-      .map((e) => ({
-        t: new Date(e.timestamp).getTime(),
-        cents: (e as any).spend_delta_cents ?? (e as any).spendDeltaCents ?? 0,
-      }))
-      .filter((e) => !isNaN(e.t) && e.cents > 0 && e.t >= windowStart)
-      .sort((a, b) => a.t - b.t);
-
-    const points: { label: string; spend: number; cap: number }[] = [];
-    let cumulative = 0;
-    for (let b = buckets; b >= 0; b--) {
-      const bucketEnd = now - b * bucketMs;
-      // Add spend events that occurred up to this bucket boundary (within window).
-      while (spendEvents.length && spendEvents[0].t <= bucketEnd) {
-        cumulative += spendEvents.shift()!.cents;
-      }
-      const d = new Date(bucketEnd);
-      points.push({
-        label: d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' }),
-        spend: Math.round(cumulative / 100), // cents → dollars
-        cap: totalCap,
-      });
-    }
-    return points;
-  }, [instances, activityFeed]);
-
-  const totalSpend = instances.reduce((s, i) => s + i.spendToday, 0);
-  const totalCap = instances.reduce((s, i) => s + i.capToday, 0);
   const activeCount = instances.filter((i) => i.status === 'active').length;
   const revokedCount = instances.filter((i) => i.status === 'revoked').length;
   const killedCount = instances.filter((i) => i.status === 'killed').length;
@@ -161,44 +120,7 @@ export function FleetMonitor({
           </AreaChart>
         </ResponsiveContainer>
 
-        {/* Spend trajectory */}
-        <div className="mt-4 border-t border-white/5 pt-4">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <TrendingUp className="h-3.5 w-3.5 text-ink-secondary" />
-              <span className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
-                Spend Trajectory (24h)
-              </span>
-            </div>
-            <span className="font-mono text-xs text-ink-primary tabular">
-              {formatCurrency(totalSpend)} <span className="text-ink-secondary">/ {formatCurrency(totalCap)}</span>
-            </span>
-          </div>
-          <ResponsiveContainer width="100%" height={100}>
-            <AreaChart data={spendTrajectory} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
-              <defs>
-                <linearGradient id="grad-spend" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#4C8DFF" stopOpacity={0.3} />
-                  <stop offset="100%" stopColor="#4C8DFF" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#8B96A3', fontFamily: 'IBM Plex Mono' }} axisLine={false} tickLine={false} interval={3} />
-              <YAxis tick={{ fontSize: 9, fill: '#8B96A3', fontFamily: 'IBM Plex Mono' }} axisLine={false} tickLine={false} width={36} tickFormatter={(v) => `$${(v / 1000000).toFixed(1)}M`} />
-              <Tooltip
-                contentStyle={{
-                  background: 'rgba(18, 26, 36, 0.9)',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  borderRadius: '12px',
-                  fontFamily: 'IBM Plex Mono',
-                  fontSize: '11px',
-                  backdropFilter: 'blur(12px)',
-                }}
-                formatter={(v: number) => formatCurrency(v)}
-              />
-              <Area type="monotone" dataKey="spend" stroke="#4C8DFF" strokeWidth={1.5} fill="url(#grad-spend)" />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
+
       </div>
 
       {/* Live metrics + agent grid */}
@@ -245,9 +167,6 @@ export function FleetMonitor({
           <div className="max-h-[280px] overflow-auto px-3 pb-3">
             <div className="space-y-1">
               {instances.map((inst) => {
-                const cls = classes.find((c) => c.id === inst.classId);
-                const p = pct(inst.spendToday, inst.capToday);
-                const isHot = p >= 80;
                 return (
                   <button
                     key={inst.id}
@@ -269,22 +188,9 @@ export function FleetMonitor({
                     <span className="flex-1 truncate font-mono text-[11px] text-ink-primary group-hover:text-accent">
                       {inst.id}
                     </span>
-                    {inst.capToday > 0 && (
-                      <div className="flex items-center gap-2">
-                        <div className="h-1 w-16 overflow-hidden rounded-full bg-white/5">
-                          <div
-                            className={cn(
-                              'h-full rounded-full transition-all',
-                              isHot ? 'bg-signal-caution' : 'bg-signal-healthy'
-                            )}
-                            style={{ width: `${Math.min(100, p)}%` }}
-                          />
-                        </div>
-                        <span className="w-10 text-right font-mono text-[10px] text-ink-secondary tabular">
-                          {Math.round(p)}%
-                        </span>
-                      </div>
-                    )}
+                    <span className="font-mono text-[10px] text-ink-secondary">
+                      {inst.classId}
+                    </span>
                   </button>
                 );
               })}

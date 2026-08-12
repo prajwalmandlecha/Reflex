@@ -6,8 +6,6 @@ export type AgentClass = {
   description: string;
   allowedTools: string[];
   defaultConstraints: Record<string, unknown>;
-  defaultCap: { amount: number; window: "day" | "month" };
-  defaultCaps?: Record<string, unknown>;
   defaultAllowedTools?: string[];
   defaultConstraintsDict?: Record<string, unknown>;
   instanceCount: number;
@@ -26,8 +24,6 @@ export type AgentInstance = {
   classId: string;
   class_id?: string;
   status: AgentStatus;
-  spendToday: number;
-  capToday: number;
   lastAction: string;
   lastSeen: string;
   className?: string;
@@ -75,6 +71,28 @@ export type BankTool = {
   underlying_ops?: Record<string, unknown>[];
 };
 
+// A single fleet-scoped spend cap. Fleet caps are a global governance setting
+// (single source of truth) injected into every agent's effective constraints.
+export type FleetCap = {
+  param: string;
+  window: "daily" | "hourly" | "monthly";
+  limit_cents: number;
+};
+
+// Global fleet caps keyed by tool name.
+export type FleetCaps = Record<string, FleetCap[]>;
+
+// A single fleet-scoped rate limit. Like fleet caps, these are a global
+// governance setting (single source of truth) injected into every agent's
+// effective constraints as shared_rate_limits with scope "fleet".
+export type FleetRateLimit = {
+  max_calls: number;
+  window_seconds: number;
+};
+
+// Global fleet rate limits keyed by tool name.
+export type FleetRateLimits = Record<string, FleetRateLimit[]>;
+
 export type Policy = {
   id: string | number;
   name: string;
@@ -114,8 +132,10 @@ export type RuleCondition = {
     | "contains"
     | "regex_deny"
     | "regex_allow"
-    | "in_list";
-  value: string | number;
+    | "in_list"
+    | "outside_hours"
+    | "outside_business_hours";
+  value: any;
 };
 
 export type LatencyBreakdown = {
@@ -268,4 +288,3 @@ export type UserSession = {
   expires_at: string;
   revoked: boolean;
 };
-

@@ -35,6 +35,7 @@ import {
   ShieldCheck,
   Shield,
   Info,
+  Globe,
 } from 'lucide-react';
 
 import { useWebSocket } from '@/hooks/useWebSocket';
@@ -52,6 +53,7 @@ import { AuditLogView } from '@/components/views/audit-log';
 import { EmergencyStopView } from '@/components/views/emergency-stop';
 import { SettingsView } from '@/components/views/settings';
 import { UsersView } from '@/components/views/users';
+import { FleetCapsView } from '@/components/views/fleet-caps';
 
 export type ViewId =
   | 'command'
@@ -63,6 +65,7 @@ export type ViewId =
   | 'performance'
   | 'audit'
   | 'estop'
+  | 'fleetcaps'
   | 'settings'
   | 'users';
 
@@ -81,6 +84,7 @@ const navItems: {
   { id: 'performance', label: 'Performance & Latency', icon: Gauge, allowedRoles: ['admin', 'operator'] },
   { id: 'audit', label: 'Audit Log', icon: FileClock, allowedRoles: ['admin', 'auditor'] },
   { id: 'estop', label: 'Emergency Stop', icon: Octagon, allowedRoles: ['admin', 'operator'] },
+  { id: 'fleetcaps', label: 'Fleet Caps', icon: Globe, allowedRoles: ['admin'] },
   { id: 'users', label: 'User Management', icon: Users, allowedRoles: ['admin'] },
   { id: 'settings', label: 'Settings', icon: Settings, allowedRoles: ['admin'] },
 ];
@@ -589,6 +593,7 @@ function AppShellContent() {
             />
           )}
           {view === 'users' && <UsersView />}
+          {view === 'fleetcaps' && <FleetCapsView onRefresh={reloadData} />}
           {view === 'settings' && <SettingsView operator={operatorName} />}
         </main>
       </div>

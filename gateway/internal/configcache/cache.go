@@ -31,7 +31,6 @@ type AgentConfig struct {
 	Status               string                    `json:"status"`
 	EffectiveTools       []string                  `json:"effective_tools"`
 	EffectiveConstraints map[string]map[string]any `json:"effective_constraints"`
-	EffectiveCaps        map[string]map[string]any `json:"effective_caps"`
 	ToolSchemas          map[string]ToolSchema     `json:"tool_schemas"`
 }
 
@@ -86,7 +85,6 @@ func (c *ConfigCache) Get(ctx context.Context, agentID string) *AgentConfig {
 			Status:               "active",
 			EffectiveTools:       []string{},
 			EffectiveConstraints: make(map[string]map[string]any),
-			EffectiveCaps:        make(map[string]map[string]any),
 			ToolSchemas:          make(map[string]ToolSchema),
 		}
 	} else {

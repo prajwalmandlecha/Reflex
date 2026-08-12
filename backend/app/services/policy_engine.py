@@ -111,6 +111,16 @@ def visual_rules_to_rego(visual_rules: list[dict[str, Any]], target_id: str | No
                 elif op == "in_list":
                     list_str = json.dumps(val if isinstance(val, list) else [str(val)])
                     lines.append(f"\t{pv} in {list_str}")
+                elif op in ("outside_hours", "outside_business_hours"):
+                    parts = str(val).split("-") if "-" in str(val) else ["09:00", "17:00"]
+                    s_h, s_m = map(int, parts[0].strip().split(":")) if ":" in parts[0] else (9, 0)
+                    e_h, e_m = map(int, parts[1].strip().split(":")) if ":" in parts[1] else (17, 0)
+                    s_total = s_h * 60 + s_m
+                    e_total = e_h * 60 + e_m
+                    lines.append(f'\tns_{c_idx} := time.now_ns()')
+                    lines.append(f'\tclock_{c_idx} := time.clock(ns_{c_idx})')
+                    lines.append(f'\tmin_{c_idx} := (clock_{c_idx}[0] * 60) + clock_{c_idx}[1]')
+                    lines.append(f'\t(min_{c_idx} < {s_total}) or (min_{c_idx} > {e_total})')
 
             lines.append("}")
             lines.append("")

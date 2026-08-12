@@ -105,6 +105,28 @@ async def init_db_schema():
         updated_at              TIMESTAMPTZ DEFAULT NOW()
     );
 
+    -- Global fleet-scoped spend caps. A single row (id=1) holds the platform-wide
+    -- caps as JSONB keyed by tool name, e.g.:
+    -- {
+    --   "transfer_money": [
+    --     {"param": "amount_cents", "window": "daily", "limit_cents": 5000000}
+    --   ]
+    -- }
+    -- These are injected into every agent's effective_constraints as
+    -- shared_caps entries with scope "fleet" (see config_propagation), so the
+    -- gateway enforces them with a single shared Redis counter per tool+param.
+    CREATE TABLE IF NOT EXISTS fleet_caps (
+        id                      INT PRIMARY KEY DEFAULT 1,
+        caps                    JSONB DEFAULT '{}',
+        rate_limits             JSONB DEFAULT '{}',
+        updated_by              VARCHAR(128) DEFAULT 'admin',
+        updated_at              TIMESTAMPTZ DEFAULT NOW()
+    );
+    INSERT INTO fleet_caps (id, caps) VALUES (1, '{}') ON CONFLICT (id) DO NOTHING;
+    -- Self-healing: add the rate_limits column to existing fleet_caps tables
+    -- created before this column existed (idempotent, no-op if already present).
+    ALTER TABLE fleet_caps ADD COLUMN IF NOT EXISTS rate_limits JSONB DEFAULT '{}';
+
     CREATE TABLE IF NOT EXISTS policy_changelog (
         id                      SERIAL PRIMARY KEY,
         policy_id               INT REFERENCES policies(id) ON DELETE SET NULL,

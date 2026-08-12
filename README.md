@@ -27,7 +27,7 @@ Reflex sits transparently between autonomous AI Agents (LangChain, CrewAI, AutoG
 2. **In-Flight Security Gauntlet**:
    - **Revocation & Fleet Halt Check**: Immediate sub-millisecond validation against pipeline-cached Redis revocation keys.
    - **Embedded OPA Policy Engine**: Lock-free, in-memory Rego policy evaluation enforcing fine-grained ABAC rules.
-   - **Atomic Spend Cap Engine**: Redis Lua scripts execute atomic budget deductions for hourly, daily, and per-transaction limits.
+   - **Atomic Spend Cap Engine**: Redis Lua scripts execute atomic per-parameter budget deductions and rate limits.
    - **Cryptographic Audit Ledger**: Computes tamper-evident SHA-256 chained hashes (`entry_hash = SHA-256(prev_hash || row_data)`) stored in PostgreSQL.
 3. **Transparent Forwarding**: Approved requests are forwarded to target downstream Bank MCP servers (`bank-identity`, `bank-payments`, `bank-financial`, `bank-risk`).
 4. **Control Plane & Instrumentation**: FastAPI backend coordinates policy compilation, OpenAPI virtual registration, and streams live telemetry over WebSockets to the Next.js Control Center UI.
@@ -39,7 +39,7 @@ Reflex sits transparently between autonomous AI Agents (LangChain, CrewAI, AutoG
 - 🛡️ **In-Flight Multi-Stage Governance Gauntlet**: Evaluates every tool invocation attempt in real time across 5 safety stages before hitting core banking infrastructure.
 - ⚡ **Sub-Millisecond Killswitch & Fleet Halt**: Instantly revoke individual agent instances or halt the entire agent fleet in `<1ms` via Redis pipelines.
 - 🔍 **Dynamic Discovery Schema Filtering**: Filters `tools/list` output per agent profile to eliminate LLM hallucinations and prevent unauthorized tool access.
-- 💰 **Atomic Spend Cap Engine**: Prevents race conditions and budget overshoots using atomic Redis Lua scripts enforcing hourly, daily, and single-transaction spending caps.
+- 💰 **Atomic Spend Cap Engine**: Prevents race conditions and budget overshoots using atomic Redis Lua scripts enforcing per-parameter spending caps (per-call max, hourly, and daily) scoped to each tool's numeric fields.
 - 📜 **Embedded OPA Rego Policy Engine**: Lock-free, in-memory Open Policy Agent evaluation with atomic hot-reloading driven by PostgreSQL changes.
 - 🔒 **Tamper-Evident SHA-256 Audit Ledger**: Cryptographically chained audit ledger (`entry_hash = SHA-256(prev_hash || row_data)`) with an online audit verification engine.
 - 📊 **Real-Time Instrumentation & Control Center**: Next.js 14 dark-mode management console with live WebSocket telemetry streams, visual policy builder, and latency percentiles (P50/P95/P99).
@@ -53,7 +53,7 @@ Reflex is organized into modular, decoupled microservices:
 
 | Directory | Tech Stack | Description | Sub-Readme Link |
 |---|---|---|---|
-| ⚡ [**`gateway/`**](./gateway) | Go 1.26, OPA, Redis, PostgreSQL, Goose, sqlc | High-throughput transparent reverse proxy, MCP interceptor, embedded OPA engine, atomic spend cap limiter, and cryptographic audit logger. | [Gateway Docs](./gateway/README.md) |
+| ⚡ [**`gateway/`**](./gateway) | Go 1.26, OPA, Redis, PostgreSQL, Goose, sqlc | High-throughput transparent reverse proxy, MCP interceptor, embedded OPA engine, per-parameter spend cap limiter, and cryptographic audit logger. | [Gateway Docs](./gateway/README.md) |
 | ⚙️ [**`backend/`**](./backend) | Python 3.12, FastAPI, Pydantic, SQLAlchemy, Redis Pub/Sub | Control Plane API, Rego policy compiler, agent lifecycle manager, OpenAPI virtualizer, and event publisher. | [Backend Docs](./backend/README.md) |
 | 🌐 [**`frontend/`**](./frontend) | Next.js 14, React 18, Tailwind CSS, Lucide Icons | Operator dashboard featuring live fleet monitor, visual rule builder, audit verification, and performance instrumentation. | [Frontend Docs](./frontend/README.md) |
 | 📜 [**`scripts/`**](./scripts) | Python 3.12, Asyncio, HTTPX | Seed scripts and real-time multi-agent load simulation suite testing all governance gauntlet features. | — |
@@ -92,7 +92,7 @@ docker compose up -d --build
 
 ## 🧪 Simulation & Automated Verification Suite
 
-To run the automated agent suite that simulates multi-agent workflows, tool invocations, spend cap violations, and emergency killswitch activations:
+To run the automated agent suite that simulates multi-agent workflows, tool invocations, parameter-level spend cap violations, and emergency killswitch activations:
 
 ```bash
 # Seed initial platform state (Agent Classes, Instances, Bank Connections, Policies)

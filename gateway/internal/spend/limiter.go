@@ -1,6 +1,5 @@
 // Package spend provides atomic enforcement of ALL stateful governance counters
-// (hierarchical spend caps, per-tool rate limits, cumulative daily spend) via a
-// single Redis Lua script.
+// (per-parameter spend caps, per-tool rate limits) via a single Redis Lua script.
 //
 // One script atomically increments every applicable counter and rolls all of
 // them back if any cap is exceeded — no separate read-then-write step and no

@@ -180,8 +180,15 @@ export function AgentsView({
                   </div>
                 </div>
 
-                <div className="p-4 space-y-3">
-                  <SpendBar used={inst.spendToday} cap={inst.capToday} showLabel />
+                <div className="p-4 space-y-2">
+                  <div className="flex items-center justify-between font-mono text-[10px] text-ink-secondary border-b border-white/5 pb-2">
+                    <span>Tool Governance:</span>
+                    <span className="text-cyan-400 font-semibold uppercase tracking-wider">
+                      {inst.tool_overrides !== null && inst.tool_overrides !== undefined
+                        ? `${inst.tool_overrides.length} tools (Scoped)`
+                        : 'Class Inherited'}
+                    </span>
+                  </div>
 
                   <div className="flex items-center justify-between font-mono text-[10px] text-ink-secondary">
                     <span>Last action: {inst.lastAction || 'Idle'}</span>
@@ -432,7 +439,13 @@ function CreateInstanceForm({ classes, onComplete }: { classes: AgentClass[]; on
             {classTools.length === 0 ? (
               <p className="font-mono text-[11px] text-amber-400/80">No tools configured on parent class.</p>
             ) : (
-              <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+              <>
+                {selectedTools.length === 0 && (
+                  <p className="border border-rose-500/20 bg-rose-500/10 p-1.5 rounded font-mono text-[10px] text-rose-400">
+                    ⚠️ 0 tools selected: this instance will be blocked from calling any tool.
+                  </p>
+                )}
+                <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
                 {classTools.map((tool) => (
                   <label key={tool} className="flex items-center gap-2 cursor-pointer font-mono text-xs text-white">
                     <input
@@ -453,6 +466,7 @@ function CreateInstanceForm({ classes, onComplete }: { classes: AgentClass[]; on
                   </label>
                 ))}
               </div>
+              </>
             )}
           </div>
         ) : (
@@ -511,7 +525,7 @@ function AgentDetail({
   const [jwtToken, setJwtToken] = useState('');
   const [copied, setCopied] = useState(false);
   const [loadingToken, setLoadingToken] = useState(false);
-  const [spendToday, setSpendToday] = useState<number | null>(null);
+
 
   const classTools = useMemo(() => cls?.allowedTools || cls?.defaultAllowedTools || [], [cls]);
   const isCustomized = agent.tool_overrides !== null && agent.tool_overrides !== undefined;
@@ -556,16 +570,7 @@ function AgentDetail({
     [activityFeed, agent.id]
   );
 
-  // Fetch the real per-agent spend counter from the backend
-  useEffect(() => {
-    let cancelled = false;
-    api.getAgentSpend(agent.id)
-      .then((counters) => {
-        if (!cancelled) setSpendToday(counters?.today ?? 0);
-      })
-      .catch(() => { if (!cancelled) setSpendToday(null); });
-    return () => { cancelled = true; };
-  }, [agent.id]);
+
 
   const handleMintToken = async () => {
     setLoadingToken(true);
@@ -680,12 +685,7 @@ function AgentDetail({
           <span className="text-[10px] text-ink-secondary">{agent.id}</span>
         </div>
 
-        <div className="flex items-center justify-between">
-          <span className="text-ink-secondary text-[11px]">Spend Today:</span>
-          <span className="text-emerald-400 font-bold tabular">
-            {spendToday !== null ? formatCurrency(spendToday) : '—'}
-          </span>
-        </div>
+
 
         <div>
           <div className="flex items-center justify-between mb-1.5">
@@ -1139,8 +1139,6 @@ function AgentConnectionGuideModal({ open, onOpenChange }: { open: boolean; onOp
               id: 'custom-agent-alpha',
               classId: 'your-class-id',
               status: 'active',
-              spendToday: 0,
-              capToday: 500,
               lastAction: 'Idle',
               lastSeen: 'Just now',
             }}

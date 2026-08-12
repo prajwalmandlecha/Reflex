@@ -46,42 +46,48 @@ export function StatTile({
   accent?: 'healthy' | 'caution' | 'stopped' | 'accent';
   className?: string;
 }) {
-  const glow =
-    accent === 'healthy'
-      ? 'shadow-[0_0_24px_-4px_rgba(61,220,132,0.15)]'
-      : accent === 'caution'
-      ? 'shadow-[0_0_24px_-4px_rgba(245,166,35,0.15)]'
-      : accent === 'stopped'
-      ? 'shadow-[0_0_24px_-4px_rgba(229,72,77,0.15)]'
-      : accent === 'accent'
-      ? 'shadow-[0_0_24px_-4px_rgba(76,141,255,0.15)]'
-      : '';
+  const accentStyles = {
+    healthy: {
+      border: 'border-l-2 border-l-emerald-500',
+      glow: 'shadow-[0_0_20px_-3px_rgba(16,185,129,0.15)]',
+      bgGrad: 'bg-gradient-to-r from-emerald-500/[0.08] via-emerald-500/[0.02] to-transparent',
+    },
+    caution: {
+      border: 'border-l-2 border-l-amber-500',
+      glow: 'shadow-[0_0_20px_-3px_rgba(245,158,11,0.15)]',
+      bgGrad: 'bg-gradient-to-r from-amber-500/[0.08] via-amber-500/[0.02] to-transparent',
+    },
+    stopped: {
+      border: 'border-l-2 border-l-rose-500',
+      glow: 'shadow-[0_0_20px_-3px_rgba(244,63,94,0.15)]',
+      bgGrad: 'bg-gradient-to-r from-rose-500/[0.08] via-rose-500/[0.02] to-transparent',
+    },
+    accent: {
+      border: 'border-l-2 border-l-cyan-500',
+      glow: 'shadow-[0_0_20px_-3px_rgba(6,182,212,0.15)]',
+      bgGrad: 'bg-gradient-to-r from-cyan-500/[0.08] via-cyan-500/[0.02] to-transparent',
+    },
+  };
 
-  const accentLine =
-    accent === 'healthy'
-      ? 'bg-signal-healthy'
-      : accent === 'caution'
-      ? 'bg-signal-caution'
-      : accent === 'stopped'
-      ? 'bg-signal-stopped'
-      : accent === 'accent'
-      ? 'bg-accent'
-      : 'bg-transparent';
+  const currentAccent = accent ? accentStyles[accent] : null;
 
   return (
     <div
       className={cn(
-        'glass glass-edge relative flex flex-col gap-1.5 overflow-hidden rounded-2xl p-5',
-        glow,
+        'glass glass-edge relative flex flex-col gap-1.5 rounded-2xl p-5 transition-all duration-200',
+        currentAccent?.border,
+        currentAccent?.glow,
         className
       )}
     >
-      <div className={cn('absolute left-0 top-0 h-full w-[3px] rounded-l-2xl', accentLine)} />
-      <span className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
+      {currentAccent && (
+        <div className={cn('absolute inset-0 rounded-2xl pointer-events-none', currentAccent.bgGrad)} />
+      )}
+      <span className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary relative z-10">
         {label}
       </span>
-      <span className="font-mono text-2xl text-ink-primary tabular">{value}</span>
-      {sub && <span className="font-mono text-[11px] text-ink-secondary">{sub}</span>}
+      <span className="font-mono text-2xl text-ink-primary tabular relative z-10">{value}</span>
+      {sub && <span className="font-mono text-[11px] text-ink-secondary relative z-10">{sub}</span>}
     </div>
   );
 }

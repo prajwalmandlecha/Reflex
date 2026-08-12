@@ -25,19 +25,12 @@ async def get_dashboard_summary():
             "SELECT COUNT(*) FROM audit_log WHERE decision = 'deny' AND ts >= NOW() - INTERVAL '1 hour'"
         )
 
-        # Spend today (only allowed requests count toward spend)
-        spend_today_cents = await conn.fetchval(
-            "SELECT COALESCE(SUM(spend_delta), 0) FROM audit_log WHERE ts >= CURRENT_DATE AND decision = 'allow'"
-        )
-
     metrics_snap = {}
     try:
         if event_processor:
             metrics_snap = event_processor.metrics_buffer.snapshot()
     except Exception:
         metrics_snap = {}
-
-    spend_val = float(spend_today_cents) if spend_today_cents is not None else 0.0
 
     return {
         "agents": {
@@ -49,7 +42,6 @@ async def get_dashboard_summary():
         "connections_count": total_connections or 0,
         "active_policies_count": total_policies or 0,
         "denials_last_hour": denials_last_hour or 0,
-        "spend_today_usd": spend_val / 100.0,
         "recent_metrics": metrics_snap,
     }
 

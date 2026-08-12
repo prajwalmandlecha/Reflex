@@ -76,6 +76,12 @@ async def get_policy_changelog(policy_id: int | None = None, limit: int = 100, c
 
 @router.post("", response_model=PolicyResponse, status_code=status.HTTP_201_CREATED)
 async def create_policy(p: PolicyCreate, current_user: dict = Depends(require_permission("policies:create"))):
+    if p.scope == "global" and current_user.get("role") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Global platform policies can only be created or modified by Platform Administrators."
+        )
+
     pool = get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -141,6 +147,13 @@ async def update_policy(policy_id: int, p: PolicyUpdate, current_user: dict = De
         row = await conn.fetchrow("SELECT * FROM policies WHERE id = $1", policy_id)
         if not row:
             raise HTTPException(status_code=404, detail=f"Policy ID {policy_id} not found")
+
+        scope = p.scope if p.scope is not None else row["scope"]
+        if scope == "global" and current_user.get("role") != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Global platform policies can only be created or modified by Platform Administrators."
+            )
 
         name = p.name if p.name is not None else row["name"]
         scope = p.scope if p.scope is not None else row["scope"]

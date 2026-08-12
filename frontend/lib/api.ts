@@ -9,13 +9,18 @@ import type {
   FleetStatusResponse,
   MetricsSnapshot,
   BankTool,
+  FleetCaps,
+  FleetRateLimits,
 } from "./types";
 
 // Empty base = same-origin requests; nginx proxies /api/ and /ws/ to the backend.
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const token = typeof window !== "undefined" ? localStorage.getItem("reflex_auth_token") : null;
+  const token =
+    typeof window !== "undefined"
+      ? localStorage.getItem("reflex_auth_token")
+      : null;
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(options?.headers as Record<string, string>),
@@ -59,8 +64,14 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return (text ? JSON.parse(text) : undefined) as T;
 }
 
-async function requestText(path: string, options?: RequestInit): Promise<string> {
-  const token = typeof window !== "undefined" ? localStorage.getItem("reflex_auth_token") : null;
+async function requestText(
+  path: string,
+  options?: RequestInit,
+): Promise<string> {
+  const token =
+    typeof window !== "undefined"
+      ? localStorage.getItem("reflex_auth_token")
+      : null;
   const headers: Record<string, string> = {
     ...(options?.headers as Record<string, string>),
   };
@@ -90,13 +101,6 @@ export const api = {
       allowedTools: c.default_allowed_tools || c.allowedTools || [],
       defaultAllowedTools: c.default_allowed_tools || [],
       defaultConstraints: c.default_constraints || c.defaultConstraints || {},
-      defaultCap: c.default_caps?.hourly
-        ? {
-            amount: (c.default_caps.hourly.amount_cents || 0) / 100,
-            window: "day",
-          }
-        : { amount: 0, window: "day" },
-      defaultCaps: c.default_caps || {},
       instanceCount: c.instance_count ?? 0,
       status: c.status || "active",
       created_at: c.created_at,
@@ -143,9 +147,6 @@ export const api = {
       classId: i.class_id || i.classId,
       class_id: i.class_id,
       status: i.status || "active",
-      spendToday: i.spend_today ?? 0,
-      // 0 renders as "N/A" in SpendBar — honest when the backend sends no cap.
-      capToday: i.cap_today ?? 0,
       lastAction: i.last_action || "Idle",
       lastSeen: i.last_seen || "Just now",
       className: i.class_name || i.className || i.class_id,
@@ -194,13 +195,6 @@ export const api = {
 
   async deleteAgentInstance(agentId: string): Promise<void> {
     await request(`/api/v1/agents/${agentId}`, { method: "DELETE" });
-  },
-
-  async getAgentSpend(agentId: string): Promise<Record<string, number>> {
-    const res = await request<{ spend_counters: Record<string, number> }>(
-      `/api/v1/agents/${agentId}/spend`,
-    );
-    return res.spend_counters;
   },
 
   // --- Bank Connections & Tools ---
@@ -366,7 +360,10 @@ export const api = {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.setAttribute("download", `audit_log_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute(
+      "download",
+      `audit_log_${new Date().toISOString().slice(0, 10)}.csv`,
+    );
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -464,6 +461,29 @@ export const api = {
     return request<any>("/api/v1/fleet/system-health");
   },
 
+  // --- Global Fleet Caps & Rate Limits ---
+  async getFleetCaps(): Promise<{
+    caps: FleetCaps;
+    rate_limits: FleetRateLimits;
+  }> {
+    return request<{ caps: FleetCaps; rate_limits: FleetRateLimits }>(
+      "/api/v1/fleet-caps",
+    );
+  },
+
+  async updateFleetCaps(
+    caps: FleetCaps,
+    rate_limits: FleetRateLimits,
+  ): Promise<{ caps: FleetCaps; rate_limits: FleetRateLimits }> {
+    return request<{ caps: FleetCaps; rate_limits: FleetRateLimits }>(
+      "/api/v1/fleet-caps",
+      {
+        method: "PUT",
+        body: JSON.stringify({ caps, rate_limits }),
+      },
+    );
+  },
+
   // --- Metrics Snapshot ---
   async getMetricsSnapshot(): Promise<MetricsSnapshot> {
     return request<MetricsSnapshot>("/api/v1/metrics/snapshot");
@@ -508,11 +528,18 @@ export const api = {
   async changePassword(oldPassword: string, newPassword: string): Promise<any> {
     return request<any>("/api/v1/auth/change-password", {
       method: "POST",
-      body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
+      body: JSON.stringify({
+        old_password: oldPassword,
+        new_password: newPassword,
+      }),
     });
   },
 
-  async getUsers(params?: { query?: string; role?: string; status?: string }): Promise<any[]> {
+  async getUsers(params?: {
+    query?: string;
+    role?: string;
+    status?: string;
+  }): Promise<any[]> {
     const q = new URLSearchParams();
     if (params?.query) q.set("query", params.query);
     if (params?.role) q.set("role", params.role);
@@ -533,14 +560,20 @@ export const api = {
     });
   },
 
-  async updateUser(userId: string, data: { full_name?: string; email?: string; role?: string }): Promise<any> {
+  async updateUser(
+    userId: string,
+    data: { full_name?: string; email?: string; role?: string },
+  ): Promise<any> {
     return request<any>(`/api/v1/users/${userId}`, {
       method: "PUT",
       body: JSON.stringify(data),
     });
   },
 
-  async suspendUser(userId: string, action: "suspend" | "activate"): Promise<any> {
+  async suspendUser(
+    userId: string,
+    action: "suspend" | "activate",
+  ): Promise<any> {
     return request<any>(`/api/v1/users/${userId}/suspend?action=${action}`, {
       method: "POST",
     });

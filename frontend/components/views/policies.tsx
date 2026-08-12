@@ -19,7 +19,12 @@ import { formatDateTime, formatRelative } from '@/lib/format';
 import type { Policy, AgentClass, AgentInstance, VisualRule, RuleCondition, BankConnection, BankTool } from '@/lib/types';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
-import { Plus, Code2, FileJson, Play, CheckCircle2, XCircle, Pencil, FileText, FlaskConical, AlertTriangle, Layers, User, Shield, Sliders, LayoutGrid, Check, Trash2, Eye } from 'lucide-react';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
+import { Plus, Code2, FileJson, Play, CheckCircle2, XCircle, Pencil, FileText, FlaskConical, AlertTriangle, Layers, User, Shield, Sliders, LayoutGrid, Check, Trash2, Eye, HelpCircle, ChevronDown, Target, Scale, TestTube2, Rocket } from 'lucide-react';
 
 export function PoliciesView({
   policies,
@@ -66,6 +71,8 @@ export function PoliciesView({
           </Button>
         )}
       </div>
+
+      <PoliciesGuide />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         {/* Policy list */}
@@ -143,6 +150,84 @@ export function PoliciesView({
   );
 }
 
+function PoliciesGuide() {
+  const [open, setOpen] = useState(false);
+  return (
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      className="border border-cyan-500/20 bg-cyan-500/[0.03] rounded-lg"
+    >
+      <CollapsibleTrigger className="flex w-full items-center gap-2 p-3 text-left cursor-pointer select-none hover:bg-cyan-500/5">
+        <HelpCircle className="h-4 w-4 text-cyan-400 shrink-0" />
+        <span className="font-mono text-xs uppercase tracking-widest text-cyan-300 font-semibold">
+          How Policies Work — Quick Guide
+        </span>
+        <ChevronDown
+          className={cn(
+            'ml-auto h-4 w-4 text-ink-secondary transition-transform duration-200',
+            open && 'rotate-180'
+          )}
+        />
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="grid grid-cols-1 gap-3 p-3 pt-0 md:grid-cols-2">
+          <GuideCard
+            icon={<Target className="h-4 w-4 text-cyan-400" />}
+            title="1. Pick a scope"
+            body="A policy applies to a Global (all agents), a Class (every agent in a group), or a single Instance. Choose the narrowest scope that covers what you need — instance beats class beats global."
+          />
+          <GuideCard
+            icon={<Scale className="h-4 w-4 text-cyan-400" />}
+            title="2. Define the rule"
+            body="In Visual mode, pick a tool action and add conditions (e.g. amount_cents > 100000). In Rego mode, write the raw policy. Both compile to the same enforcement engine."
+          />
+          <GuideCard
+            icon={<TestTube2 className="h-4 w-4 text-cyan-400" />}
+            title="3. Test before activating"
+            body="Use the Test panel to run a sample input through your policy. It shows allow/deny and the reason, so you can validate behavior without affecting live agents."
+          />
+          <GuideCard
+            icon={<Rocket className="h-4 w-4 text-cyan-400" />}
+            title="4. Save & activate"
+            body="Save the policy to make it live. The gateway evaluates it on every tool call. Use the status badge to see whether a policy is active, draft, or archived."
+          />
+        </div>
+        <div className="px-3 pb-3">
+          <div className="border border-white/10 bg-slate-950 p-3 rounded font-mono text-[11px] text-ink-secondary leading-relaxed">
+            <span className="text-cyan-400 font-semibold">Tip:</span> Policies are the
+            &ldquo;what&rdquo; (rules about tool usage). Operational limits like rate limits and
+            spend caps live in the{' '}
+            <span className="text-ink-primary">Agent Classes</span> and{' '}
+            <span className="text-ink-primary">Fleet Caps</span> views. Use policies for
+            conditional, context-aware decisions; use constraints for simple ceilings.
+          </div>
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+function GuideCard({
+  icon,
+  title,
+  body,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  body: string;
+}) {
+  return (
+    <div className="flex gap-2.5 border border-white/5 bg-slate-950/60 p-3 rounded">
+      <div className="mt-0.5 shrink-0">{icon}</div>
+      <div>
+        <div className="font-mono text-[11px] text-ink-primary font-semibold">{title}</div>
+        <div className="mt-0.5 font-sans text-[11px] text-ink-secondary leading-relaxed">{body}</div>
+      </div>
+    </div>
+  );
+}
+
 function PolicyEditor({
   policy,
   classes,
@@ -162,12 +247,15 @@ function PolicyEditor({
   onComplete?: (savedPolicy?: Policy) => void;
   onCancel?: () => void;
 }) {
-  const { hasPermission } = useAuth();
+  const { hasPermission, hasRole, user } = useAuth();
+  const isAdmin = user?.role === 'admin' || hasRole('admin');
   const canEdit = hasPermission('policies:update') || hasPermission('policies:create');
   const canArchive = hasPermission('policies:archive');
 
   const [name, setName] = useState(policy?.name ?? '');
-  const [scope, setScope] = useState<'global' | 'class' | 'instance'>(policy?.scope ?? 'global');
+  const [scope, setScope] = useState<'global' | 'class' | 'instance'>(
+    policy?.scope ?? (isAdmin ? 'global' : 'class')
+  );
   
   // Scope targets
   const [targetClassId, setTargetClassId] = useState<string>('');
@@ -238,8 +326,6 @@ function PolicyEditor({
           classId: targetClassId || 'custom',
           class_id: targetClassId || 'custom',
           status: 'active',
-          spendToday: 0,
-          capToday: 0,
           lastAction: '',
           lastSeen: '',
         },
@@ -260,7 +346,6 @@ function PolicyEditor({
           description: 'Custom class',
           allowedTools: [],
           defaultConstraints: {},
-          defaultCap: { amount: 0, window: 'day' },
           instanceCount: 0,
         },
         ...list,
@@ -505,47 +590,67 @@ function PolicyEditor({
             <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
               Governance Scope Level
             </Label>
+
             <div className="mt-1.5 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => setScope('global')}
-                className={cn(
-                  'flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs transition-colors border',
-                  scope === 'global' ? 'border-accent bg-accent/20 text-accent font-medium' : 'border-white/10 bg-white/5 text-ink-secondary hover:text-white'
-                )}
-              >
-                <Shield className="h-3.5 w-3.5" /> Global Platform Policy
-              </button>
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={() => setScope('global')}
+                  className={cn(
+                    'flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs transition-colors border cursor-pointer',
+                    scope === 'global'
+                      ? 'border-accent bg-accent/20 text-accent font-medium'
+                      : 'border-white/10 bg-white/5 text-ink-secondary hover:text-white'
+                  )}
+                >
+                  <Shield className="h-3.5 w-3.5" />
+                  <span>Global Platform Policy</span>
+                </button>
+              )}
 
               <button
                 type="button"
                 onClick={() => setScope('class')}
                 className={cn(
-                  'flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs transition-colors border',
+                  'flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs transition-colors border cursor-pointer',
                   scope === 'class' ? 'border-accent bg-accent/20 text-accent font-medium' : 'border-white/10 bg-white/5 text-ink-secondary hover:text-white'
                 )}
               >
-                <Layers className="h-3.5 w-3.5" /> Agent Class Baseline
+                <Layers className="h-3.5 w-3.5" />
+                <span>Agent Class Baseline</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setScope('instance')}
                 className={cn(
-                  'flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs transition-colors border',
+                  'flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs transition-colors border cursor-pointer',
                   scope === 'instance' ? 'border-accent bg-accent/20 text-accent font-medium' : 'border-white/10 bg-white/5 text-ink-secondary hover:text-white'
                 )}
               >
-                <User className="h-3.5 w-3.5" /> Specific Agent Instance
+                <User className="h-3.5 w-3.5" />
+                <span>Specific Agent Instance</span>
               </button>
             </div>
           </div>
 
           {/* Scope Explanatory Guidance */}
-          <div className="font-mono text-[10px] text-ink-secondary bg-slate-950 p-2 border border-white/5">
-            {scope === 'global' && '• Global Scope: Applies platform-wide across all agent classes, instances, and tools.'}
-            {scope === 'class' && '• Class Scope: Sets a baseline policy for ALL agent instances that belong to the selected Agent Class.'}
-            {scope === 'instance' && '• Instance Scope: Appends an instance-specific policy override to the selected agent instance.'}
+          <div className="font-mono text-[10px] text-ink-secondary bg-slate-950 p-2.5 border border-white/5 space-y-1">
+            {scope === 'global' && (
+              <div className="text-cyan-300">
+                • <strong>Global Scope</strong>: Platform-wide governance policy enforcing security & baseline standards across all agent classes and instances.
+              </div>
+            )}
+            {scope === 'class' && (
+              <div className="text-amber-300">
+                • <strong>Class Scope</strong>: Sets a baseline policy for ALL agent instances belonging to the selected Agent Class.
+              </div>
+            )}
+            {scope === 'instance' && (
+              <div className="text-emerald-300">
+                • <strong>Instance Scope</strong>: Appends an instance-specific policy override targeting a single agent instance.
+              </div>
+            )}
           </div>
 
           {/* Target Selectors */}
@@ -947,17 +1052,20 @@ function VisualRuleBuilder({
         { label: '>= (Greater or Equal)', value: 'gte' as RuleCondition['operator'] },
         { label: '< (Less)', value: 'lt' as RuleCondition['operator'] },
         { label: '<= (Less or Equal)', value: 'lte' as RuleCondition['operator'] },
+        { label: 'Outside Business Hours (UTC)', value: 'outside_hours' as RuleCondition['operator'] },
       ];
     }
     if (pType === 'boolean') {
       return [
         { label: '== (Equals)', value: 'eq' as RuleCondition['operator'] },
         { label: '!= (Not Equal)', value: 'ne' as RuleCondition['operator'] },
+        { label: 'Outside Business Hours (UTC)', value: 'outside_hours' as RuleCondition['operator'] },
       ];
     }
     return [
       { label: '== (Equals)', value: 'eq' as RuleCondition['operator'] },
       { label: '!= (Not Equal)', value: 'ne' as RuleCondition['operator'] },
+      { label: 'Outside Business Hours (UTC)', value: 'outside_hours' as RuleCondition['operator'] },
       { label: 'Regex Deny (Blacklist)', value: 'regex_deny' as RuleCondition['operator'] },
       { label: 'Regex Allow (Whitelist)', value: 'regex_allow' as RuleCondition['operator'] },
       { label: 'Contains', value: 'contains' as RuleCondition['operator'] },
@@ -1035,14 +1143,14 @@ function VisualRuleBuilder({
       <div>
         <div className="flex items-center justify-between">
           <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
-            Parameter Constraints on Schema ({rule.action})
+            Parameter & Governance Constraints ({rule.action})
           </Label>
           <button
             type="button"
             onClick={addCondition}
             className="flex items-center gap-1 font-mono text-[10px] uppercase tracking-widest text-accent hover:underline"
           >
-            <Plus className="h-3 w-3" /> Add parameter rule
+            <Plus className="h-3 w-3" /> Add rule condition
           </button>
         </div>
         <div className="mt-1.5 space-y-2">
@@ -1071,7 +1179,7 @@ function VisualRuleBuilder({
                   value={cond.operator}
                   onValueChange={(v) => updateCondition(idx, { operator: v as RuleCondition['operator'] })}
                 >
-                  <SelectTrigger className="w-[170px] border-white/10 bg-slate-900 font-mono text-xs">
+                  <SelectTrigger className="w-[200px] border-white/10 bg-slate-900 font-mono text-xs">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="border-border bg-slate-900 text-white">
@@ -1086,7 +1194,7 @@ function VisualRuleBuilder({
                   value={String(cond.value)}
                   onChange={(e) => updateCondition(idx, { value: e.target.value })}
                   className="flex-1 border-white/10 bg-slate-900 font-mono text-xs"
-                  placeholder={fieldType === 'boolean' ? 'true or false' : 'Target value or regex pattern'}
+                  placeholder={cond.operator === 'outside_hours' ? '09:00-17:00 (Start-End UTC)' : fieldType === 'boolean' ? 'true or false' : 'Target value or regex pattern'}
                 />
 
                 <button

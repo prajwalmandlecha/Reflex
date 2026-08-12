@@ -12,7 +12,7 @@ from app.event_processor import init_event_processor, stop_event_processor
 from app.redis_client import close_redis, init_redis
 from app.routes import (
     agent_classes, agent_instances, audit, auth, bank_connections,
-    dashboard, fleet, internal, metrics, policies, tokens, tools, users, websockets,
+    dashboard, fleet, fleet_caps, internal, metrics, policies, tokens, tools, users, websockets,
 )
 from app.services.config_propagation import (
     cache_active_policies, cache_bank_connections, cache_tool_routing,
@@ -93,6 +93,7 @@ app.include_router(tools.router)
 app.include_router(policies.router)
 app.include_router(audit.router)
 app.include_router(fleet.router)
+app.include_router(fleet_caps.router)
 app.include_router(tokens.router)
 app.include_router(metrics.router)
 app.include_router(dashboard.router)

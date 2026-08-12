@@ -45,6 +45,97 @@ def _non_fatal_cache(fn):
     return wrapper
 
 
+async def load_fleet_caps() -> dict:
+    """Load the global fleet caps from the fleet_caps table.
+
+    Returns {tool_name: [{param, window, limit_cents}]}. Empty dict when none
+    are configured. Used to inject fleet-scoped shared_caps into every agent's
+    effective_constraints."""
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT caps FROM fleet_caps WHERE id = 1")
+    if not row:
+        return {}
+    raw = row["caps"]
+    return json.loads(raw) if isinstance(raw, str) else (raw or {})
+
+
+async def load_fleet_rate_limits() -> dict:
+    """Load the global fleet rate limits from the fleet_caps table.
+
+    Returns {tool_name: [{max_calls, window_seconds}]}. Empty dict when none
+    are configured. Used to inject fleet-scoped shared_rate_limits into every
+    agent's effective_constraints."""
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT rate_limits FROM fleet_caps WHERE id = 1")
+    if not row:
+        return {}
+    raw = row["rate_limits"]
+    return json.loads(raw) if isinstance(raw, str) else (raw or {})
+
+
+def inject_fleet_caps(effective_constraints: dict, fleet_caps: dict) -> dict:
+    """Merge global fleet caps into an agent's effective_constraints.
+
+    Each fleet cap becomes a shared_caps entry with scope "fleet" on the
+    matching tool. The gateway keys these as sharedcap:fleet:{tool}:{param}:{bucket}
+    (no class in the key), so every agent shares ONE counter per tool+param —
+    a true platform-wide cap. Class-scoped shared_caps (if any) are preserved.
+    """
+    result = dict(effective_constraints)
+    for tool_name, entries in (fleet_caps or {}).items():
+        if not isinstance(entries, list) or not entries:
+            continue
+        rule = result.get(tool_name)
+        if not isinstance(rule, dict):
+            rule = {}
+            result[tool_name] = rule
+        shared = rule.get("shared_caps")
+        if not isinstance(shared, list):
+            shared = []
+            rule["shared_caps"] = shared
+        # Replace any existing fleet-scoped entries for this tool (idempotent
+        # re-injection) while preserving class-scoped entries.
+        shared = [sc for sc in shared if not (isinstance(sc, dict) and sc.get("scope") == "fleet")]
+        for entry in entries:
+            if isinstance(entry, dict):
+                shared.append({"scope": "fleet", **entry})
+        rule["shared_caps"] = shared
+    return result
+
+
+def inject_fleet_rate_limits(effective_constraints: dict, fleet_rate_limits: dict) -> dict:
+    """Merge global fleet rate limits into an agent's effective_constraints.
+
+    Each fleet rate limit becomes a shared_rate_limits entry with scope "fleet"
+    on the matching tool. The gateway keys these as ratelimit:fleet:{tool}:{bucket}
+    (no class in the key), so every agent shares ONE counter per tool — a true
+    platform-wide rate limit. Class-scoped shared_rate_limits (if any) are
+    preserved.
+    """
+    result = dict(effective_constraints)
+    for tool_name, entries in (fleet_rate_limits or {}).items():
+        if not isinstance(entries, list) or not entries:
+            continue
+        rule = result.get(tool_name)
+        if not isinstance(rule, dict):
+            rule = {}
+            result[tool_name] = rule
+        shared = rule.get("shared_rate_limits")
+        if not isinstance(shared, list):
+            shared = []
+            rule["shared_rate_limits"] = shared
+        # Replace any existing fleet-scoped entries for this tool (idempotent
+        # re-injection) while preserving class-scoped entries.
+        shared = [srl for srl in shared if not (isinstance(srl, dict) and srl.get("scope") == "fleet")]
+        for entry in entries:
+            if isinstance(entry, dict):
+                shared.append({"scope": "fleet", **entry})
+        rule["shared_rate_limits"] = shared
+    return result
+
+
 async def bump_config_version() -> int:
     """Increment monotonically increasing config version in Postgres (atomic upsert)."""
     pool = get_pool()
@@ -116,8 +207,8 @@ async def cache_agent_instance(agent_id: str):
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            SELECT i.id, i.class_id, i.status, i.constraint_overrides, i.cap_overrides, i.tool_overrides,
-                   c.default_allowed_tools, c.default_constraints, c.default_caps
+            SELECT i.id, i.class_id, i.status, i.constraint_overrides, i.tool_overrides,
+                   c.default_allowed_tools, c.default_constraints
             FROM agent_instances i
             JOIN agent_classes c ON i.class_id = c.id
             WHERE i.id = $1
@@ -137,9 +228,15 @@ async def cache_agent_instance(agent_id: str):
         i_constraints = json.loads(row["constraint_overrides"]) if isinstance(row["constraint_overrides"], str) else (row["constraint_overrides"] or {})
         effective_constraints = {**c_constraints, **i_constraints}
 
-        c_caps = json.loads(row["default_caps"]) if isinstance(row["default_caps"], str) else (row["default_caps"] or {})
-        i_caps = json.loads(row["cap_overrides"]) if isinstance(row["cap_overrides"], str) else (row["cap_overrides"] or {})
-        effective_caps = {**c_caps, **i_caps}
+        # Inject global fleet caps (single source of truth) into every agent's
+        # effective constraints so the gateway enforces them fleet-wide.
+        fleet_caps = await load_fleet_caps()
+        effective_constraints = inject_fleet_caps(effective_constraints, fleet_caps)
+
+        # Inject global fleet rate limits (single source of truth) into every
+        # agent's effective constraints so the gateway enforces them fleet-wide.
+        fleet_rate_limits = await load_fleet_rate_limits()
+        effective_constraints = inject_fleet_rate_limits(effective_constraints, fleet_rate_limits)
 
         # Propagate each tool's REQUIRED field list so the gateway can tell a
         # required money field (fail closed when missing) from an optional one
@@ -162,7 +259,6 @@ async def cache_agent_instance(agent_id: str):
             "status": row["status"],
             "effective_tools": effective_tools,
             "effective_constraints": effective_constraints,
-            "effective_caps": effective_caps,
             "tool_schemas": tool_schemas,
         }
         await redis.set(f"agp:inst:{agent_id}", json.dumps(data))

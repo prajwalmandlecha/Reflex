@@ -87,16 +87,13 @@ def main():
             "default_constraints": {
                 "get_balance": {"rate_limit": {"max_calls": 60, "window_seconds": 3600}}
             },
-            "default_caps": {
-                "hourly": {"amount_cents": 0, "count": 200},
-                "daily": {"amount_cents": 0, "count": 1000}
-            },
+            "default_caps": {},
             "status": "active"
         },
         {
             "id": "payment_concierge_bot",
             "name": "Payment & Deposit Concierge Bot",
-            "description": "Payment bot authorized to process deposits and wire transfers with spend caps.",
+            "description": "Payment bot authorized to process deposits and wire transfers with per-param caps.",
             "default_allowed_tools": ["login", "get_balance", "deposit_funds", "transfer_money", "get_transaction_history"],
             "default_constraints": {
                 "deposit_funds": {"rate_limit": {"max_calls": 30, "window_seconds": 3600}},
@@ -106,11 +103,7 @@ def main():
                     }
                 }
             },
-            "default_caps": {
-                "hourly": {"amount_cents": 500000, "count": 50},
-                "daily": {"amount_cents": 5000000, "count": 500},
-                "per_transaction": {"max_amount_cents": 120000}
-            },
+            "default_caps": {},
             "status": "active"
         },
         {
@@ -119,10 +112,7 @@ def main():
             "description": "Financial management bot authorized for budgets and insights.",
             "default_allowed_tools": ["login", "get_balance", "get_spending_summary", "get_budgets", "create_budget"],
             "default_constraints": {},
-            "default_caps": {
-                "hourly": {"amount_cents": 0, "count": 100},
-                "daily": {"amount_cents": 0, "count": 500}
-            },
+            "default_caps": {},
             "status": "active"
         }
     ]

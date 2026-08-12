@@ -3,7 +3,7 @@
 import json
 from fastapi import APIRouter, HTTPException
 from app.database import get_pool
-from app.services.config_propagation import cache_agent_instance, collect_required_fields
+from app.services.config_propagation import cache_agent_instance, collect_required_fields, inject_fleet_caps, inject_fleet_rate_limits, load_fleet_caps, load_fleet_rate_limits
 
 router = APIRouter(prefix="/internal", tags=["Internal Gateway API"])
 
@@ -15,8 +15,8 @@ async def get_agent_internal_config(agent_id: str):
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            SELECT i.id, i.class_id, i.status, i.constraint_overrides, i.cap_overrides, i.tool_overrides,
-                   c.default_allowed_tools, c.default_constraints, c.default_caps
+            SELECT i.id, i.class_id, i.status, i.constraint_overrides, i.tool_overrides,
+                   c.default_allowed_tools, c.default_constraints
             FROM agent_instances i
             JOIN agent_classes c ON i.class_id = c.id
             WHERE i.id = $1
@@ -31,7 +31,6 @@ async def get_agent_internal_config(agent_id: str):
                 "status": "active",
                 "effective_tools": [],
                 "effective_constraints": {},
-                "effective_caps": {},
             }
 
         c_tools = row["default_allowed_tools"] or []
@@ -42,9 +41,14 @@ async def get_agent_internal_config(agent_id: str):
         i_constraints = json.loads(row["constraint_overrides"]) if isinstance(row["constraint_overrides"], str) else (row["constraint_overrides"] or {})
         effective_constraints = {**c_constraints, **i_constraints}
 
-        c_caps = json.loads(row["default_caps"]) if isinstance(row["default_caps"], str) else (row["default_caps"] or {})
-        i_caps = json.loads(row["cap_overrides"]) if isinstance(row["cap_overrides"], str) else (row["cap_overrides"] or {})
-        effective_caps = {**c_caps, **i_caps}
+        # Inject global fleet caps identically to cache_agent_instance so the
+        # gateway enforces the same fleet-wide caps on the fallback path.
+        fleet_caps = await load_fleet_caps()
+        effective_constraints = inject_fleet_caps(effective_constraints, fleet_caps)
+
+        # Inject global fleet rate limits identically to cache_agent_instance.
+        fleet_rate_limits = await load_fleet_rate_limits()
+        effective_constraints = inject_fleet_rate_limits(effective_constraints, fleet_rate_limits)
 
         # Propagate each tool's REQUIRED field list so the gateway can
         # distinguish required money fields (fail closed when missing) from
@@ -70,6 +74,5 @@ async def get_agent_internal_config(agent_id: str):
         "status": row["status"],
         "effective_tools": effective_tools,
         "effective_constraints": effective_constraints,
-        "effective_caps": effective_caps,
         "tool_schemas": tool_schemas,
     }

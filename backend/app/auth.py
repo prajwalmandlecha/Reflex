@@ -32,10 +32,12 @@ ROLE_PERMISSIONS = {
         "instances:read", "instances:create", "instances:mint_token", "instances:update", "instances:revoke", "instances:revive",
         "estop:read", "estop:trigger",
         "policies:read", "policies:create", "policies:update", "policies:archive",
-        "bank:read", "bank:create", "bank:update", "bank:delete", "bank:probe"
+        "bank:read", "bank:create", "bank:update", "bank:delete", "bank:probe",
+        "audit:read", "audit:export", "settings:read"
     },
     "auditor": {
-        "audit:read", "audit:verify", "audit:export"
+        "classes:read", "instances:read", "policies:read", "bank:read", "estop:read",
+        "audit:read", "audit:verify", "audit:export", "settings:read"
     }
 }
 

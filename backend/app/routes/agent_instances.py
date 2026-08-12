@@ -28,16 +28,10 @@ async def list_agent_instances(current_user: dict = Depends(get_current_user)):
                    i.created_at, i.updated_at, c.name AS class_name,
                    c.default_caps AS class_caps,
                    c.default_allowed_tools AS class_tools,
-                   COALESCE(sp.spend_cents, 0) AS spend_today_cents,
                    la.action AS last_action,
                    COALESCE(down.unreachable_tools, '{}') AS unreachable_tools
             FROM agent_instances i
             LEFT JOIN agent_classes c ON i.class_id = c.id
-            LEFT JOIN LATERAL (
-                SELECT SUM(a.spend_delta) AS spend_cents
-                FROM audit_log a
-                WHERE a.agent_id = i.id AND a.ts >= CURRENT_DATE AND a.decision = 'allow'
-            ) sp ON true
             LEFT JOIN LATERAL (
                 SELECT a2.action
                 FROM audit_log a2
@@ -80,7 +74,7 @@ async def list_agent_instances(current_user: dict = Depends(get_current_user)):
             if isinstance(amt, (int, float)) and amt > 0:
                 cap_today_dollars = amt / 100.0
 
-        spend_today_dollars = (float(r["spend_today_cents"]) if r["spend_today_cents"] else 0.0) / 100.0
+        spend_today_dollars = 0.0
 
         status_val = r["status"] or "active"
         if fleet_halted and status_val != "revoked":
@@ -251,17 +245,7 @@ async def update_agent_instance(agent_id: str, inst: AgentInstanceUpdate, curren
 
 @router.get("/{agent_id}/spend")
 async def get_agent_spend(agent_id: str, current_user: dict = Depends(get_current_user)):
-    pool = get_pool()
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow("SELECT id FROM agent_instances WHERE id = $1", agent_id)
-        if not row:
-            raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
-        spend_today_cents = await conn.fetchval(
-            "SELECT COALESCE(SUM(spend_delta), 0) FROM audit_log WHERE agent_id = $1 AND ts >= CURRENT_DATE AND decision = 'allow'",
-            agent_id,
-        )
-    spend_dollars = (float(spend_today_cents) if spend_today_cents else 0.0) / 100.0
-    return {"agent_id": agent_id, "spend_counters": {"today": spend_dollars}}
+    return {"agent_id": agent_id, "spend_counters": {"today": 0.0}}
 
 
 @router.post("/{agent_id}/revoke")

@@ -9,7 +9,6 @@ import (
 	"github.com/agp/gateway/internal/audit"
 	"github.com/agp/gateway/internal/authz"
 	"github.com/agp/gateway/internal/configcache"
-	"github.com/agp/gateway/internal/constraints"
 	"github.com/agp/gateway/internal/metrics"
 	"github.com/agp/gateway/internal/spend"
 )
@@ -54,6 +53,15 @@ func (p *MCPProxy) governCall(
 	// parameter-level cap: bounds the actual knob the agent turns, sign-agnostic
 	// (handles deposit vs withdraw identically), and scoped per tool+param.
 	if kind == callKindTool {
+		// Fail-closed presence check: any param with a cap declared MUST be
+		// present and numeric, or the cap could be bypassed by omitting the
+		// field (e.g. omitting "max_characters" to dodge its ceiling).
+		if ok, reason := p.constraintCheck.CheckParamPresence(cfg, toolName, args); !ok {
+			t.ConstraintMs = ms(time.Since(cStart))
+			metrics.ConstraintCheckDuration.WithLabelValues(toolName).Observe(t.ConstraintMs / 1000.0)
+			t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs
+			return false, "constraint", reason, t, nil
+		}
 		if ok, reason := p.constraintCheck.CheckParamMax(cfg, toolName, args); !ok {
 			t.ConstraintMs = ms(time.Since(cStart))
 			metrics.ConstraintCheckDuration.WithLabelValues(toolName).Observe(t.ConstraintMs / 1000.0)
@@ -95,17 +103,14 @@ func (p *MCPProxy) governCall(
 	}
 
 	// Stage 4 (final): Atomic commit of ALL stateful counters — per-tool rate
-	// limit, cumulative daily spend, and hierarchical spend caps — in a single
-	// Redis Lua script. All-or-nothing: if any cap would be breached, every
-	// increment is rolled back inside the script, so denied calls never consume
-	// budget (G4) and concurrent calls cannot race between a read and a write.
+	// limit, per-parameter spend caps, and shared (class/fleet) parameter
+	// caps — in a single Redis Lua script. All-or-nothing: if any cap would
+	// be breached, every increment is rolled back inside the script, so denied
+	// calls never consume budget (G4) and concurrent calls cannot race.
 	spendStart := time.Now()
 	entries := p.constraintCheck.CounterEntries(cfg, toolName, args)
 	entries = append(entries, p.constraintCheck.ParamCounterEntries(cfg, toolName, args)...)
-	spendDelta := int64(amount * 100)
-	if spendDelta > 0 {
-		entries = append(entries, p.buildDynamicScopes(agentID, classID, cfg.EffectiveCaps, float64(spendDelta))...)
-	}
+	entries = append(entries, p.constraintCheck.SharedCapEntries(cfg, toolName, args)...)
 
 	commitRes, err := p.spendLimiter.Commit(ctx, entries)
 	t.SpendCheckMs = ms(time.Since(spendStart))
@@ -117,7 +122,7 @@ func (p *MCPProxy) governCall(
 	}
 	if !commitRes.Allowed {
 		stage := "spend"
-		if strings.HasPrefix(commitRes.Exceeded, "ratelimit:") || strings.HasPrefix(commitRes.Exceeded, "spendcap:") || strings.HasPrefix(commitRes.Exceeded, "paramcap:") {
+		if strings.HasPrefix(commitRes.Exceeded, "ratelimit:") || strings.HasPrefix(commitRes.Exceeded, "spendcap:") || strings.HasPrefix(commitRes.Exceeded, "paramcap:") || strings.HasPrefix(commitRes.Exceeded, "sharedcap:") {
 			stage = "constraint"
 		}
 		reason := commitRes.Label
@@ -153,69 +158,13 @@ func (p *MCPProxy) rollbackCommittedEntries(entries []spend.Entry, agentID, tool
 	}
 }
 
-// buildDynamicScopes expresses the hierarchical spend caps (instance hourly,
-// class daily, fleet daily) as counter entries for the atomic commit.
-func (p *MCPProxy) buildDynamicScopes(agentID, classID string, caps map[string]map[string]any, amountCents float64) []spend.Entry {
-	entries := []spend.Entry{}
-	now := time.Now().UTC()
-
-	// Default fallback caps if not set in config
-	hourlyCap := float64(500000)
-	dailyCap := float64(5000000)
-
-	if caps != nil {
-		if h, ok := caps["hourly"]; ok {
-			if amt, ok := h["amount_cents"].(float64); ok && amt > 0 {
-				hourlyCap = amt
-			}
-		}
-		if d, ok := caps["daily"]; ok {
-			if amt, ok := d["amount_cents"].(float64); ok && amt > 0 {
-				dailyCap = amt
-			}
-		}
-	}
-
-	// Instance-level hourly scope
-	entries = append(entries, spend.Entry{
-		Key:        fmt.Sprintf("spend:agent:%s:%s", agentID, now.Format("2006010215")),
-		Amount:     amountCents,
-		Cap:        hourlyCap,
-		TTLSeconds: 172800,
-		Label:      fmt.Sprintf("hourly spend cap exceeded for agent '%s' ($%.2f hourly cap)", agentID, hourlyCap/100.0),
-	})
-
-	// Class-level daily scope
-	if classID != "" {
-		entries = append(entries, spend.Entry{
-			Key:        fmt.Sprintf("spend:class:%s:%s", classID, now.Format("20060102")),
-			Amount:     amountCents,
-			Cap:        dailyCap,
-			TTLSeconds: 172800,
-			Label:      fmt.Sprintf("daily spend cap exceeded for agent class '%s' ($%.2f daily cap)", classID, dailyCap/100.0),
-		})
-	}
-
-	// Fleet-level daily scope
-	entries = append(entries, spend.Entry{
-		Key:        fmt.Sprintf("spend:fleet:all:%s", now.Format("20060102")),
-		Amount:     amountCents,
-		Cap:        50000000,
-		TTLSeconds: 172800,
-		Label:      "fleet-wide daily spend cap exceeded ($500000.00 daily cap)",
-	})
-
-	return entries
-}
-
 // extractAmount resolves a call's monetary value in major currency units from
 // the legacy amount/amount_cents heuristic. found reports whether a parseable
 // amount was present. All money extraction routes through
-// constraints.ExtractAmountCents so the proxy (OPA input, metrics,
-// hierarchical caps) and the per-param spend-cap counters can never disagree
-// on the amount.
+// constraints.ExtractAmountCents so the proxy (OPA input, metrics) and the
+// per-param spend-cap counters can never disagree on the amount.
 func (p *MCPProxy) extractAmount(cfg *configcache.AgentConfig, toolName string, args map[string]any) (float64, bool) {
-	cents, found := constraints.ExtractAmountCents(args)
+	cents, found := p.constraintCheck.ExtractAmountCents(cfg, toolName, args)
 	return cents / 100.0, found
 }
 

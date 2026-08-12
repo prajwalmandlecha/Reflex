@@ -11,6 +11,7 @@ from app.routes.fleet import publish_fleet_event
 from app.services.constraint_validation import validate_class_config
 from app.slugify import slugify
 
+
 router = APIRouter(prefix="/api/v1/classes", tags=["Agent Classes"])
 
 

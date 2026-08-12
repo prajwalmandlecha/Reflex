@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils';
 import { FleetMonitor } from '@/components/gov/fleet-monitor';
 import { Panel, StatTile } from '@/components/gov/panel';
 import { StatusBadge } from '@/components/gov/status-badge';
-import { SpendBar } from '@/components/gov/spend-bar';
+
 import { formatCurrency, formatNumber, formatRelative } from '@/lib/format';
 import type { AgentInstance, AgentClass, AlertItem, ActivityEvent, FleetStatus } from '@/lib/types';
 import { ArrowRight, AlertTriangle, ShieldAlert, ScrollText } from 'lucide-react';
@@ -31,7 +31,6 @@ export function CommandCenterView({
   alerts,
   activityFeed,
   fleetStatus,
-  fleetSpend,
   denialsLastHour,
   onAgentClick,
   onNavigateAgents,
@@ -43,7 +42,7 @@ export function CommandCenterView({
   alerts: AlertItem[];
   activityFeed: ActivityEvent[];
   fleetStatus: FleetStatus;
-  fleetSpend: { spent: number; cap: number };
+  fleetSpend?: { spent: number; cap: number };
   denialsLastHour: number;
   onAgentClick: (id: string) => void;
   onNavigateAgents: (filter: { classId?: string; status?: string }) => void;
@@ -66,10 +65,10 @@ export function CommandCenterView({
           accent={fleetStatus === 'healthy' ? 'healthy' : fleetStatus === 'degraded' ? 'caution' : 'stopped'}
         />
         <StatTile
-          label="Spend Today"
-          value={formatCurrency(fleetSpend.spent)}
-          sub={fleetSpend.cap > 0 ? `of ${formatCurrency(fleetSpend.cap)} total cap` : 'no fleet-wide cap configured'}
-          accent={fleetSpend.cap > 0 && fleetSpend.spent / fleetSpend.cap > 0.8 ? 'caution' : 'accent'}
+          label="Agent Classes"
+          value={`${classes.length}`}
+          sub="group guardrails & tool access"
+          accent="accent"
         />
         <StatTile
           label="Denials (1h)"
@@ -170,8 +169,7 @@ export function CommandCenterView({
           <div className="flex flex-col">
             {classes.map((cls) => {
               const clsInstances = instances.filter((i) => i.classId === cls.id);
-              const clsSpend = clsInstances.reduce((s, i) => s + i.spendToday, 0);
-              const clsCap = clsInstances.reduce((s, i) => s + i.capToday, 0);
+              const activeCount = clsInstances.filter((i) => i.status === 'active').length;
               return (
                 <div
                   key={cls.id}
@@ -180,19 +178,16 @@ export function CommandCenterView({
                   <div className="flex items-center justify-between">
                     <button
                       onClick={() => onNavigateAgents({ classId: cls.id })}
-                      className="font-mono text-xs text-ink-primary hover:text-accent"
+                      className="font-mono text-xs text-ink-primary hover:text-accent font-semibold"
                     >
                       {cls.name}
                     </button>
-                    <span className="font-mono text-xs text-ink-secondary tabular">
-                      {formatCurrency(clsSpend)} / {formatCurrency(clsCap)}
+                    <span className="font-mono text-[10px] text-cyan-400 font-semibold uppercase tracking-wider">
+                      {activeCount}/{clsInstances.length} Active
                     </span>
                   </div>
-                  <div className="mt-2">
-                    <SpendBar used={clsSpend} cap={clsCap} />
-                  </div>
                   <div className="mt-1 flex items-center gap-3 font-mono text-[10px] text-ink-secondary">
-                    <span>{clsInstances.length} instances</span>
+                    <span>{clsInstances.length} instance{clsInstances.length !== 1 ? 's' : ''}</span>
                     <span>·</span>
                     <span>{(cls.allowedTools || cls.defaultAllowedTools || []).length} tools</span>
                   </div>

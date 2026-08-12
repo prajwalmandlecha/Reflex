@@ -54,7 +54,7 @@ Downstream targets are a mix of **native MCP servers** (from `MCP_TARGETS` env +
 2. **Governed tools, resources & prompts** — `tools/call`, `resources/read`, and `prompts/get` all pass through the governance pipeline. `resources/list` / `prompts/list` / `tools/list` are aggregated across targets, deduped, and filtered by the agent's whitelist.
 3. **Mandatory JWT authn** — HS256 Bearer tokens validated with issuer check; identity is derived solely from the token claims.
 4. **Embedded OPA/Rego authz** — per-policy modules + aggregator (deny > allow > default-deny), hot-reloaded from Postgres/Redis.
-5. **Atomic spend & rate limiting** — a single Redis Lua script commits rate-limit (sliding-window sub-buckets) and hierarchical spend caps (agent-hourly / class-daily / fleet-daily) all-or-nothing; committed budget is **rolled back** if the downstream call fails.
+5. **Atomic spend & rate limiting** — a single Redis Lua script commits rate-limit (sliding-window sub-buckets) and per-parameter spend caps (per-call max / hourly / daily) all-or-nothing; committed budget is **rolled back** if the downstream call fails.
 6. **Sub-ms killswitch** — fleet / class / agent halt via Redis keys.
 7. **SHA-256 hash-chained audit ledger** — batched transactional writes via sqlc; chain re-anchors on flush failure so a transient DB error can't fork the chain. Sensitive params (tokens, secrets) are redacted before logging.
 8. **OpenAPI virtualization** — OpenAPI specs become MCP tools automatically.
