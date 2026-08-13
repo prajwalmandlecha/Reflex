@@ -197,6 +197,17 @@ export const api = {
     await request(`/api/v1/agents/${agentId}`, { method: "DELETE" });
   },
 
+  // --- Agent JWT Minting ---
+  async mintToken(
+    agentId: string,
+    agentKind: string,
+    policyVersion?: number,
+  ): Promise<{ token: string; agent_id: string; expires_in_minutes: number }> {
+    return request(`/api/v1/tokens?agent_id=${encodeURIComponent(agentId)}&agent_kind=${encodeURIComponent(agentKind)}${policyVersion ? `&policy_version=${policyVersion}` : ""}`, {
+      method: "POST",
+    });
+  },
+
   // --- Bank Connections & Tools ---
   async getBankConnections(): Promise<BankConnection[]> {
     const raw = await request<any[]>("/api/v1/connections");

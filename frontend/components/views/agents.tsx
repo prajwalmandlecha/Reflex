@@ -575,8 +575,7 @@ function AgentDetail({
   const handleMintToken = async () => {
     setLoadingToken(true);
     try {
-      const res = await fetch(`/api/v1/tokens?agent_id=${agent.id}&agent_kind=${agent.classId}`, { method: 'POST' });
-      const data = await res.json();
+      const data = await api.mintToken(agent.id, agent.classId);
       setJwtToken(data.token || '');
     } catch (err) {
       console.error(err);
@@ -655,7 +654,7 @@ function AgentDetail({
             <textarea
               readOnly
               value={jwtToken}
-              className="h-20 w-full border border-white/10 bg-white/5 p-1.5 font-mono text-[10px] leading-relaxed rounded text-cyan-300 select-text focus:outline-none"
+              className="h-20 w-full border border-white/10 bg-white/5 p-1.5 font-mono text-[10px] leading-relaxed rounded text-cyan-300 select-text focus:outline-none whitespace-pre-wrap break-all resize-none"
             />
             <Button
               size="sm"
@@ -999,7 +998,7 @@ function AgentConnectionSnippet({ agent, cls, token }: { agent: AgentInstance; c
       </div>
 
       <div className="relative">
-        <pre className="min-h-[180px] max-h-[320px] overflow-auto bg-slate-950/80 border border-white/10 p-3.5 rounded-lg text-xs font-mono leading-relaxed select-text">
+        <pre className="min-h-[180px] max-h-[320px] overflow-auto bg-slate-950/80 border border-white/10 p-3.5 rounded-lg text-xs font-mono leading-relaxed select-text whitespace-pre-wrap break-all">
           {activeTab === 'mcp.json' ? renderHighlightedJson(activeSnippet) : activeSnippet}
         </pre>
         <button
@@ -1013,9 +1012,9 @@ function AgentConnectionSnippet({ agent, cls, token }: { agent: AgentInstance; c
       </div>
 
       <div className="text-[10px] text-ink-secondary space-y-1.5 pt-1 font-mono">
-        <div>• <strong className="text-white">Gateway Endpoint</strong>: <code className="text-cyan-300">{gatewayUrl}</code></div>
-        <div>• <strong className="text-white">Agent ID</strong>: <code className="text-cyan-300">{agent.id}</code></div>
-        <div>• <strong className="text-white">Class</strong>: <code className="text-cyan-300">{cls?.name ?? agent.classId}</code></div>
+        <div className="break-all">• <strong className="text-white">Gateway Endpoint</strong>: <code className="text-cyan-300">{gatewayUrl}</code></div>
+        <div className="break-all">• <strong className="text-white">Agent ID</strong>: <code className="text-cyan-300">{agent.id}</code></div>
+        <div className="break-all">• <strong className="text-white">Class</strong>: <code className="text-cyan-300">{cls?.name ?? agent.classId}</code></div>
         <div className="flex items-start gap-1 flex-wrap">
           <strong className="text-white shrink-0">• Allowed Tools:</strong>
           {allowedTools.length > 0 ? (
