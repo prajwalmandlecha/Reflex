@@ -91,6 +91,29 @@ async def init_db_schema():
         created_at              TIMESTAMPTZ DEFAULT NOW()
     );
 
+    -- MCP resources exposed by a native MCP bank connection (resources/list).
+    CREATE TABLE IF NOT EXISTS resources (
+        id                      SERIAL PRIMARY KEY,
+        bank_connection_id      VARCHAR(64) NOT NULL REFERENCES bank_connections(id) ON DELETE CASCADE,
+        uri                     TEXT NOT NULL,
+        name                    VARCHAR(256) DEFAULT '',
+        description             TEXT DEFAULT '',
+        mime_type               VARCHAR(128) DEFAULT '',
+        exposed                 BOOLEAN DEFAULT true,
+        created_at              TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    -- MCP prompts exposed by a native MCP bank connection (prompts/list).
+    CREATE TABLE IF NOT EXISTS prompts (
+        id                      SERIAL PRIMARY KEY,
+        bank_connection_id      VARCHAR(64) NOT NULL REFERENCES bank_connections(id) ON DELETE CASCADE,
+        name                    VARCHAR(128) NOT NULL,
+        description             TEXT DEFAULT '',
+        arguments               JSONB DEFAULT '[]',
+        exposed                 BOOLEAN DEFAULT true,
+        created_at              TIMESTAMPTZ DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS policies (
         id                      SERIAL PRIMARY KEY,
         name                    VARCHAR(128) NOT NULL,

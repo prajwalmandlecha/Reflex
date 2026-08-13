@@ -79,24 +79,28 @@ const (
 // JSON-RPC requests, runs them through the governance pipeline, and proxies
 // allowed calls to downstream MCP or REST servers.
 type MCPProxy struct {
-	targets         map[string]string // populated exclusively from Redis agp:connections
-	targetsMux      sync.RWMutex
-	openAPITargets  map[string]*OpenAPISpecTarget
-	openAPIMux      sync.RWMutex
-	connAuth        map[string]*downstreamAuth // connection_id → downstream creds
-	connAuthMux     sync.RWMutex
-	toolRouting     map[string]string // tool_name → service/connection_id
-	toolRoutingMux  sync.RWMutex
-	ks              *killswitch.Switch
-	policyEngine    *authz.Engine
-	spendLimiter    *spend.Limiter
-	constraintCheck *constraints.Checker
-	configCache     *configcache.ConfigCache
-	auditor         *audit.Logger
-	jwtMgr          *authn.JWTManager
-	rdb             *redis.Client
-	logger          *slog.Logger
-	client          *http.Client
+	targets            map[string]string // populated exclusively from Redis agp:connections
+	targetsMux         sync.RWMutex
+	openAPITargets     map[string]*OpenAPISpecTarget
+	openAPIMux         sync.RWMutex
+	connAuth           map[string]*downstreamAuth // connection_id → downstream creds
+	connAuthMux        sync.RWMutex
+	toolRouting        map[string]string // tool_name → service/connection_id
+	toolRoutingMux     sync.RWMutex
+	promptRouting      map[string]string // prompt_name → service/connection_id
+	promptRoutingMux   sync.RWMutex
+	resourceRouting    map[string]string // resource_uri → service/connection_id
+	resourceRoutingMux sync.RWMutex
+	ks                 *killswitch.Switch
+	policyEngine       *authz.Engine
+	spendLimiter       *spend.Limiter
+	constraintCheck    *constraints.Checker
+	configCache        *configcache.ConfigCache
+	auditor            *audit.Logger
+	jwtMgr             *authn.JWTManager
+	rdb                *redis.Client
+	logger             *slog.Logger
+	client             *http.Client
 }
 
 // NewMCPProxy creates a governance-enforcing MCP proxy with the given
@@ -118,6 +122,8 @@ func NewMCPProxy(
 		openAPITargets:  make(map[string]*OpenAPISpecTarget),
 		connAuth:        make(map[string]*downstreamAuth),
 		toolRouting:     make(map[string]string),
+		promptRouting:   make(map[string]string),
+		resourceRouting: make(map[string]string),
 		ks:              ks,
 		policyEngine:    policyEngine,
 		spendLimiter:    spendLimiter,
@@ -325,6 +331,62 @@ func (p *MCPProxy) resolveServiceForTool(toolName string) string {
 	return p.toolRouting[toolName]
 }
 
+// LoadPromptRouting reads the prompt_name → connection_id mapping from Redis.
+// This enables the gateway to route prompts/get to the correct downstream.
+func (p *MCPProxy) LoadPromptRouting(ctx context.Context) {
+	if p.rdb == nil {
+		return
+	}
+	raw, err := p.rdb.Get(ctx, "agp:prompt_routing").Result()
+	if err != nil || raw == "" {
+		return
+	}
+	var mapping map[string]string
+	if err := json.Unmarshal([]byte(raw), &mapping); err != nil {
+		p.logger.Warn("failed to parse agp:prompt_routing", "error", err)
+		return
+	}
+	p.promptRoutingMux.Lock()
+	p.promptRouting = mapping
+	p.promptRoutingMux.Unlock()
+	p.logger.Info("loaded prompt routing map", "count", len(mapping))
+}
+
+// resolveServiceForPrompt returns the connection_id that owns the given prompt.
+func (p *MCPProxy) resolveServiceForPrompt(promptName string) string {
+	p.promptRoutingMux.RLock()
+	defer p.promptRoutingMux.RUnlock()
+	return p.promptRouting[promptName]
+}
+
+// LoadResourceRouting reads the resource_uri → connection_id mapping from Redis.
+// This enables the gateway to route resources/read to the correct downstream.
+func (p *MCPProxy) LoadResourceRouting(ctx context.Context) {
+	if p.rdb == nil {
+		return
+	}
+	raw, err := p.rdb.Get(ctx, "agp:resource_routing").Result()
+	if err != nil || raw == "" {
+		return
+	}
+	var mapping map[string]string
+	if err := json.Unmarshal([]byte(raw), &mapping); err != nil {
+		p.logger.Warn("failed to parse agp:resource_routing", "error", err)
+		return
+	}
+	p.resourceRoutingMux.Lock()
+	p.resourceRouting = mapping
+	p.resourceRoutingMux.Unlock()
+	p.logger.Info("loaded resource routing map", "count", len(mapping))
+}
+
+// resolveServiceForResource returns the connection_id that owns the given resource URI.
+func (p *MCPProxy) resolveServiceForResource(uri string) string {
+	p.resourceRoutingMux.RLock()
+	defer p.resourceRoutingMux.RUnlock()
+	return p.resourceRouting[uri]
+}
+
 // SubscribeConnectionUpdates listens for connection/openapi config changes and
 // reloads OpenAPI virtual targets so newly-registered specs take effect without
 // a restart. Runs until ctx is cancelled.
@@ -349,6 +411,8 @@ func (p *MCPProxy) SubscribeConnectionUpdates(ctx context.Context) {
 			}
 			p.LoadOpenAPISpecs(ctx)
 			p.LoadToolRouting(ctx)
+			p.LoadPromptRouting(ctx)
+			p.LoadResourceRouting(ctx)
 			p.LoadNativeTargets(ctx)
 			p.loadConnectionAuth(ctx)
 		}
@@ -402,7 +466,8 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve the target service via tool routing for tools/call
+	// Resolve the target service via routing maps. tools/call resolves by tool
+	// name, prompts/get by prompt name, resources/read by resource URI.
 	var serviceName string
 	if method == "tools/call" {
 		params, _ := rpcReq["params"].(map[string]any)
@@ -411,6 +476,24 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if resolved := p.resolveServiceForTool(toolName); resolved != "" {
 				serviceName = resolved
 				p.logger.Debug("resolved service via tool routing", "tool", toolName, "service", serviceName)
+			}
+		}
+	} else if method == "prompts/get" {
+		params, _ := rpcReq["params"].(map[string]any)
+		promptName, _ := params["name"].(string)
+		if promptName != "" {
+			if resolved := p.resolveServiceForPrompt(promptName); resolved != "" {
+				serviceName = resolved
+				p.logger.Debug("resolved service via prompt routing", "prompt", promptName, "service", serviceName)
+			}
+		}
+	} else if method == "resources/read" {
+		params, _ := rpcReq["params"].(map[string]any)
+		uri, _ := params["uri"].(string)
+		if uri != "" {
+			if resolved := p.resolveServiceForResource(uri); resolved != "" {
+				serviceName = resolved
+				p.logger.Debug("resolved service via resource routing", "uri", uri, "service", serviceName)
 			}
 		}
 	}
@@ -448,8 +531,12 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"id":      reqID,
 			"result": map[string]any{
 				"protocolVersion": clientProtocol,
-				"capabilities":    map[string]any{"tools": map[string]any{}},
-				"serverInfo":      map[string]any{"name": "reflex-gateway", "version": "1.0.0"},
+				"capabilities": map[string]any{
+					"tools":     map[string]any{},
+					"prompts":   map[string]any{},
+					"resources": map[string]any{},
+				},
+				"serverInfo": map[string]any{"name": "reflex-gateway", "version": "1.0.0"},
 			},
 		}
 		p.sendJSONRPCResponse(w, r, res)

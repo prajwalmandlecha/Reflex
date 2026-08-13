@@ -112,6 +112,14 @@ export function BankConnectionsView({
                       <span>{conn.sourceType === 'native_mcp' ? 'Native MCP' : 'OpenAPI Proxy'}</span>
                       <span>·</span>
                       <span>{conn.toolCount || (conn.tools ? conn.tools.length : 0)} tools</span>
+                      {conn.sourceType === 'native_mcp' && (
+                        <>
+                          <span>·</span>
+                          <span>{conn.resourceCount || (conn.resources ? conn.resources.length : 0)} resources</span>
+                          <span>·</span>
+                          <span>{conn.promptCount || (conn.prompts ? conn.prompts.length : 0)} prompts</span>
+                        </>
+                      )}
                       {conn.lastSync && (
                         <>
                           <span>·</span>
@@ -189,6 +197,44 @@ export function BankConnectionsView({
                     : conn.status === 'error'
                     ? 'Upstream unreachable — check the server URL and re-sync.'
                     : 'No tools registered for this server.'}
+                </div>
+              )}
+
+              {conn.sourceType === 'native_mcp' && (conn.resources?.length ?? 0) > 0 && (
+                <div className="border-t border-white/5 p-3">
+                  <div className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary mb-2">
+                    MCP Resources ({conn.resources?.filter((r) => r.exposed).length} / {conn.resources?.length})
+                  </div>
+                  <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                    {conn.resources?.map((res) => (
+                      <div key={res.id} className="flex items-center gap-2 border border-white/5 bg-white/[0.02] p-1.5 rounded">
+                        <span className="rounded px-1.5 py-0.5 font-mono text-[9px] font-semibold bg-sky-500/15 text-sky-400">
+                          RES
+                        </span>
+                        <span className="font-mono text-xs text-ink-primary font-medium">{res.name || res.uri}</span>
+                        <span className="truncate font-mono text-[10px] text-ink-secondary flex-1">{res.uri}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {conn.sourceType === 'native_mcp' && (conn.prompts?.length ?? 0) > 0 && (
+                <div className="border-t border-white/5 p-3">
+                  <div className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary mb-2">
+                    MCP Prompts ({conn.prompts?.filter((p) => p.exposed).length} / {conn.prompts?.length})
+                  </div>
+                  <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                    {conn.prompts?.map((pr) => (
+                      <div key={pr.id} className="flex items-center gap-2 border border-white/5 bg-white/[0.02] p-1.5 rounded">
+                        <span className="rounded px-1.5 py-0.5 font-mono text-[9px] font-semibold bg-violet-500/15 text-violet-400">
+                          PROMPT
+                        </span>
+                        <span className="font-mono text-xs text-ink-primary font-medium">{pr.name}</span>
+                        <span className="truncate font-mono text-[10px] text-ink-secondary flex-1">{pr.description}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 

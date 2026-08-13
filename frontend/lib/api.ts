@@ -227,6 +227,12 @@ export const api = {
       // No silent "connected" fallback — status is derived server-side from a real probe.
       status: b.status || "pending",
       tools: b.tools || [],
+      resourceCount: b.resource_count ?? b.resourceCount ?? (b.resources ? b.resources.length : 0),
+      resource_count: b.resource_count,
+      resources: b.resources || [],
+      promptCount: b.prompt_count ?? b.promptCount ?? (b.prompts ? b.prompts.length : 0),
+      prompt_count: b.prompt_count,
+      prompts: b.prompts || [],
       authType: b.credential_type || undefined,
       lastSync: b.updated_at || undefined,
     }));

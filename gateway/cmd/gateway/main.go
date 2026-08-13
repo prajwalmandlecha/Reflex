@@ -122,6 +122,8 @@ func main() {
 	// bank-connection cache, and keep them hot-reloaded on config changes (G7).
 	mcpInterceptor.LoadOpenAPISpecs(ctx)
 	mcpInterceptor.LoadToolRouting(ctx)
+	mcpInterceptor.LoadPromptRouting(ctx)
+	mcpInterceptor.LoadResourceRouting(ctx)
 	mcpInterceptor.LoadNativeTargets(ctx)
 	mcpInterceptor.LoadConnectionAuth(ctx)
 	go mcpInterceptor.SubscribeConnectionUpdates(ctx)

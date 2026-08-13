@@ -16,7 +16,7 @@ from app.routes import (
 )
 from app.services.config_propagation import (
     cache_active_policies, cache_bank_connections, cache_tool_routing,
-    cache_bank_connections_list,
+    cache_bank_connections_list, cache_prompt_routing, cache_resource_routing,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -46,7 +46,9 @@ async def lifespan(app: FastAPI):
         await cache_bank_connections()
         await cache_bank_connections_list()
         await cache_tool_routing()
-        logger.info("Pre-populated Redis cache with active policies, connections, and tool routing")
+        await cache_prompt_routing()
+        await cache_resource_routing()
+        logger.info("Pre-populated Redis cache with active policies, connections, tool routing, prompt routing, and resource routing")
     except Exception as e:
         logger.warning("Failed to pre-populate Redis cache on startup: %s", e)
 

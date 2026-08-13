@@ -53,8 +53,12 @@ func (p *MCPProxy) handleOpenAPIRequest(
 			"id":      reqID,
 			"result": map[string]any{
 				"protocolVersion": clientProtocol,
-				"capabilities":    map[string]any{"tools": map[string]any{}},
-				"serverInfo":      map[string]any{"name": "reflex-gateway", "version": "1.0.0"},
+				"capabilities": map[string]any{
+					"tools":     map[string]any{},
+					"prompts":   map[string]any{},
+					"resources": map[string]any{},
+				},
+				"serverInfo": map[string]any{"name": "reflex-gateway", "version": "1.0.0"},
 			},
 		}
 		p.sendJSONRPCResponse(w, r, res)
@@ -194,6 +198,8 @@ func (p *MCPProxy) handleAggregatedToolsList(w http.ResponseWriter, r *http.Requ
 	// which is negligible compared to the downstream tools/list fan-out below.
 	p.LoadNativeTargets(r.Context())
 	p.LoadToolRouting(r.Context())
+	p.LoadPromptRouting(r.Context())
+	p.LoadResourceRouting(r.Context())
 
 	allowedSet := make(map[string]bool)
 	for _, t := range allowedTools {
@@ -306,12 +312,7 @@ func (p *MCPProxy) handleAggregatedToolsList(w http.ResponseWriter, r *http.Requ
 // native MCP targets, merges the results, dedupes by uri/name, and filters by
 // the agent's allowed list. (OpenAPI virtual targets don't expose MCP
 // resources/prompts, so only native targets are queried.)
-func (p *MCPProxy) handleAggregatedList(w http.ResponseWriter, r *http.Request, bodyBytes []byte, method string, allowedTools []string) {
-	allowedSet := make(map[string]bool)
-	for _, t := range allowedTools {
-		allowedSet[t] = true
-	}
-
+func (p *MCPProxy) handleAggregatedList(w http.ResponseWriter, r *http.Request, bodyBytes []byte, method string, _ []string) {
 	var rpcReq map[string]any
 	_ = json.Unmarshal(bodyBytes, &rpcReq)
 	reqID := rpcReq["id"]
@@ -364,9 +365,12 @@ func (p *MCPProxy) handleAggregatedList(w http.ResponseWriter, r *http.Request, 
 							continue
 						}
 						seen[id] = true
-						if len(allowedTools) == 0 || allowedSet[id] {
-							merged = append(merged, item)
-						}
+						// Prompts and resources are NOT governed by the agent's
+						// tool whitelist — that list only gates tools/call.
+						// Exposure of prompts/resources is controlled by the
+						// per-item "exposed" flag set during discovery, so we
+						// surface everything the downstream advertises.
+						merged = append(merged, item)
 					}
 				}
 				mu.Unlock()

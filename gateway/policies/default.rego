@@ -23,6 +23,20 @@ reason := sprintf("action '%s' is not permitted by agent profile whitelist", [in
 	not (input.action in input.allowed_tools)
 }
 
+# Rule 1b: Prompts & Resources are governed by their own `exposed` flag, not the
+# tool whitelist. The gateway only routes prompts/resources that are exposed
+# (they are absent from the routing map otherwise), so reaching OPA means they
+# are already authorized to be read. The tool whitelist governs tools/call only.
+allow if {
+	input.resource in {"prompt", "resource"}
+	not deny
+}
+
+reason := sprintf("prompt/resource '%s' allowed (exposed flag governs read access)", [input.action]) if {
+	input.resource in {"prompt", "resource"}
+	not deny
+}
+
 # Rule 2: Conversational Agent (Identity, User Onboarding & Read-Only Insights)
 allow if {
 	count(input.allowed_tools) == 0

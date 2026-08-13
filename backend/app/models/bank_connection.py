@@ -38,3 +38,7 @@ class BankConnectionResponse(BankConnectionBase):
     updated_at: datetime
     tool_count: int = 0
     tools: list[dict[str, Any]] = Field(default_factory=list)
+    resource_count: int = 0
+    resources: list[dict[str, Any]] = Field(default_factory=list)
+    prompt_count: int = 0
+    prompts: list[dict[str, Any]] = Field(default_factory=list)

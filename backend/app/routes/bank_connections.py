@@ -8,8 +8,8 @@ from app.crypto import encrypt
 from app.database import get_pool
 from app.models.bank_connection import BankConnectionCreate, BankConnectionResponse, BankConnectionUpdate
 from app.redis_client import get_redis
-from app.services.config_propagation import cache_bank_connections, cache_bank_connections_list, cache_tool_routing, publish_config_update
-from app.services.mcp_discovery import fetch_mcp_tools
+from app.services.config_propagation import cache_bank_connections, cache_bank_connections_list, cache_tool_routing, cache_prompt_routing, cache_resource_routing, publish_config_update
+from app.services.mcp_discovery import fetch_mcp_tools, fetch_mcp_resources, fetch_mcp_prompts
 from app.services.openapi_ingestion import parse_openapi_spec
 from app.slugify import slugify
 
@@ -19,15 +19,20 @@ router = APIRouter(prefix="/api/v1/connections", tags=["Bank Connections"])
 async def _probe_connection(source_type: str, mcp_url: str | None, openapi_spec: str | None, timeout: float = 1.5):
     """Network-only probe (no DB conn held, safe to run concurrently).
 
-    Returns (fresh_status, discovered_tools, with_ops). Tools is None when the
-    probe failed, so callers don't wipe previously-discovered tools."""
+    Returns (fresh_status, discovered_tools, with_ops, resources, prompts).
+    Tools is None when the probe failed, so callers don't wipe previously-discovered
+    tools. Resources/prompts are only populated for native MCP connections."""
     if source_type == "native_mcp" and mcp_url:
         mcp_tools = await fetch_mcp_tools(mcp_url, timeout=timeout)
-        return ("connected" if mcp_tools is not None else "error"), mcp_tools, False
+        if mcp_tools is None:
+            return "error", None, False, None, None
+        resources = await fetch_mcp_resources(mcp_url, timeout=timeout)
+        prompts = await fetch_mcp_prompts(mcp_url, timeout=timeout)
+        return "connected", mcp_tools, False, (resources or []), (prompts or [])
     if source_type == "openapi" and openapi_spec:
         _, openapi_tools = parse_openapi_spec(openapi_spec)
-        return ("connected" if openapi_tools else "error"), (openapi_tools or None), True
-    return None, None, False  # manual / un-probeable
+        return ("connected" if openapi_tools else "error"), (openapi_tools or None), True, [], []
+    return None, None, False, [], []  # manual / un-probeable
 
 
 @router.get("", response_model=list[BankConnectionResponse])
@@ -53,6 +58,12 @@ async def list_bank_connections(current_user: dict = Depends(get_current_user)):
         tools_rows = await conn.fetch(
             "SELECT id, bank_connection_id, name, description, input_schema, exposed FROM tools"
         )
+        resources_rows = await conn.fetch(
+            "SELECT id, bank_connection_id, uri, name, description, mime_type, exposed FROM resources"
+        )
+        prompts_rows = await conn.fetch(
+            "SELECT id, bank_connection_id, name, description, arguments, exposed FROM prompts"
+        )
 
         tools_by_conn = defaultdict(list)
         for t in tools_rows:
@@ -64,16 +75,40 @@ async def list_bank_connections(current_user: dict = Depends(get_current_user)):
                 "exposed": t["exposed"],
             })
 
+        resources_by_conn = defaultdict(list)
+        for r in resources_rows:
+            resources_by_conn[r["bank_connection_id"]].append({
+                "id": str(r["id"]),
+                "uri": r["uri"],
+                "name": r["name"] or "",
+                "description": r["description"] or "",
+                "mime_type": r["mime_type"] or "",
+                "exposed": r["exposed"],
+            })
+
+        prompts_by_conn = defaultdict(list)
+        for p in prompts_rows:
+            prompts_by_conn[p["bank_connection_id"]].append({
+                "id": str(p["id"]),
+                "name": p["name"],
+                "description": p["description"] or "",
+                "arguments": json.loads(p["arguments"]) if isinstance(p["arguments"], str) else (p["arguments"] or []),
+                "exposed": p["exposed"],
+            })
+
         res = []
         for r in rows:
             conn_tools = tools_by_conn[r["id"]]
+            conn_resources = resources_by_conn[r["id"]]
+            conn_prompts = prompts_by_conn[r["id"]]
             res.append(
                 BankConnectionResponse(
                     id=r["id"], name=r["name"], source_type=r["source_type"],
                     mcp_url=r["mcp_url"], base_url=r["base_url"], openapi_spec=r["openapi_spec"],
                     credential_type=r["credential_type"], status=r["status"] or "pending",
                     created_at=r["created_at"], updated_at=r["updated_at"], tool_count=len(conn_tools),
-                    tools=conn_tools,
+                    tools=conn_tools, resource_count=len(conn_resources), resources=conn_resources,
+                    prompt_count=len(conn_prompts), prompts=conn_prompts,
                 )
             )
     return res
@@ -121,6 +156,69 @@ async def _replace_tools(conn, connection_id: str, tools: list[dict], with_ops: 
     return inserted
 
 
+async def _replace_resources(conn, connection_id: str, resources: list[dict]) -> list[dict]:
+    """Replace a connection's MCP resources with a freshly discovered set.
+
+    Only wipes existing resources when the replacement set is non-empty, so a
+    failed discovery doesn't silently delete previously-discovered resources (G16)."""
+    inserted = []
+    if not resources:
+        return inserted
+    await conn.execute("DELETE FROM resources WHERE bank_connection_id = $1", connection_id)
+    for r in resources:
+        r_row = await conn.fetchrow(
+            """
+            INSERT INTO resources (bank_connection_id, uri, name, description, mime_type, exposed)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT DO NOTHING
+            RETURNING id, uri, name, description, mime_type, exposed
+            """,
+            connection_id, r["uri"], r.get("name", ""), r.get("description", ""),
+            r.get("mime_type", ""), r.get("exposed", True),
+        )
+        if r_row:
+            inserted.append({
+                "id": str(r_row["id"]),
+                "uri": r_row["uri"],
+                "name": r_row["name"] or "",
+                "description": r_row["description"] or "",
+                "mime_type": r_row["mime_type"] or "",
+                "exposed": r_row["exposed"],
+            })
+    return inserted
+
+
+async def _replace_prompts(conn, connection_id: str, prompts: list[dict]) -> list[dict]:
+    """Replace a connection's MCP prompts with a freshly discovered set.
+
+    Only wipes existing prompts when the replacement set is non-empty, so a
+    failed discovery doesn't silently delete previously-discovered prompts (G16)."""
+    inserted = []
+    if not prompts:
+        return inserted
+    await conn.execute("DELETE FROM prompts WHERE bank_connection_id = $1", connection_id)
+    for p in prompts:
+        p_row = await conn.fetchrow(
+            """
+            INSERT INTO prompts (bank_connection_id, name, description, arguments, exposed)
+            VALUES ($1, $2, $3, $4::jsonb, $5)
+            ON CONFLICT DO NOTHING
+            RETURNING id, name, description, arguments, exposed
+            """,
+            connection_id, p["name"], p.get("description", ""),
+            json.dumps(p.get("arguments", [])), p.get("exposed", True),
+        )
+        if p_row:
+            inserted.append({
+                "id": str(p_row["id"]),
+                "name": p_row["name"],
+                "description": p_row["description"] or "",
+                "arguments": json.loads(p_row["arguments"]) if isinstance(p_row["arguments"], str) else (p_row["arguments"] or []),
+                "exposed": p_row["exposed"],
+            })
+    return inserted
+
+
 @router.post("", response_model=BankConnectionResponse, status_code=status.HTTP_201_CREATED)
 async def create_bank_connection(b: BankConnectionCreate, current_user: dict = Depends(require_permission("bank:create"))):
     # Derive a stable, URL-safe id from the display name when the client didn't
@@ -133,9 +231,14 @@ async def create_bank_connection(b: BankConnectionCreate, current_user: dict = D
     # 'connected' only when the upstream actually answered / the spec parsed.
     mcp_tools: list[dict] | None = None
     openapi_tools: list[dict] = []
+    mcp_resources: list[dict] = []
+    mcp_prompts: list[dict] = []
     if b.source_type == "native_mcp" and b.mcp_url:
         mcp_tools = await fetch_mcp_tools(b.mcp_url)
         status_val = "connected" if mcp_tools is not None else "error"
+        if mcp_tools is not None:
+            mcp_resources = (await fetch_mcp_resources(b.mcp_url)) or []
+            mcp_prompts = (await fetch_mcp_prompts(b.mcp_url)) or []
     elif b.source_type == "openapi" and b.openapi_spec:
         _, openapi_tools = parse_openapi_spec(b.openapi_spec)
         status_val = "connected" if openapi_tools else "error"
@@ -164,14 +267,22 @@ async def create_bank_connection(b: BankConnectionCreate, current_user: dict = D
 
         if mcp_tools:
             discovered_tools = await _replace_tools(conn, conn_id, mcp_tools)
+            discovered_resources = await _replace_resources(conn, conn_id, mcp_resources)
+            discovered_prompts = await _replace_prompts(conn, conn_id, mcp_prompts)
         elif openapi_tools:
             discovered_tools = await _replace_tools(conn, conn_id, openapi_tools, with_ops=True)
+            discovered_resources = []
+            discovered_prompts = []
         else:
             discovered_tools = []
+            discovered_resources = []
+            discovered_prompts = []
 
     await cache_bank_connections()
     await cache_bank_connections_list()
     await cache_tool_routing()
+    await cache_prompt_routing()
+    await cache_resource_routing()
     await publish_config_update("connection", conn_id)
     await log_system_action(current_user, "connection_created", conn_id, b.name, {"source_type": b.source_type})
 
@@ -181,6 +292,8 @@ async def create_bank_connection(b: BankConnectionCreate, current_user: dict = D
         credential_type=row["credential_type"], status=row["status"],
         created_at=row["created_at"], updated_at=row["updated_at"],
         tool_count=len(discovered_tools), tools=discovered_tools,
+        resource_count=len(discovered_resources), resources=discovered_resources,
+        prompt_count=len(discovered_prompts), prompts=discovered_prompts,
     )
 
 
@@ -200,11 +313,17 @@ async def sync_bank_connection(connection_id: str, current_user: dict = Depends(
             raise HTTPException(status_code=404, detail=f"Bank connection '{connection_id}' not found")
 
         discovered_tools = []
+        discovered_resources = []
+        discovered_prompts = []
         if row["source_type"] == "native_mcp" and row["mcp_url"]:
             mcp_tools = await fetch_mcp_tools(row["mcp_url"])
             status_val = "connected" if mcp_tools is not None else "error"
             if mcp_tools:
                 discovered_tools = await _replace_tools(conn, connection_id, mcp_tools)
+                mcp_resources = (await fetch_mcp_resources(row["mcp_url"])) or []
+                mcp_prompts = (await fetch_mcp_prompts(row["mcp_url"])) or []
+                discovered_resources = await _replace_resources(conn, connection_id, mcp_resources)
+                discovered_prompts = await _replace_prompts(conn, connection_id, mcp_prompts)
         elif row["source_type"] == "openapi" and row["openapi_spec"]:
             _, openapi_tools = parse_openapi_spec(row["openapi_spec"])
             status_val = "connected" if openapi_tools else "error"
@@ -236,6 +355,41 @@ async def sync_bank_connection(connection_id: str, current_user: dict = Depends(
             if existing_tools:
                 status_val = "connected"
 
+        if not discovered_resources:
+            # Preserve previously-discovered resources when the latest probe failed.
+            res_rows = await conn.fetch(
+                "SELECT id, uri, name, description, mime_type, exposed FROM resources WHERE bank_connection_id = $1",
+                connection_id,
+            )
+            discovered_resources = [
+                {
+                    "id": str(r["id"]),
+                    "uri": r["uri"],
+                    "name": r["name"] or "",
+                    "description": r["description"] or "",
+                    "mime_type": r["mime_type"] or "",
+                    "exposed": r["exposed"],
+                }
+                for r in res_rows
+            ]
+
+        if not discovered_prompts:
+            # Preserve previously-discovered prompts when the latest probe failed.
+            p_rows = await conn.fetch(
+                "SELECT id, name, description, arguments, exposed FROM prompts WHERE bank_connection_id = $1",
+                connection_id,
+            )
+            discovered_prompts = [
+                {
+                    "id": str(p["id"]),
+                    "name": p["name"],
+                    "description": p["description"] or "",
+                    "arguments": json.loads(p["arguments"]) if isinstance(p["arguments"], str) else (p["arguments"] or []),
+                    "exposed": p["exposed"],
+                }
+                for p in p_rows
+            ]
+
         updated = await conn.fetchrow(
             "UPDATE bank_connections SET status = $2, updated_at = NOW() WHERE id = $1 RETURNING created_at, updated_at",
             connection_id, status_val,
@@ -244,6 +398,8 @@ async def sync_bank_connection(connection_id: str, current_user: dict = Depends(
     await cache_bank_connections()
     await cache_bank_connections_list()
     await cache_tool_routing()
+    await cache_prompt_routing()
+    await cache_resource_routing()
     await publish_config_update("connection", connection_id)
     await log_system_action(current_user, "connection_synced", connection_id, "", {"status": status_val})
 
@@ -253,6 +409,8 @@ async def sync_bank_connection(connection_id: str, current_user: dict = Depends(
         credential_type=row["credential_type"], status=status_val,
         created_at=updated["created_at"], updated_at=updated["updated_at"],
         tool_count=len(discovered_tools), tools=discovered_tools,
+        resource_count=len(discovered_resources), resources=discovered_resources,
+        prompt_count=len(discovered_prompts), prompts=discovered_prompts,
     )
 
 
@@ -301,9 +459,42 @@ async def update_bank_connection(connection_id: str, b: BankConnectionUpdate, cu
             for t in tools_rows
         ]
 
+        resources_rows = await conn.fetch(
+            "SELECT id, uri, name, description, mime_type, exposed FROM resources WHERE bank_connection_id = $1",
+            connection_id,
+        )
+        resources_list = [
+            {
+                "id": str(r["id"]),
+                "uri": r["uri"],
+                "name": r["name"] or "",
+                "description": r["description"] or "",
+                "mime_type": r["mime_type"] or "",
+                "exposed": r["exposed"],
+            }
+            for r in resources_rows
+        ]
+
+        prompts_rows = await conn.fetch(
+            "SELECT id, name, description, arguments, exposed FROM prompts WHERE bank_connection_id = $1",
+            connection_id,
+        )
+        prompts_list = [
+            {
+                "id": str(p["id"]),
+                "name": p["name"],
+                "description": p["description"] or "",
+                "arguments": json.loads(p["arguments"]) if isinstance(p["arguments"], str) else (p["arguments"] or []),
+                "exposed": p["exposed"],
+            }
+            for p in prompts_rows
+        ]
+
     await cache_bank_connections()
     await cache_bank_connections_list()
     await cache_tool_routing()
+    await cache_prompt_routing()
+    await cache_resource_routing()
     await publish_config_update("connection", connection_id)
     await log_system_action(current_user, "connection_updated", connection_id, name)
 
@@ -313,6 +504,8 @@ async def update_bank_connection(connection_id: str, b: BankConnectionUpdate, cu
         credential_type=updated["credential_type"], status=updated["status"],
         created_at=updated["created_at"], updated_at=updated["updated_at"],
         tool_count=len(tools_list), tools=tools_list,
+        resource_count=len(resources_list), resources=resources_list,
+        prompt_count=len(prompts_list), prompts=prompts_list,
     )
 
 
@@ -325,6 +518,8 @@ async def delete_all_connections(current_user: dict = Depends(require_permission
     await cache_bank_connections()
     await cache_bank_connections_list()
     await cache_tool_routing()
+    await cache_prompt_routing()
+    await cache_resource_routing()
     await publish_config_update("connection", "all")
     return {"status": "cleared", "message": "All bank connections and tools deleted successfully"}
 
@@ -339,6 +534,8 @@ async def delete_bank_connection(connection_id: str, current_user: dict = Depend
     await cache_bank_connections()
     await cache_bank_connections_list()
     await cache_tool_routing()
+    await cache_prompt_routing()
+    await cache_resource_routing()
     await publish_config_update("connection", connection_id)
     await log_system_action(current_user, "connection_deleted", connection_id)
     return None
@@ -399,6 +596,8 @@ async def register_openapi_spec(connection_id: str, payload: dict, current_user:
     await cache_bank_connections()
     await cache_bank_connections_list()
     await cache_tool_routing()
+    await cache_prompt_routing()
+    await cache_resource_routing()
     await publish_config_update("openapi", connection_id)
     await log_system_action(current_user, "openapi_imported", connection_id, name, {"tools_imported": len(inserted_tools)})
 

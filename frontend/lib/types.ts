@@ -54,6 +54,12 @@ export type BankConnection = {
   tool_count?: number;
   status: "connected" | "error" | "pending";
   tools?: BankTool[];
+  resourceCount?: number;
+  resource_count?: number;
+  resources?: BankResource[];
+  promptCount?: number;
+  prompt_count?: number;
+  prompts?: BankPrompt[];
   authType?: string;
   credential_type?: string;
   lastSync?: string;
@@ -69,6 +75,23 @@ export type BankTool = {
   convertible?: boolean;
   input_schema?: Record<string, unknown>;
   underlying_ops?: Record<string, unknown>[];
+};
+
+export type BankResource = {
+  id: string | number;
+  uri: string;
+  name: string;
+  description: string;
+  mime_type?: string;
+  exposed: boolean;
+};
+
+export type BankPrompt = {
+  id: string | number;
+  name: string;
+  description: string;
+  arguments?: Record<string, unknown>[];
+  exposed: boolean;
 };
 
 // A single fleet-scoped spend cap. Fleet caps are a global governance setting

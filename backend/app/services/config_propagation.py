@@ -339,6 +339,12 @@ async def cache_bank_connections_list():
         tools_rows = await conn.fetch(
             "SELECT id, bank_connection_id, name, description, input_schema, exposed FROM tools"
         )
+        resources_rows = await conn.fetch(
+            "SELECT id, bank_connection_id, uri, name, description, mime_type, exposed FROM resources"
+        )
+        prompts_rows = await conn.fetch(
+            "SELECT id, bank_connection_id, name, description, arguments, exposed FROM prompts"
+        )
 
     tools_by_conn: dict[str, list[dict[str, Any]]] = {}
     for t in tools_rows:
@@ -350,9 +356,32 @@ async def cache_bank_connections_list():
             "exposed": t["exposed"],
         })
 
+    resources_by_conn: dict[str, list[dict[str, Any]]] = {}
+    for r in resources_rows:
+        resources_by_conn.setdefault(r["bank_connection_id"], []).append({
+            "id": str(r["id"]),
+            "uri": r["uri"],
+            "name": r["name"] or "",
+            "description": r["description"] or "",
+            "mime_type": r["mime_type"] or "",
+            "exposed": r["exposed"],
+        })
+
+    prompts_by_conn: dict[str, list[dict[str, Any]]] = {}
+    for p in prompts_rows:
+        prompts_by_conn.setdefault(p["bank_connection_id"], []).append({
+            "id": str(p["id"]),
+            "name": p["name"],
+            "description": p["description"] or "",
+            "arguments": json.loads(p["arguments"]) if isinstance(p["arguments"], str) else (p["arguments"] or []),
+            "exposed": p["exposed"],
+        })
+
     payload = []
     for r in rows:
         conn_tools = tools_by_conn.get(r["id"], [])
+        conn_resources = resources_by_conn.get(r["id"], [])
+        conn_prompts = prompts_by_conn.get(r["id"], [])
         payload.append({
             "id": r["id"],
             "name": r["name"],
@@ -366,6 +395,10 @@ async def cache_bank_connections_list():
             "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
             "tool_count": len(conn_tools),
             "tools": conn_tools,
+            "resource_count": len(conn_resources),
+            "resources": conn_resources,
+            "prompt_count": len(conn_prompts),
+            "prompts": conn_prompts,
         })
 
     await redis.set("agp:bank_connections:list", json.dumps(payload))
@@ -382,3 +415,37 @@ async def cache_tool_routing():
         )
         mapping = {r["name"]: r["bank_connection_id"] for r in rows}
         await redis.set("agp:tool_routing", json.dumps(mapping))
+
+
+@_non_fatal_cache
+async def cache_prompt_routing():
+    """Cache prompt_name → bank_connection_id mapping in Redis for gateway routing.
+
+    prompts/get needs to resolve which downstream owns a prompt, just like
+    tools/call resolves tools via agp:tool_routing. Without this the gateway
+    cannot route a prompts/get to the correct native MCP target."""
+    pool = get_pool()
+    redis = get_redis()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT name, bank_connection_id FROM prompts WHERE exposed = true"
+        )
+        mapping = {r["name"]: r["bank_connection_id"] for r in rows}
+        await redis.set("agp:prompt_routing", json.dumps(mapping))
+
+
+@_non_fatal_cache
+async def cache_resource_routing():
+    """Cache resource_uri → bank_connection_id mapping in Redis for gateway routing.
+
+    resources/read needs to resolve which downstream owns a resource, just like
+    tools/call resolves tools via agp:tool_routing. Without this the gateway
+    cannot route a resources/read to the correct native MCP target."""
+    pool = get_pool()
+    redis = get_redis()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT uri, bank_connection_id FROM resources WHERE exposed = true"
+        )
+        mapping = {r["uri"]: r["bank_connection_id"] for r in rows}
+        await redis.set("agp:resource_routing", json.dumps(mapping))
