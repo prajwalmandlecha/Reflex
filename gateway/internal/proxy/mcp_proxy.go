@@ -61,6 +61,7 @@ type GovernanceEvent struct {
 	DenyStage       string             `json:"deny_stage"`
 	Reason          string             `json:"reason"`
 	SpendDeltaCents int64              `json:"spend_delta_cents"`
+	ResponseData    any                `json:"response_data,omitempty"`
 	Latency         map[string]float64 `json:"latency"`
 	Timestamp       string             `json:"timestamp"`
 }
@@ -599,14 +600,18 @@ func (p *MCPProxy) handleToolsCall(
 	allowed, denyStage, reason, timings, committedEntries := p.governCall(r.Context(), callKindTool, agentID, classID, agentKind, toolName, amount, amountFound, allowedTools, agentCfg, args)
 
 	downstreamStart := time.Now()
+	var responseData any
 	if allowed {
-		if !p.proxyToTarget(w, r, targetURL, bodyBytes, serviceName) {
+		ok, respBytes := p.proxyToTarget(w, r, targetURL, bodyBytes, serviceName)
+		if !ok {
 			// Downstream unreachable/5xx AFTER governance committed counters:
 			// refund the budget and record a downstream-stage failure.
 			p.rollbackCommittedEntries(committedEntries, agentID, toolName)
 			allowed = false
 			denyStage = "downstream"
 			reason = fmt.Sprintf("downstream MCP server (%s) failed", targetURL)
+		} else {
+			responseData = p.parseResponseData(respBytes)
 		}
 	} else {
 		p.logger.Warn("mcp tool execution DENIED", "agent_id", agentID, "tool", toolName, "stage", denyStage, "reason", reason)
@@ -638,6 +643,7 @@ func (p *MCPProxy) handleToolsCall(
 		downstreamMs: downstreamMs,
 		totalMs:      totalMs,
 		params:       args,
+		responseData: responseData,
 	})
 }
 
@@ -667,12 +673,16 @@ func (p *MCPProxy) handleGovernedRead(
 	allowed, denyStage, reason, timings, committedEntries := p.governCall(r.Context(), kind, agentID, classID, agentKind, actionName, 0, false, allowedTools, agentCfg, params)
 
 	downstreamStart := time.Now()
+	var responseData any
 	if allowed {
-		if !p.proxyToTarget(w, r, targetURL, bodyBytes, serviceName) {
+		ok, respBytes := p.proxyToTarget(w, r, targetURL, bodyBytes, serviceName)
+		if !ok {
 			p.rollbackCommittedEntries(committedEntries, agentID, actionName)
 			allowed = false
 			denyStage = "downstream"
 			reason = fmt.Sprintf("downstream MCP server (%s) failed", targetURL)
+		} else {
+			responseData = p.parseResponseData(respBytes)
 		}
 	} else {
 		p.logger.Warn("mcp resource/prompt access DENIED", "agent_id", agentID, "kind", string(kind), "action", actionName, "stage", denyStage, "reason", reason)
@@ -697,6 +707,7 @@ func (p *MCPProxy) handleGovernedRead(
 		timings:      timings,
 		downstreamMs: downstreamMs,
 		totalMs:      totalMs,
+		responseData: responseData,
 		params:       params,
 	})
 }

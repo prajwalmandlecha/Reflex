@@ -180,6 +180,7 @@ func (p *MCPProxy) handleOpenAPIRequest(
 			downstreamMs: downstreamMs,
 			totalMs:      totalMs,
 			params:       args,
+			responseData: mcpResult,
 		})
 
 	default:

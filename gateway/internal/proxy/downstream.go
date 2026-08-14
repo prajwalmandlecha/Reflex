@@ -12,10 +12,12 @@ import (
 )
 
 // proxyToTarget forwards the request downstream and writes the response.
-// Returns false when the downstream exchange failed (unreachable, read error,
-// or 5xx) so callers can roll back any governance counters committed in
-// governCall — a failed downstream call must not consume budget.
-func (p *MCPProxy) proxyToTarget(w http.ResponseWriter, r *http.Request, targetBaseURL string, bodyBytes []byte, serviceName ...string) bool {
+// Returns (false, nil) when the downstream exchange failed (unreachable, read
+// error, or 5xx) so callers can roll back any governance counters committed in
+// governCall — a failed downstream call must not consume budget. On success it
+// returns (true, respBytes) so callers can surface the real downstream response
+// in the live governance event stream.
+func (p *MCPProxy) proxyToTarget(w http.ResponseWriter, r *http.Request, targetBaseURL string, bodyBytes []byte, serviceName ...string) (bool, []byte) {
 	// mcp_url is stored as the complete MCP endpoint (e.g. https://mcp.exa.ai/mcp
 	// or https://mockhero.dev/mcp/agent). Use it verbatim — do NOT append /mcp,
 	// which corrupts endpoints that already include a path segment.
@@ -33,7 +35,7 @@ func (p *MCPProxy) proxyToTarget(w http.ResponseWriter, r *http.Request, targetB
 	if resp == nil {
 		p.logger.Error("failed to reach target MCP Server", "target", targetBaseURL)
 		p.sendErrorResponse(w, r, nil, fmt.Sprintf("downstream MCP Server (%s) unreachable", targetBaseURL))
-		return false
+		return false, nil
 	}
 	defer resp.Body.Close()
 
@@ -41,7 +43,7 @@ func (p *MCPProxy) proxyToTarget(w http.ResponseWriter, r *http.Request, targetB
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		p.sendErrorResponse(w, r, nil, "error reading downstream response")
-		return false
+		return false, nil
 	}
 
 	// Detect "Session has been terminated" and retry with a fresh session
@@ -53,13 +55,13 @@ func (p *MCPProxy) proxyToTarget(w http.ResponseWriter, r *http.Request, targetB
 		resp2 := p.doProxyRequest(r, targetURL, bodyBytes, true, connID)
 		if resp2 == nil {
 			p.sendErrorResponse(w, r, nil, fmt.Sprintf("downstream MCP Server (%s) unreachable", targetBaseURL))
-			return false
+			return false, nil
 		}
 		defer resp2.Body.Close()
 		respBytes, err = io.ReadAll(resp2.Body)
 		if err != nil {
 			p.sendErrorResponse(w, r, nil, "error reading downstream response")
-			return false
+			return false, nil
 		}
 		for k, vv := range resp2.Header {
 			for _, v := range vv {
@@ -68,7 +70,7 @@ func (p *MCPProxy) proxyToTarget(w http.ResponseWriter, r *http.Request, targetB
 		}
 		w.WriteHeader(resp2.StatusCode)
 		w.Write(respBytes)
-		return resp2.StatusCode < 500
+		return resp2.StatusCode < 500, respBytes
 	}
 
 	for k, vv := range resp.Header {
@@ -78,7 +80,42 @@ func (p *MCPProxy) proxyToTarget(w http.ResponseWriter, r *http.Request, targetB
 	}
 	w.WriteHeader(resp.StatusCode)
 	w.Write(respBytes)
-	return resp.StatusCode < 500
+	return resp.StatusCode < 500, respBytes
+}
+
+// parseResponseData converts a raw downstream response body into a structured
+// value for the live governance event stream. It prefers the MCP result payload
+// (result.content[].text) so the Control Center shows the real tool output, and
+// falls back to the raw body when it isn't valid JSON.
+func (p *MCPProxy) parseResponseData(respBytes []byte) any {
+	if len(respBytes) == 0 {
+		return nil
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal(respBytes, &envelope); err != nil {
+		return string(respBytes)
+	}
+	// MCP JSON-RPC response: prefer the result payload.
+	if result, ok := envelope["result"].(map[string]any); ok {
+		if content, ok := result["content"].([]any); ok && len(content) > 0 {
+			if first, ok := content[0].(map[string]any); ok {
+				if text, ok := first["text"].(string); ok && text != "" {
+					// The text is often itself a JSON string — try to parse it.
+					var inner any
+					if err := json.Unmarshal([]byte(text), &inner); err == nil {
+						return inner
+					}
+					return text
+				}
+			}
+		}
+		return result
+	}
+	// JSON-RPC error envelope.
+	if errObj, ok := envelope["error"].(map[string]any); ok {
+		return errObj
+	}
+	return envelope
 }
 
 // doProxyRequest forwards the request to the downstream target, managing the

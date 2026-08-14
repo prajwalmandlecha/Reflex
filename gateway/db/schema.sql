@@ -177,6 +177,7 @@ CREATE TABLE IF NOT EXISTS
         action VARCHAR(128) NOT NULL,
         bank_connection_id VARCHAR(64) DEFAULT '',
         params JSONB DEFAULT '{}',
+        response_data JSONB DEFAULT NULL,
         decision VARCHAR(16) NOT NULL, -- allow / deny
         deny_stage VARCHAR(32) DEFAULT '', -- killswitch / constraint / policy / spend
         reason TEXT DEFAULT '',

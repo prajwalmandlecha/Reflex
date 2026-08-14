@@ -52,7 +52,7 @@ async def get_recent_activity(limit: int = 50):
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id, ts, agent_id, agent_class_id, action, params, decision, deny_stage, reason,
+            SELECT id, ts, agent_id, agent_class_id, action, params, response_data, decision, deny_stage, reason,
                    spend_delta, total_latency_ms, governance_overhead_ms, bank_connection_id
             FROM audit_log
             ORDER BY id DESC
@@ -64,6 +64,12 @@ async def get_recent_activity(limit: int = 50):
     res = []
     for r in rows:
         p = json.loads(r["params"]) if isinstance(r["params"], str) else (r["params"] or {})
+        rd = r["response_data"]
+        if isinstance(rd, str):
+            try:
+                rd = json.loads(rd)
+            except (json.JSONDecodeError, TypeError):
+                pass
         res.append({
             "id": str(r["id"]),
             "timestamp": r["ts"].isoformat(),
@@ -76,6 +82,8 @@ async def get_recent_activity(limit: int = 50):
             "bank_connection_id": r["bank_connection_id"] or "",
             "bankConnectionId": r["bank_connection_id"] or "",
             "params": p,
+            "response_data": rd,
+            "responseData": rd,
             "decision": r["decision"],
             "deny_stage": r["deny_stage"] or "",
             "reason": r["reason"] or "",

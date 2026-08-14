@@ -184,6 +184,7 @@ type outcomeParams struct {
 	downstreamMs float64
 	totalMs      float64
 	params       map[string]any // will be redacted before audit
+	responseData any            // downstream response payload for the live event stream
 }
 
 // recordOutcome records Prometheus metrics, publishes a governance event to
@@ -218,6 +219,7 @@ func (p *MCPProxy) recordOutcome(ctx context.Context, o *outcomeParams) {
 		DenyStage:       o.denyStage,
 		Reason:          o.reason,
 		SpendDeltaCents: o.spendDelta,
+		ResponseData:    o.responseData,
 		Latency: map[string]float64{
 			"total_ms":               o.totalMs,
 			"killswitch_ms":          o.timings.KillswitchMs,
@@ -237,6 +239,7 @@ func (p *MCPProxy) recordOutcome(ctx context.Context, o *outcomeParams) {
 		Action:               o.actionName,
 		BankConnectionID:     o.serviceName,
 		Params:               redactParams(o.params),
+		ResponseData:         o.responseData,
 		Decision:             decisionStr,
 		DenyStage:            o.denyStage,
 		Reason:               o.reason,

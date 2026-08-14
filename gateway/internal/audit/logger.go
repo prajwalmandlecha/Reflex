@@ -25,6 +25,7 @@ type Entry struct {
 	Action               string         `json:"action"`
 	BankConnectionID     string         `json:"bank_connection_id"`
 	Params               map[string]any `json:"params"`
+	ResponseData         any            `json:"response_data,omitempty"`
 	Decision             string         `json:"decision"`   // "allow" or "deny"
 	DenyStage            string         `json:"deny_stage"` // "killswitch", "constraint", "policy", "spend"
 	SpendDelta           int64          `json:"spend_delta"`
@@ -212,6 +213,10 @@ func (l *Logger) writeBatch(ctx context.Context, entries []*Entry) error {
 	q := db.New(tx)
 	for i, e := range entries {
 		paramsJSON, _ := json.Marshal(e.Params)
+		var responseJSON json.RawMessage
+		if e.ResponseData != nil {
+			responseJSON, _ = json.Marshal(e.ResponseData)
+		}
 		err := q.InsertAuditEntry(ctx, db.InsertAuditEntryParams{
 			Ts:                   e.Timestamp,
 			AgentID:              e.AgentID,
@@ -219,6 +224,7 @@ func (l *Logger) writeBatch(ctx context.Context, entries []*Entry) error {
 			Action:               e.Action,
 			BankConnectionID:     pgtype.Text{String: e.BankConnectionID, Valid: e.BankConnectionID != ""},
 			Params:               paramsJSON,
+			ResponseData:         responseJSON,
 			Decision:             e.Decision,
 			DenyStage:            pgtype.Text{String: e.DenyStage, Valid: e.DenyStage != ""},
 			Reason:               pgtype.Text{String: e.Reason, Valid: e.Reason != ""},

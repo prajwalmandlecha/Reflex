@@ -168,6 +168,7 @@ async def init_db_schema():
         action                  VARCHAR(128) NOT NULL,
         bank_connection_id      VARCHAR(64) DEFAULT '',
         params                  JSONB DEFAULT '{}',
+        response_data           JSONB DEFAULT NULL,
         decision                VARCHAR(16) NOT NULL,
         deny_stage              VARCHAR(32) DEFAULT '',
         reason                  TEXT DEFAULT '',
@@ -182,6 +183,9 @@ async def init_db_schema():
         prev_hash               VARCHAR(64) DEFAULT '',
         entry_hash              VARCHAR(64) NOT NULL
     );
+    -- Self-healing: add the response_data column to existing audit_log tables
+    -- created before this column existed (idempotent, no-op if already present).
+    ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS response_data JSONB DEFAULT NULL;
 
     CREATE TABLE IF NOT EXISTS stop_events (
         id                      SERIAL PRIMARY KEY,
