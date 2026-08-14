@@ -925,9 +925,14 @@ function AgentConnectionSnippet({ agent, cls, token }: { agent: AgentInstance; c
 
   // Gateway serves /mcp directly on its own port (no reverse proxy in front).
   // Override with NEXT_PUBLIC_GATEWAY_URL if the gateway is on a different host.
-  const gatewayUrl = typeof window !== 'undefined'
-    ? (process.env.NEXT_PUBLIC_GATEWAY_URL || `${window.location.protocol}//${window.location.hostname}:8080/mcp`)
-    : 'http://localhost:8080/mcp';
+  // The gateway's MCP endpoint is always at /mcp — append it if the configured
+  // base URL doesn't already include it (the fallback below already has it).
+  const gatewayBase = typeof window !== 'undefined'
+    ? (process.env.NEXT_PUBLIC_GATEWAY_URL || `${window.location.protocol}//${window.location.hostname}:8080`)
+    : 'http://localhost:8080';
+  const gatewayUrl = gatewayBase.endsWith('/mcp')
+    ? gatewayBase
+    : `${gatewayBase.replace(/\/+$/, '')}/mcp`;
 
   // Pick a sample tool from the agent's allowed tools for the curl example.
   // Arguments are left empty — we don't fabricate fake account IDs / values.

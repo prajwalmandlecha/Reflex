@@ -533,6 +533,14 @@ async def register_openapi_spec(connection_id: str, payload: dict, current_user:
 
     spec_data, extracted_tools = parse_openapi_spec(spec_text)
 
+    # OpenAPI virtualized connections support the same downstream auth types as
+    # native MCP connections. The gateway injects these credentials at call time
+    # (bearer / basic / api_key / header) so the virtualized REST endpoints can
+    # authenticate to the real bank API. Credentials are encrypted before storage.
+    credential_type = payload.get("credential_type") or "none"
+    credentials = payload.get("credentials")
+    enc_creds = encrypt(credentials) if credentials else None
+
     pool = get_pool()
     async with pool.acquire() as conn:
         raw_title = spec_data.get("info", {}).get("title")
@@ -548,14 +556,16 @@ async def register_openapi_spec(connection_id: str, payload: dict, current_user:
         status_val = "connected" if extracted_tools else "error"
         await conn.execute(
             """
-            INSERT INTO bank_connections (id, name, source_type, base_url, openapi_spec, status)
-            VALUES ($1, $2, 'openapi', $3, $4, $5)
+            INSERT INTO bank_connections (id, name, source_type, base_url, openapi_spec, credential_type, encrypted_creds, status)
+            VALUES ($1, $2, 'openapi', $3, $4, $5, $6, $7)
             ON CONFLICT (id) DO UPDATE SET
                 openapi_spec = EXCLUDED.openapi_spec,
+                credential_type = EXCLUDED.credential_type,
+                encrypted_creds = COALESCE(EXCLUDED.encrypted_creds, bank_connections.encrypted_creds),
                 status = EXCLUDED.status,
                 updated_at = NOW()
             """,
-            connection_id, name, base_url, spec_text, status_val,
+            connection_id, name, base_url, spec_text, credential_type, enc_creds, status_val,
         )
 
         # Replace, don't append: re-importing a spec must not duplicate tool

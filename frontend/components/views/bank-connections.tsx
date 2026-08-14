@@ -36,7 +36,7 @@ import type { BankConnection } from '@/lib/types';
 import { formatRelative } from '@/lib/format';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
-import { Plus, Check, RefreshCw, Server, AlertCircle, FileUp, Link2, Plug, Loader2, Trash2, Eye } from 'lucide-react';
+import { Plus, Check, RefreshCw, Server, AlertCircle, FileUp, Link2, Plug, Loader2, Trash2, Eye, Pencil } from 'lucide-react';
 
 const sourceTypeLabel: Record<string, string> = {
   native_mcp: 'Native MCP',
@@ -55,10 +55,12 @@ export function BankConnectionsView({
 }) {
   const { hasPermission } = useAuth();
   const canCreate = hasPermission('bank:create');
+  const canUpdate = hasPermission('bank:update');
   const canDelete = hasPermission('bank:delete');
   const canProbe = hasPermission('bank:probe');
 
   const [showWizard, setShowWizard] = useState(false);
+  const [editingConn, setEditingConn] = useState<BankConnection | null>(null);
   const [syncingId, setSyncingId] = useState<string | null>(null);
 
   const handleSync = async (id: string) => {
@@ -140,6 +142,15 @@ export function BankConnectionsView({
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
+                  {canUpdate && (
+                    <button
+                      onClick={() => setEditingConn(conn)}
+                      className="flex h-7 w-7 items-center justify-center rounded border border-white/10 bg-white/5 text-ink-secondary transition-colors hover:border-accent/30 hover:bg-accent/10 hover:text-accent cursor-pointer"
+                      title="Edit connection — update URL, credentials, or auth type"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                   {canProbe && (
                     <button
                       disabled={syncingId === conn.id}
@@ -326,7 +337,127 @@ export function BankConnectionsView({
           />
         </DialogContent>
       </Dialog>
+
+      <Dialog open={!!editingConn} onOpenChange={(open) => !open && setEditingConn(null)}>
+        <DialogContent className="max-w-2xl border-white/10 bg-slate-950 text-white">
+          <DialogHeader>
+            <DialogTitle className="font-mono text-sm uppercase tracking-widest text-ink-primary">
+              Edit Connection — {editingConn?.name}
+            </DialogTitle>
+          </DialogHeader>
+          {editingConn && (
+            <EditConnectionForm
+              conn={editingConn}
+              onComplete={() => {
+                setEditingConn(null);
+                if (onRefresh) onRefresh();
+              }}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
+  );
+}
+
+function EditConnectionForm({
+  conn,
+  onComplete,
+}: {
+  conn: BankConnection;
+  onComplete: () => void;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [authType, setAuthType] = useState(conn.authType || 'none');
+  const [token, setToken] = useState('');
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    try {
+      await api.updateBankConnection(conn.id, {
+        credential_type: authType,
+        credentials: authType !== 'none' && token ? token : undefined,
+      });
+      onComplete();
+    } catch (err: any) {
+      setError(err.message || 'Failed to update connection');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-3 pt-2">
+      <div className="rounded border border-white/10 bg-white/[0.02] p-3 font-mono text-[11px] text-ink-secondary">
+        <div>Type: <span className="text-ink-primary">{conn.sourceType === 'native_mcp' ? 'Native MCP' : 'OpenAPI Virtualized'}</span></div>
+        {conn.mcpUrl && <div>URL: <span className="text-ink-primary">{conn.mcpUrl}</span></div>}
+        {conn.baseUrl && !conn.mcpUrl && <div>Base URL: <span className="text-ink-primary">{conn.baseUrl}</span></div>}
+        <div className="mt-1 text-[10px] text-ink-secondary/70">
+          Credentials are encrypted at rest and injected by the gateway at call time — agents never see them.
+        </div>
+      </div>
+
+      {error && (
+        <div className="flex items-center gap-2 border border-rose-500/30 bg-rose-500/10 p-3 rounded text-xs font-mono text-rose-400">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Authentication</Label>
+          <Select value={authType} onValueChange={setAuthType}>
+            <SelectTrigger className="mt-1 border-white/10 bg-white/5 font-mono text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="border-white/10 bg-slate-900 text-white font-mono text-xs">
+              <SelectItem value="none">None / Public</SelectItem>
+              <SelectItem value="bearer">Bearer Token</SelectItem>
+              <SelectItem value="api_key">API Key Header</SelectItem>
+              <SelectItem value="basic">Basic Auth</SelectItem>
+              <SelectItem value="header">Custom Header</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        {authType !== 'none' && (
+          <div>
+            <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
+              {authType === 'header' ? 'Header (Name: value)' : 'Secret / Token'}
+            </Label>
+            <Input
+              type="password"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              placeholder={authType === 'header' ? 'X-Api-Key: secret' : '••••••••••••'}
+              className="mt-1 border-white/10 bg-white/5 font-mono text-xs"
+              required
+            />
+          </div>
+        )}
+      </div>
+
+      <div className="flex justify-end gap-2 pt-3">
+        <Button
+          type="button"
+          onClick={onComplete}
+          className="border border-white/10 bg-transparent text-ink-secondary hover:bg-white/5 font-mono text-xs"
+        >
+          Cancel
+        </Button>
+        <Button
+          type="submit"
+          disabled={loading}
+          className="bg-cyan-500 text-slate-950 hover:bg-cyan-400 font-mono text-xs font-semibold px-5 h-8"
+        >
+          {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Check className="h-4 w-4 mr-2" />}
+          Save Credentials
+        </Button>
+      </div>
+    </form>
   );
 }
 
@@ -354,6 +485,8 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
   // OpenAPI Form Fields
   const [apiName, setApiName] = useState('');
   const [apiBaseUrl, setApiBaseUrl] = useState('');
+  const [apiAuthType, setApiAuthType] = useState('none');
+  const [apiToken, setApiToken] = useState('');
   const [specInputMode, setSpecInputMode] = useState<'url' | 'raw'>('raw');
   const [specUrl, setSpecUrl] = useState('');
   const [specRaw, setSpecRaw] = useState('');
@@ -421,7 +554,14 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
 
     setLoading(true);
     try {
-      await api.registerOpenAPISpec(connId, specText, apiBaseUrl || undefined, apiName || undefined);
+      await api.registerOpenAPISpec(
+        connId,
+        specText,
+        apiBaseUrl || undefined,
+        apiName || undefined,
+        apiAuthType,
+        apiAuthType !== 'none' && apiToken ? apiToken : undefined,
+      );
       onComplete();
     } catch (err: any) {
       setError(err.message || 'Failed to register OpenAPI spec');
@@ -575,6 +715,38 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
               placeholder="https://your-api.example.com"
               className="mt-1 border-white/10 bg-white/5 font-mono text-xs"
             />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Authentication</Label>
+              <Select value={apiAuthType} onValueChange={setApiAuthType}>
+                <SelectTrigger className="mt-1 border-white/10 bg-white/5 font-mono text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="border-white/10 bg-slate-900 text-white font-mono text-xs">
+                  <SelectItem value="none">None / Public</SelectItem>
+                  <SelectItem value="bearer">Bearer Token</SelectItem>
+                  <SelectItem value="api_key">API Key Header</SelectItem>
+                  <SelectItem value="basic">Basic Auth</SelectItem>
+                  <SelectItem value="header">Custom Header</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {apiAuthType !== 'none' && (
+              <div>
+                <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
+                  {apiAuthType === 'header' ? 'Header (Name: value)' : 'Secret / Token'}
+                </Label>
+                <Input
+                  type="password"
+                  value={apiToken}
+                  onChange={(e) => setApiToken(e.target.value)}
+                  placeholder={apiAuthType === 'header' ? 'X-Api-Key: secret' : '••••••••••••'}
+                  className="mt-1 border-white/10 bg-white/5 font-mono text-xs"
+                />
+              </div>
+            )}
           </div>
 
           <div>

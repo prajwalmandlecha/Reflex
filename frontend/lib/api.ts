@@ -227,10 +227,14 @@ export const api = {
       // No silent "connected" fallback — status is derived server-side from a real probe.
       status: b.status || "pending",
       tools: b.tools || [],
-      resourceCount: b.resource_count ?? b.resourceCount ?? (b.resources ? b.resources.length : 0),
+      resourceCount:
+        b.resource_count ??
+        b.resourceCount ??
+        (b.resources ? b.resources.length : 0),
       resource_count: b.resource_count,
       resources: b.resources || [],
-      promptCount: b.prompt_count ?? b.promptCount ?? (b.prompts ? b.prompts.length : 0),
+      promptCount:
+        b.prompt_count ?? b.promptCount ?? (b.prompts ? b.prompts.length : 0),
       prompt_count: b.prompt_count,
       prompts: b.prompts || [],
       authType: b.credential_type || undefined,
@@ -263,6 +267,24 @@ export const api = {
     await request(`/api/v1/connections/${id}`, { method: "DELETE" });
   },
 
+  async updateBankConnection(
+    id: string,
+    updates: Partial<{
+      name: string;
+      mcp_url: string;
+      base_url: string;
+      openapi_spec: string;
+      credential_type: string;
+      credentials: string;
+      status: string;
+    }>,
+  ): Promise<BankConnection> {
+    return request<BankConnection>(`/api/v1/connections/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(updates),
+    });
+  },
+
   async syncBankConnection(id: string): Promise<BankConnection> {
     return request<BankConnection>(`/api/v1/connections/${id}/sync`, {
       method: "POST",
@@ -278,12 +300,20 @@ export const api = {
     spec: string,
     baseUrl?: string,
     name?: string,
+    credentialType?: string,
+    credentials?: string,
   ): Promise<{ tool_count: number }> {
     return request<{ tool_count: number }>(
       `/api/v1/connections/${connectionId}/openapi`,
       {
         method: "POST",
-        body: JSON.stringify({ spec, base_url: baseUrl, name }),
+        body: JSON.stringify({
+          spec,
+          base_url: baseUrl,
+          name,
+          credential_type: credentialType,
+          credentials,
+        }),
       },
     );
   },
