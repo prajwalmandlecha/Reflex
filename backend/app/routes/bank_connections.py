@@ -1,4 +1,3 @@
-import asyncio
 from collections import defaultdict
 import json
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -14,25 +13,6 @@ from app.services.openapi_ingestion import parse_openapi_spec
 from app.slugify import slugify
 
 router = APIRouter(prefix="/api/v1/connections", tags=["Bank Connections"])
-
-
-async def _probe_connection(source_type: str, mcp_url: str | None, openapi_spec: str | None, timeout: float = 1.5):
-    """Network-only probe (no DB conn held, safe to run concurrently).
-
-    Returns (fresh_status, discovered_tools, with_ops, resources, prompts).
-    Tools is None when the probe failed, so callers don't wipe previously-discovered
-    tools. Resources/prompts are only populated for native MCP connections."""
-    if source_type == "native_mcp" and mcp_url:
-        mcp_tools = await fetch_mcp_tools(mcp_url, timeout=timeout)
-        if mcp_tools is None:
-            return "error", None, False, None, None
-        resources = await fetch_mcp_resources(mcp_url, timeout=timeout)
-        prompts = await fetch_mcp_prompts(mcp_url, timeout=timeout)
-        return "connected", mcp_tools, False, (resources or []), (prompts or [])
-    if source_type == "openapi" and openapi_spec:
-        _, openapi_tools = parse_openapi_spec(openapi_spec)
-        return ("connected" if openapi_tools else "error"), (openapi_tools or None), True, [], []
-    return None, None, False, [], []  # manual / un-probeable
 
 
 @router.get("", response_model=list[BankConnectionResponse])
@@ -355,40 +335,44 @@ async def sync_bank_connection(connection_id: str, current_user: dict = Depends(
             if existing_tools:
                 status_val = "connected"
 
-        if not discovered_resources:
-            # Preserve previously-discovered resources when the latest probe failed.
-            res_rows = await conn.fetch(
-                "SELECT id, uri, name, description, mime_type, exposed FROM resources WHERE bank_connection_id = $1",
-                connection_id,
-            )
-            discovered_resources = [
-                {
-                    "id": str(r["id"]),
-                    "uri": r["uri"],
-                    "name": r["name"] or "",
-                    "description": r["description"] or "",
-                    "mime_type": r["mime_type"] or "",
-                    "exposed": r["exposed"],
-                }
-                for r in res_rows
-            ]
+        # Only native MCP connections can expose resources/prompts. Guard the
+        # preservation queries so openapi/manual connections (which never have
+        # them) don't hit the resources/prompts tables on every sync.
+        if row["source_type"] == "native_mcp":
+            if not discovered_resources:
+                # Preserve previously-discovered resources when the latest probe failed.
+                res_rows = await conn.fetch(
+                    "SELECT id, uri, name, description, mime_type, exposed FROM resources WHERE bank_connection_id = $1",
+                    connection_id,
+                )
+                discovered_resources = [
+                    {
+                        "id": str(r["id"]),
+                        "uri": r["uri"],
+                        "name": r["name"] or "",
+                        "description": r["description"] or "",
+                        "mime_type": r["mime_type"] or "",
+                        "exposed": r["exposed"],
+                    }
+                    for r in res_rows
+                ]
 
-        if not discovered_prompts:
-            # Preserve previously-discovered prompts when the latest probe failed.
-            p_rows = await conn.fetch(
-                "SELECT id, name, description, arguments, exposed FROM prompts WHERE bank_connection_id = $1",
-                connection_id,
-            )
-            discovered_prompts = [
-                {
-                    "id": str(p["id"]),
-                    "name": p["name"],
-                    "description": p["description"] or "",
-                    "arguments": json.loads(p["arguments"]) if isinstance(p["arguments"], str) else (p["arguments"] or []),
-                    "exposed": p["exposed"],
-                }
-                for p in p_rows
-            ]
+            if not discovered_prompts:
+                # Preserve previously-discovered prompts when the latest probe failed.
+                p_rows = await conn.fetch(
+                    "SELECT id, name, description, arguments, exposed FROM prompts WHERE bank_connection_id = $1",
+                    connection_id,
+                )
+                discovered_prompts = [
+                    {
+                        "id": str(p["id"]),
+                        "name": p["name"],
+                        "description": p["description"] or "",
+                        "arguments": json.loads(p["arguments"]) if isinstance(p["arguments"], str) else (p["arguments"] or []),
+                        "exposed": p["exposed"],
+                    }
+                    for p in p_rows
+                ]
 
         updated = await conn.fetchrow(
             "UPDATE bank_connections SET status = $2, updated_at = NOW() WHERE id = $1 RETURNING created_at, updated_at",

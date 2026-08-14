@@ -320,6 +320,11 @@ function AppShellContent() {
     api.getStopEvents().then((evs) => {
       if (Array.isArray(evs)) setStopEvents(evs);
     }).catch(noteApiError('Failed to load stop events'));
+    // Warm-up cascade: this single call makes the backend ping Redis + gateway
+    // + DB, waking every scale-to-zero service in one round-trip on first load.
+    api.getSystemHealth().catch(() => {
+      // Non-fatal — the Settings view re-probes on its own interval.
+    });
   }, [user, noteApiError]);
 
   useEffect(() => {
