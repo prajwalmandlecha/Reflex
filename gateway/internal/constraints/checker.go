@@ -1,9 +1,10 @@
 // Package constraints evaluates per-tool operational caps. Stateless rules
-// (time windows) are checked directly; stateful counters (rate limits,
-// per-parameter spend caps) are expressed as spend.Entry values and committed
-// atomically in a single Redis Lua script (see the spend package), so denied
-// calls never consume budget (G4) and there is no read-then-write race between
-// governance stages.
+// (time windows) are enforced by OPA Rego (the tool's constraints are passed
+// into the policy input); this package handles per-parameter ceilings and
+// expresses stateful counters (rate limits, per-parameter spend caps) as
+// spend.Entry values committed atomically in a single Redis Lua script (see
+// the spend package), so denied calls never consume budget (G4) and there is
+// no read-then-write race between governance stages.
 package constraints
 
 import (
@@ -21,51 +22,6 @@ type Checker struct{}
 // NewChecker creates a constraints Checker.
 func NewChecker() *Checker {
 	return &Checker{}
-}
-
-// CheckStatic evaluates the stateless constraints (execution time window) for
-// a given tool call. Static parameter schema rules (numeric bounds, enum
-// whitelists, regex patterns) are evaluated by OPA Rego.
-func (c *Checker) CheckStatic(cfg *configcache.AgentConfig, toolName string) (bool, string) {
-	toolConstraints := toolConstraintsFor(cfg, toolName)
-	if toolConstraints == nil {
-		return true, ""
-	}
-
-	// Execution Time Window Check (HH:MM UTC format)
-	if twVal, ok := toolConstraints["time_window"]; ok {
-		if twMap, ok := twVal.(map[string]any); ok {
-			startStr, _ := twMap["start"].(string)
-			endStr, _ := twMap["end"].(string)
-
-			if startStr != "" && endStr != "" {
-				now := time.Now().UTC()
-				currentMinutes := now.Hour()*60 + now.Minute()
-
-				startMin := parseMinutes(startStr)
-				endMin := parseMinutes(endStr)
-
-				if startMin >= 0 && endMin >= 0 {
-					if !withinWindow(currentMinutes, startMin, endMin) {
-						return false, fmt.Sprintf("action '%s' is restricted outside business hours (%s to %s UTC)", toolName, startStr, endStr)
-					}
-				}
-			}
-		}
-	}
-
-	return true, ""
-}
-
-// withinWindow reports whether currentMinutes falls inside the [startMin,
-// endMin] window. Handles overnight windows where start > end (e.g. 22:00–
-// 06:00): those wrap past midnight, so "inside" means >= start OR <= end.
-func withinWindow(current, startMin, endMin int) bool {
-	if startMin <= endMin {
-		return current >= startMin && current <= endMin
-	}
-	// Overnight window (e.g. 22:00–06:00)
-	return current >= startMin || current <= endMin
 }
 
 // RateLimit is a per-instance sliding-window rate limit for a tool. The Redis
@@ -202,6 +158,15 @@ func toolConstraintsFor(cfg *configcache.AgentConfig, toolName string) map[strin
 		return nil
 	}
 	return cfg.EffectiveConstraints[toolName]
+}
+
+// ToolConstraints returns the effective operational constraints declared for a
+// tool (rate_limit, time_window, params, shared caps). It is exposed so the
+// governance pipeline can pass the raw constraints into the OPA policy input,
+// letting Rego enforce stateless rules (e.g. time windows) that were
+// historically evaluated in Go.
+func (c *Checker) ToolConstraints(cfg *configcache.AgentConfig, toolName string) map[string]any {
+	return toolConstraintsFor(cfg, toolName)
 }
 
 // ParamRule is the per-parameter constraint block for a tool. Each declared
@@ -569,12 +534,4 @@ func (c *Checker) ExtractAmountCents(cfg *configcache.AgentConfig, toolName stri
 		}
 	}
 	return 0, false
-}
-
-func parseMinutes(hhmm string) int {
-	var h, m int
-	if _, err := fmt.Sscanf(hhmm, "%d:%d", &h, &m); err == nil {
-		return h*60 + m
-	}
-	return -1
 }

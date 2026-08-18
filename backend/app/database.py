@@ -280,6 +280,50 @@ reason := sprintf("agent kind ''%s'' is not allowed to perform action ''%s''", [
 	not allow
 	not deny
 }
+
+# Execution Time Window (business hours) — enforced in Rego. The tool''s
+# effective constraints are passed in as input.constraints. If a tool declares
+# a time_window {start, end} in HH:MM UTC, calls outside that window are denied.
+# Handles overnight windows (start > end) by wrapping past midnight.
+deny if {
+	tw := input.constraints.time_window
+	tw.start != ""
+	tw.end != ""
+	not within_window(tw.start, tw.end)
+}
+
+reason := sprintf("action ''%s'' is restricted outside business hours (%s to %s UTC)", [input.action, input.constraints.time_window.start, input.constraints.time_window.end]) if {
+	tw := input.constraints.time_window
+	tw.start != ""
+	tw.end != ""
+	not within_window(tw.start, tw.end)
+}
+
+within_window(start, end) if {
+	start <= end
+	now_minutes >= start_minutes(start)
+	now_minutes <= start_minutes(end)
+}
+
+within_window(start, end) if {
+	start > end
+	now_minutes >= start_minutes(start)
+}
+
+within_window(start, end) if {
+	start > end
+	now_minutes <= start_minutes(end)
+}
+
+now_minutes := (clock[0] * 60) + clock[1] if {
+	clock := time.clock(time.now_ns())
+}
+
+start_minutes(hhmm) := (h * 60) + m if {
+	parts := split(hhmm, ":")
+	h := to_number(parts[0])
+	m := to_number(parts[1])
+}
 ', 'active')
     ON CONFLICT DO NOTHING;
 

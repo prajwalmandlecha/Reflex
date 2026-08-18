@@ -33,6 +33,10 @@ type Input struct {
 	Currency      string         `json:"currency,omitempty"`
 	AllowedTools  []string       `json:"allowed_tools,omitempty"`
 	Params        map[string]any `json:"params,omitempty"`
+	// Constraints carries the tool's effective operational constraints (e.g.
+	// time_window) so Rego can enforce stateless rules that were historically
+	// evaluated in Go. Kept as raw JSON so policies can read any declared cap.
+	Constraints map[string]any `json:"constraints,omitempty"`
 }
 
 // Engine is the embedded OPA policy engine.
@@ -198,6 +202,50 @@ allow if {
 
 reason := sprintf("action '%s' allowed by agent profile", [input.action]) if allow
 reason := sprintf("action '%s' is not permitted by policy for agent kind '%s'", [input.action, input.agent_kind]) if not allow
+
+# Execution Time Window (business hours) — enforced in Rego. The tool's
+# effective constraints are passed in as input.constraints. If a tool declares
+# a time_window {start, end} in HH:MM UTC, calls outside that window are denied.
+# Handles overnight windows (start > end) by wrapping past midnight.
+deny if {
+	tw := input.constraints.time_window
+	tw.start != ""
+	tw.end != ""
+	not within_window(tw.start, tw.end)
+}
+
+reason := sprintf("action '%s' is restricted outside business hours (%s to %s UTC)", [input.action, input.constraints.time_window.start, input.constraints.time_window.end]) if {
+	tw := input.constraints.time_window
+	tw.start != ""
+	tw.end != ""
+	not within_window(tw.start, tw.end)
+}
+
+within_window(start, end) if {
+	start <= end
+	now_minutes >= start_minutes(start)
+	now_minutes <= start_minutes(end)
+}
+
+within_window(start, end) if {
+	start > end
+	now_minutes >= start_minutes(start)
+}
+
+within_window(start, end) if {
+	start > end
+	now_minutes <= start_minutes(end)
+}
+
+now_minutes := (clock[0] * 60) + clock[1] if {
+	clock := time.clock(time.now_ns())
+}
+
+start_minutes(hhmm) := (h * 60) + m if {
+	parts := split(hhmm, ":")
+	h := to_number(parts[0])
+	m := to_number(parts[1])
+}
 `))
 	}
 

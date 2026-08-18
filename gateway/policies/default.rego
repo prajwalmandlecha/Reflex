@@ -138,3 +138,51 @@ deny if {
 reason := sprintf("transfer amount $%.2f exceeds maximum allowed single-transaction parameter bound of $1000.00", [input.amount]) if {
 	deny
 }
+
+# Rule 7: Execution Time Window (business hours) — enforced in Rego.
+# The tool's effective constraints are passed into the policy input as
+# input.constraints (see governance.go). If a tool declares a time_window
+# {start, end} in HH:MM UTC, calls outside that window are denied. Handles
+# overnight windows (start > end, e.g. 22:00–06:00) by wrapping past midnight.
+deny if {
+	tw := input.constraints.time_window
+	tw.start != ""
+	tw.end != ""
+	not within_window(tw.start, tw.end)
+}
+
+reason := sprintf("action '%s' is restricted outside business hours (%s to %s UTC)", [input.action, input.constraints.time_window.start, input.constraints.time_window.end]) if {
+	tw := input.constraints.time_window
+	tw.start != ""
+	tw.end != ""
+	not within_window(tw.start, tw.end)
+}
+
+# within_window reports whether the current UTC time falls inside [start, end].
+# Overnight windows (start > end) wrap past midnight: inside means >= start OR
+# <= end.
+within_window(start, end) if {
+	start <= end
+	now_minutes >= start_minutes(start)
+	now_minutes <= start_minutes(end)
+}
+
+within_window(start, end) if {
+	start > end
+	now_minutes >= start_minutes(start)
+}
+
+within_window(start, end) if {
+	start > end
+	now_minutes <= start_minutes(end)
+}
+
+now_minutes := (clock[0] * 60) + clock[1] if {
+	clock := time.clock(time.now_ns())
+}
+
+start_minutes(hhmm) := (h * 60) + m if {
+	parts := split(hhmm, ":")
+	h := to_number(parts[0])
+	m := to_number(parts[1])
+}

@@ -43,9 +43,11 @@ func (p *MCPProxy) governCall(
 		return false, "killswitch", ksRes.Reason, t, nil
 	}
 
-	// Stage 2: Static Per-Tool Constraints (stateless checks: time windows).
-	// Stateful counters (rate limit, cumulative spend) are committed atomically
-	// in Stage 4 — no dry-run/commit split, so there's no TOCTOU window.
+	// Stage 2: Static Per-Tool Constraints (stateless checks). Time windows are
+	// now enforced by OPA Rego (see the default policy's time_window rule), so
+	// this stage only handles per-parameter ceilings. Stateful counters (rate
+	// limit, cumulative spend) are committed atomically in Stage 4 — no
+	// dry-run/commit split, so there's no TOCTOU window.
 	cStart := time.Now()
 
 	// Stage 2a: Per-parameter per-call ceilings (stateless). Each declared param
@@ -70,14 +72,8 @@ func (p *MCPProxy) governCall(
 		}
 	}
 
-	cOk, cReason := p.constraintCheck.CheckStatic(cfg, toolName)
 	t.ConstraintMs = ms(time.Since(cStart))
 	metrics.ConstraintCheckDuration.WithLabelValues(toolName).Observe(t.ConstraintMs / 1000.0)
-
-	if !cOk {
-		t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs
-		return false, "constraint", cReason, t, nil
-	}
 
 	// Stage 3: OPA Policy Engine
 	opaStart := time.Now()
@@ -89,6 +85,9 @@ func (p *MCPProxy) governCall(
 		Amount:       amount,
 		AllowedTools: allowedTools,
 		Params:       args,
+		// Pass the tool's effective constraints into Rego so stateless rules
+		// (time windows) are enforced by policy, not Go.
+		Constraints: p.constraintCheck.ToolConstraints(cfg, toolName),
 	})
 	t.PolicyMs = ms(time.Since(opaStart))
 	metrics.PolicyEvalDuration.WithLabelValues("default").Observe(t.PolicyMs / 1000.0)

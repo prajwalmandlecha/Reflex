@@ -23,6 +23,7 @@ Reflex sits transparently between autonomous AI Agents (LangChain, CrewAI, AutoG
 </p>
 
 ### End-to-End Governance Flow
+
 1. **Agent Invocation**: AI agents submit standard **Model Context Protocol (MCP)** JSON-RPC requests (`tools/list` or `tools/call`) to the Gateway (`:8080`).
 2. **In-Flight Security Gauntlet**:
    - **Revocation & Fleet Halt Check**: Immediate sub-millisecond validation against pipeline-cached Redis revocation keys.
@@ -51,24 +52,26 @@ Reflex sits transparently between autonomous AI Agents (LangChain, CrewAI, AutoG
 
 Reflex is organized into modular, decoupled microservices:
 
-| Directory | Tech Stack | Description | Sub-Readme Link |
-|---|---|---|---|
-| ⚡ [**`gateway/`**](./gateway) | Go 1.26, OPA, Redis, PostgreSQL, Goose, sqlc | High-throughput transparent reverse proxy, MCP interceptor, embedded OPA engine, per-parameter spend cap limiter, and cryptographic audit logger. | [Gateway Docs](./gateway/README.md) |
-| ⚙️ [**`backend/`**](./backend) | Python 3.12, FastAPI, Pydantic, SQLAlchemy, Redis Pub/Sub | Control Plane API, Rego policy compiler, agent lifecycle manager, OpenAPI virtualizer, and event publisher. | [Backend Docs](./backend/README.md) |
-| 🌐 [**`frontend/`**](./frontend) | Next.js 14, React 18, Tailwind CSS, Lucide Icons | Operator dashboard featuring live fleet monitor, visual rule builder, audit verification, and performance instrumentation. | [Frontend Docs](./frontend/README.md) |
-| 📜 [**`scripts/`**](./scripts) | Python 3.12, Asyncio, HTTPX | Seed scripts and real-time multi-agent load simulation suite testing all governance gauntlet features. | — |
-| 📁 [**`docs/`**](./docs) | System architecture diagram | — | — |
-| 🗄️ [**`db/`**](./db) | PostgreSQL 16, Goose Migrations | Database schema migrations (`001_schema.sql`, `002_seed.sql`) for agent entities, policies, and audit logs. | — |
+| Directory                        | Tech Stack                                                | Description                                                                                                                                       | Sub-Readme Link                       |
+| -------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| ⚡ [**`gateway/`**](./gateway)   | Go 1.26, OPA, Redis, PostgreSQL, Goose, sqlc              | High-throughput transparent reverse proxy, MCP interceptor, embedded OPA engine, per-parameter spend cap limiter, and cryptographic audit logger. | [Gateway Docs](./gateway/README.md)   |
+| ⚙️ [**`backend/`**](./backend)   | Python 3.12, FastAPI, Pydantic, SQLAlchemy, Redis Pub/Sub | Control Plane API, Rego policy compiler, agent lifecycle manager, OpenAPI virtualizer, and event publisher.                                       | [Backend Docs](./backend/README.md)   |
+| 🌐 [**`frontend/`**](./frontend) | Next.js 14, React 18, Tailwind CSS, Lucide Icons          | Operator dashboard featuring live fleet monitor, visual rule builder, audit verification, and performance instrumentation.                        | [Frontend Docs](./frontend/README.md) |
+| 📜 [**`scripts/`**](./scripts)   | Python 3.12, Asyncio, HTTPX                               | Seed scripts and real-time multi-agent load simulation suite testing all governance gauntlet features.                                            | —                                     |
+| 📁 [**`docs/`**](./docs)         | System architecture diagram                               | —                                                                                                                                                 | —                                     |
+| 🗄️ [**`db/`**](./db)             | PostgreSQL 16, Goose Migrations                           | Database schema migrations (`001_schema.sql`, `002_seed.sql`) for agent entities, policies, and audit logs.                                       | —                                     |
 
 ---
 
 ## 🚀 Quick Start
 
 ### 1. Prerequisites
+
 - **Docker** & **Docker Compose**
 - **Go 1.26+** and **Python 3.12+** (optional for standalone local development)
 
 ### 2. Launch the Full Reflex Platform Stack
+
 ```bash
 # Clone the repository
 git clone https://github.com/prajwalmandlecha/Reflex.git
@@ -79,27 +82,14 @@ docker compose up -d --build
 ```
 
 ### 3. Verify Running Services
-| Component | URL | Port |
-|---|---|---|
-| 🌐 **Reflex Control Center UI** | `http://localhost:3000` | `3000` |
-| ⚡ **Reflex Gateway Proxy** | `http://localhost:8080` | `8080` |
-| ⚙️ **Backend Control Plane API** | `http://localhost:8000` | `8000` |
+
+| Component                            | URL                             | Port   |
+| ------------------------------------ | ------------------------------- | ------ |
+| 🌐 **Reflex Control Center UI**      | `http://localhost:3000`         | `3000` |
+| ⚡ **Reflex Gateway Proxy**          | `http://localhost:8080`         | `8080` |
+| ⚙️ **Backend Control Plane API**     | `http://localhost:8000`         | `8000` |
 | 📊 **Prometheus Metrics Exposition** | `http://localhost:9090/metrics` | `9090` |
-| 🗄️ **PostgreSQL 16 Database** | `localhost:5433` | `5433` |
-| 🔑 **Redis 7.2 Cache & Pub/Sub** | `localhost:6379` | `6379` |
-
----
-
-## 🧪 Simulation & Automated Verification Suite
-
-To run the automated agent suite that simulates multi-agent workflows, tool invocations, parameter-level spend cap violations, and emergency killswitch activations:
-
-```bash
-# Seed initial platform state (Agent Classes, Instances, Bank Connections, Policies)
-python scripts/01_seed_platform.py
-
-# Run the live agent simulation suite
-python scripts/02_run_live_agent_suite.py
-```
+| 🗄️ **PostgreSQL 16 Database**        | `localhost:5433`                | `5433` |
+| 🔑 **Redis 7.2 Cache & Pub/Sub**     | `localhost:6379`                | `6379` |
 
 ---
