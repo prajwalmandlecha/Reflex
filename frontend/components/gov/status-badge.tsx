@@ -27,7 +27,7 @@ const colorMap: Record<string, { dot: string; text: string; bg: string; border: 
   degraded: { dot: 'bg-signal-caution', text: 'text-signal-caution', bg: 'bg-signal-caution/10', border: 'border-signal-caution/20', glow: 'shadow-[0_0_12px_-2px_rgba(245,166,35,0.3)]' },
   pending: { dot: 'bg-signal-caution', text: 'text-signal-caution', bg: 'bg-signal-caution/10', border: 'border-signal-caution/20', glow: 'shadow-[0_0_12px_-2px_rgba(245,166,35,0.3)]' },
   draft: { dot: 'bg-signal-caution', text: 'text-signal-caution', bg: 'bg-signal-caution/10', border: 'border-signal-caution/20', glow: 'shadow-[0_0_12px_-2px_rgba(245,166,35,0.3)]' },
-  archived: { dot: 'bg-[#8B96A3]', text: 'text-[#8B96A3]', bg: 'bg-[#8B96A3]/10', border: 'border-[#8B96A3]/20', glow: '' },
+  archived: { dot: 'bg-ink-secondary', text: 'text-ink-secondary', bg: 'bg-ink-secondary/10', border: 'border-ink-secondary/20', glow: '' },
   killed: { dot: 'bg-signal-stopped', text: 'text-signal-stopped', bg: 'bg-signal-stopped/10', border: 'border-signal-stopped/20', glow: 'shadow-[0_0_12px_-2px_rgba(229,72,77,0.3)]' },
   stopped: { dot: 'bg-signal-stopped', text: 'text-signal-stopped', bg: 'bg-signal-stopped/10', border: 'border-signal-stopped/20', glow: 'shadow-[0_0_12px_-2px_rgba(229,72,77,0.3)]' },
   error: { dot: 'bg-signal-stopped', text: 'text-signal-stopped', bg: 'bg-signal-stopped/10', border: 'border-signal-stopped/20', glow: 'shadow-[0_0_12px_-2px_rgba(229,72,77,0.3)]' },

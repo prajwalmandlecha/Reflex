@@ -42,7 +42,7 @@ export function OverheadGauge({ overheadMs, totalMs }: OverheadGaugeProps) {
             strokeDashoffset={strokeDashoffset}
             strokeLinecap="round"
             fill="transparent"
-            className="transition-all duration-500 ease-out"
+            className="transition-[stroke-dashoffset] duration-500 ease-out"
           />
         </svg>
         <div className="absolute flex flex-col items-center justify-center text-center">

@@ -595,9 +595,9 @@ func (p *MCPProxy) handleToolsCall(
 	toolName, _ := params["name"].(string)
 	args, _ := params["arguments"].(map[string]any)
 
-	amount, amountFound := p.extractAmount(agentCfg, toolName, args)
+	amount, _ := p.extractAmount(agentCfg, toolName, args)
 
-	allowed, denyStage, reason, timings, committedEntries := p.governCall(r.Context(), callKindTool, agentID, classID, agentKind, toolName, amount, amountFound, allowedTools, agentCfg, args)
+	allowed, denyStage, reason, timings, committedEntries := p.governCall(r.Context(), callKindTool, agentID, classID, agentKind, toolName, amount, allowedTools, agentCfg, args)
 
 	downstreamStart := time.Now()
 	var responseData any
@@ -668,9 +668,8 @@ func (p *MCPProxy) handleGovernedRead(
 		actionName, _ = params["name"].(string)
 	}
 
-	// No monetary amount for resources/prompts; amountFound=false is fine
-	// because governCall skips money-field enforcement for non-tools.
-	allowed, denyStage, reason, timings, committedEntries := p.governCall(r.Context(), kind, agentID, classID, agentKind, actionName, 0, false, allowedTools, agentCfg, params)
+	// No monetary amount for resources/prompts.
+	allowed, denyStage, reason, timings, committedEntries := p.governCall(r.Context(), kind, agentID, classID, agentKind, actionName, 0, allowedTools, agentCfg, params)
 
 	downstreamStart := time.Now()
 	var responseData any

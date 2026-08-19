@@ -41,11 +41,15 @@ type Input struct {
 
 // Engine is the embedded OPA policy engine.
 type Engine struct {
-	prepared       atomic.Pointer[rego.PreparedEvalQuery]
-	currentVersion atomic.Int32
-	rdb            *redis.Client
-	db             *pgxpool.Pool
-	logger         *slog.Logger
+	prepared atomic.Pointer[rego.PreparedEvalQuery]
+	// fingerprint is the last-seen (count, maxVersion) of the active policy
+	// set. It lets the 30s poller skip the expensive re-read/recompile when
+	// nothing changed. A zero value means "never loaded" so the first poll
+	// always compiles.
+	fingerprint atomic.Uint64
+	rdb         *redis.Client
+	db          *pgxpool.Pool
+	logger      *slog.Logger
 }
 
 // NewEngine creates a new OPA engine. It loads the initial policy from Postgres/Redis,
@@ -122,6 +126,17 @@ func (e *Engine) Evaluate(ctx context.Context, input *Input) (*Decision, error) 
 // the ReplaceAll source-mangling bugs.
 func (e *Engine) loadAndCompile(ctx context.Context, force bool) error {
 	var version int32 = 1
+
+	// Fast path: when not forced (i.e. the periodic poller), skip the expensive
+	// re-read/recompile entirely if the active policy set is unchanged. The
+	// fingerprint is (count, maxVersion) so deleting a non-max-version policy is
+	// still detected. We only skip once we've loaded at least once (prepared !=
+	// nil), so the first pass always compiles even when the set is empty.
+	if !force && e.prepared.Load() != nil {
+		if fp, ok := e.activePolicyFingerprint(ctx); ok && fp == e.fingerprint.Load() {
+			return nil
+		}
+	}
 
 	// Read from Postgres or Redis
 	var rawSources []string
@@ -261,9 +276,29 @@ start_minutes(hhmm) := (h * 60) + m if {
 	}
 
 	e.prepared.Store(&pq)
-	e.currentVersion.Store(version)
+	// Record the fingerprint of what we just compiled so the next poll can skip
+	// if nothing changed. Only update on success so a transient failure doesn't
+	// poison the fast path.
+	if fp, ok := e.activePolicyFingerprint(ctx); ok {
+		e.fingerprint.Store(fp)
+	}
 	e.logger.Info("policy compiled and loaded into OPA engine", "version", version)
 	return nil
+}
+
+// activePolicyFingerprint returns a cheap (count, maxVersion) fingerprint of the
+// active policy set, or ok=false if the query failed. It is used to decide
+// whether a poll needs to recompile. Postgres is the source of truth for
+// policies; Redis is only a cache of it, so we fingerprint Postgres directly.
+func (e *Engine) activePolicyFingerprint(ctx context.Context) (uint64, bool) {
+	q := db.New(e.db)
+	row, err := q.GetActivePolicyFingerprint(ctx)
+	if err != nil {
+		e.logger.Warn("failed to read active policy fingerprint", "error", err)
+		return 0, false
+	}
+	// Pack (count, maxVersion) into a single uint64. Both are non-negative.
+	return (uint64(row.PolicyCount) << 32) | uint64(row.MaxVersion), true
 }
 
 // splitPolicySources splits a blob that may contain several concatenated Rego

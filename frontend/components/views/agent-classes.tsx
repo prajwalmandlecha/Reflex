@@ -554,7 +554,7 @@ function ClassForm({
                     <label
                       key={t.name}
                       className={cn(
-                        'flex items-start gap-2 border p-2 rounded cursor-pointer transition-all',
+                        'flex items-start gap-2 border p-2 rounded cursor-pointer transition-[background-color,border-color,color]',
                         isChecked
                           ? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-200 shadow-[0_0_10px_-3px_rgba(6,182,212,0.2)]'
                           : 'border-white/5 bg-white/[0.02] text-ink-secondary hover:border-white/20 hover:bg-white/5 hover:text-ink-primary'
@@ -892,7 +892,7 @@ function VisualConstraintEditor({
               setEditorMode('visual');
             }}
             className={cn(
-              'px-2.5 py-1 rounded text-[10px] font-mono font-semibold uppercase whitespace-nowrap transition-all duration-150 cursor-pointer',
+              'px-2.5 py-1 rounded text-[10px] font-mono font-semibold uppercase whitespace-nowrap transition-[background-color,border-color,color] duration-150 cursor-pointer',
               editorMode === 'visual'
                 ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-sm'
                 : 'text-ink-secondary hover:text-white hover:bg-white/5'
@@ -907,7 +907,7 @@ function VisualConstraintEditor({
               setEditorMode('json');
             }}
             className={cn(
-              'px-2.5 py-1 rounded text-[10px] font-mono font-semibold uppercase whitespace-nowrap transition-all duration-150 cursor-pointer',
+              'px-2.5 py-1 rounded text-[10px] font-mono font-semibold uppercase whitespace-nowrap transition-[background-color,border-color,color] duration-150 cursor-pointer',
               editorMode === 'json'
                 ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-sm'
                 : 'text-ink-secondary hover:text-white hover:bg-white/5'

@@ -11,8 +11,42 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const getActivePolicyFingerprint = `-- name: GetActivePolicyFingerprint :one
+SELECT
+    COUNT(*)::bigint AS policy_count,
+    COALESCE(MAX(version), 0)::bigint AS max_version
+FROM
+    policies
+WHERE
+    status = 'active'
+`
+
+type GetActivePolicyFingerprintRow struct {
+	PolicyCount int64 `json:"policy_count"`
+	MaxVersion  int64 `json:"max_version"`
+}
+
+// Cheap fingerprint of the active policy set. Returns the count and max
+// version across active policies. Used by the poller to skip recompiling when
+// nothing changed. Count is included so that deleting a non-max-version policy
+// (which leaves MAX(version) unchanged) is still detected.
+func (q *Queries) GetActivePolicyFingerprint(ctx context.Context) (GetActivePolicyFingerprintRow, error) {
+	row := q.db.QueryRow(ctx, getActivePolicyFingerprint)
+	var i GetActivePolicyFingerprintRow
+	err := row.Scan(&i.PolicyCount, &i.MaxVersion)
+	return i, err
+}
+
 const listActivePolicies = `-- name: ListActivePolicies :many
-SELECT rego_source, version FROM policies WHERE status = 'active' ORDER BY id ASC
+SELECT
+    rego_source,
+    version
+FROM
+    policies
+WHERE
+    status = 'active'
+ORDER BY
+    id ASC
 `
 
 type ListActivePoliciesRow struct {

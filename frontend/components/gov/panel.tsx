@@ -47,26 +47,10 @@ export function StatTile({
   className?: string;
 }) {
   const accentStyles = {
-    healthy: {
-      border: 'border-l-2 border-l-emerald-500',
-      glow: 'shadow-[0_0_20px_-3px_rgba(16,185,129,0.15)]',
-      bgGrad: 'bg-gradient-to-r from-emerald-500/[0.08] via-emerald-500/[0.02] to-transparent',
-    },
-    caution: {
-      border: 'border-l-2 border-l-amber-500',
-      glow: 'shadow-[0_0_20px_-3px_rgba(245,158,11,0.15)]',
-      bgGrad: 'bg-gradient-to-r from-amber-500/[0.08] via-amber-500/[0.02] to-transparent',
-    },
-    stopped: {
-      border: 'border-l-2 border-l-rose-500',
-      glow: 'shadow-[0_0_20px_-3px_rgba(244,63,94,0.15)]',
-      bgGrad: 'bg-gradient-to-r from-rose-500/[0.08] via-rose-500/[0.02] to-transparent',
-    },
-    accent: {
-      border: 'border-l-2 border-l-cyan-500',
-      glow: 'shadow-[0_0_20px_-3px_rgba(6,182,212,0.15)]',
-      bgGrad: 'bg-gradient-to-r from-cyan-500/[0.08] via-cyan-500/[0.02] to-transparent',
-    },
+    healthy: { dot: 'bg-emerald-500' },
+    caution: { dot: 'bg-amber-500' },
+    stopped: { dot: 'bg-rose-500' },
+    accent: { dot: 'bg-cyan-500' },
   };
 
   const currentAccent = accent ? accentStyles[accent] : null;
@@ -74,16 +58,14 @@ export function StatTile({
   return (
     <div
       className={cn(
-        'glass glass-edge relative flex flex-col gap-1.5 rounded-2xl p-5 transition-all duration-200',
-        currentAccent?.border,
-        currentAccent?.glow,
+        'glass glass-edge relative flex flex-col gap-1.5 rounded-2xl p-5 transition-[background-color,border-color,box-shadow] duration-200',
         className
       )}
     >
-      {currentAccent && (
-        <div className={cn('absolute inset-0 rounded-2xl pointer-events-none', currentAccent.bgGrad)} />
-      )}
-      <span className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary relative z-10">
+      <span className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-ink-secondary relative z-10">
+        {currentAccent && (
+          <span className={cn('h-1.5 w-1.5 rounded-sm', currentAccent.dot)} />
+        )}
         {label}
       </span>
       <span className="font-mono text-2xl text-ink-primary tabular relative z-10">{value}</span>

@@ -76,15 +76,13 @@
     min-height: 100vh;
   }
 
-  /* Ambient gradient field — the "liquid" backdrop */
+  /* Ambient gradient field — single accent-tinted neutral wash */
   body::before {
     content: '';
     position: fixed;
     inset: 0;
     background:
-      radial-gradient(ellipse 80% 50% at 15% 0%, rgba(76, 141, 255, 0.08), transparent 60%),
-      radial-gradient(ellipse 60% 40% at 85% 10%, rgba(61, 220, 132, 0.05), transparent 60%),
-      radial-gradient(ellipse 50% 50% at 50% 100%, rgba(245, 166, 35, 0.04), transparent 60%);
+      radial-gradient(ellipse 80% 50% at 15% 0%, rgba(76, 141, 255, 0.06), transparent 60%);
     pointer-events: none;
     z-index: 0;
   }

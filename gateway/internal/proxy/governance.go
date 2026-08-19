@@ -21,7 +21,6 @@ func (p *MCPProxy) governCall(
 	kind callKind,
 	agentID, classID, agentKind, toolName string,
 	amount float64,
-	amountFound bool,
 	allowedTools []string,
 	cfg *configcache.AgentConfig,
 	args map[string]any,
@@ -59,6 +58,15 @@ func (p *MCPProxy) governCall(
 		// present and numeric, or the cap could be bypassed by omitting the
 		// field (e.g. omitting "max_characters" to dodge its ceiling).
 		if ok, reason := p.constraintCheck.CheckParamPresence(cfg, toolName, args); !ok {
+			t.ConstraintMs = ms(time.Since(cStart))
+			metrics.ConstraintCheckDuration.WithLabelValues(toolName).Observe(t.ConstraintMs / 1000.0)
+			t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs
+			return false, "constraint", reason, t, nil
+		}
+		// Fail-closed on REQUIRED money fields: a schema-required money field
+		// that is missing or non-numeric would let the agent dodge spend caps by
+		// omitting it. (Optional money fields are legitimately omittable.)
+		if ok, reason := p.constraintCheck.CheckRequiredMoneyFields(cfg, toolName, args); !ok {
 			t.ConstraintMs = ms(time.Since(cStart))
 			metrics.ConstraintCheckDuration.WithLabelValues(toolName).Observe(t.ConstraintMs / 1000.0)
 			t.GovernanceTotal = t.KillswitchMs + t.ConstraintMs

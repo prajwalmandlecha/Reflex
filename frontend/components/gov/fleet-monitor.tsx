@@ -172,7 +172,7 @@ export function FleetMonitor({
                     key={inst.id}
                     onClick={() => onAgentClick?.(inst.id)}
                     className={cn(
-                      'group flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left transition-all',
+                      'group flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left transition-[background-color]',
                       'hover:bg-white/5'
                     )}
                   >

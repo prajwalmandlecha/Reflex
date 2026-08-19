@@ -36,6 +36,8 @@ import {
   Shield,
   Info,
   Globe,
+  Menu,
+  X,
 } from 'lucide-react';
 
 import { useWebSocket } from '@/hooks/useWebSocket';
@@ -119,6 +121,7 @@ function AppShellContent() {
   const [isVisible, setIsVisible] = useState(true);
   const [apiError, setApiError] = useState<string | null>(null);
   const [connectionsLoading, setConnectionsLoading] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const operatorName = user?.full_name || 'Operator';
 
@@ -376,9 +379,9 @@ function AppShellContent() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#0B0F14] text-[#E4E9EE] flex items-center justify-center font-mono text-xs">
+      <div className="min-h-screen bg-bg-deep text-ink-primary flex items-center justify-center font-mono text-xs">
         <div className="flex items-center gap-3">
-          <span className="w-3 h-3 rounded-full bg-[#4C8DFF] animate-ping" />
+          <span className="w-3 h-3 rounded-full bg-accent animate-ping" />
           <span>Verifying session security credentials...</span>
         </div>
       </div>
@@ -416,112 +419,148 @@ function AppShellContent() {
     }
   };
 
-  return (
-    <div className="min-h-screen bg-[#0B0F14] text-[#E4E9EE] flex font-sans antialiased">
-      {/* Sidebar */}
-      <aside className="w-64 bg-[#131A22] border-r border-[#232B35] flex flex-col flex-shrink-0">
-        <div className="p-4 border-b border-[#232B35] flex items-center gap-3">
-          <div className="w-8 h-8 rounded bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center font-mono font-bold text-white text-sm shadow-md">
-            AGP
+  const sidebarContent = (
+    <>
+      <div className="p-4 border-b border-border flex items-center gap-3">
+        <div className="w-8 h-8 rounded bg-accent flex items-center justify-center font-mono font-bold text-white text-sm shadow-md">
+          AGP
+        </div>
+        <div>
+          <div className="font-mono font-bold text-sm text-ink-primary tracking-tight">
+            REFLEX AGP
           </div>
-          <div>
-            <div className="font-mono font-bold text-sm text-[#E4E9EE] tracking-tight">
-              REFLEX AGP
-            </div>
-            <div className="text-[10px] font-mono text-[#8B96A3]">
-              AI Governance Control Plane
-            </div>
+          <div className="text-[10px] font-mono text-ink-secondary">
+            AI Governance Control Plane
           </div>
         </div>
+      </div>
 
-        <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
-          {visibleNavItems.map((item) => {
-            const Icon = item.icon;
-            const active = view === item.id;
-            return (
-              <button
-                key={item.id}
-                onClick={() => setView(item.id)}
-                className={cn(
-                  'w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-mono transition-colors text-left',
-                  active
-                    ? 'bg-[#4C8DFF]/15 text-[#4C8DFF] font-semibold border border-[#4C8DFF]/30'
-                    : 'text-[#8B96A3] hover:text-[#E4E9EE] hover:bg-[#232B35]/40'
-                )}
-              >
-                <Icon className={cn('w-4 h-4', active ? 'text-[#4C8DFF]' : 'text-[#8B96A3]')} />
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
-        </nav>
-
-        {/* User Profile Footer */}
-        <div className="p-3 border-t border-[#232B35] bg-[#0B0F14]/60 space-y-2">
-          <div className="flex items-center justify-between">
-            <div className="min-w-0 flex-1 pr-2">
-              <div className="text-xs font-mono font-bold text-[#E4E9EE] truncate">
-                {user.full_name}
-              </div>
-              <div className="text-[10px] font-mono text-[#8B96A3] truncate">
-                {user.email}
-              </div>
-            </div>
-            {getRoleBadge(user.role)}
-          </div>
-
-          <div className="pt-2 border-t border-[#232B35]/40 flex items-center justify-between">
-            <div className="flex items-center gap-1.5 text-[10px] font-mono text-[#8B96A3]">
-              <span
-                className={cn(
-                  'w-2 h-2 rounded-full animate-pulse',
-                  fleetStatus === 'healthy' ? 'bg-emerald-500' : fleetStatus === 'degraded' ? 'bg-amber-400' : 'bg-rose-500'
-                )}
-                title={`Fleet ${fleetStatus}`}
-              />
-              <span className="capitalize">{fleetStatus}</span>
-            </div>
-
+      <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
+        {visibleNavItems.map((item) => {
+          const Icon = item.icon;
+          const active = view === item.id;
+          return (
             <button
-              onClick={logout}
-              className="p-1 rounded text-[#8B96A3] hover:text-rose-400 hover:bg-rose-500/10 transition-colors flex items-center gap-1 font-mono text-[10px]"
-              title="Sign Out"
+              key={item.id}
+              onClick={() => {
+                setView(item.id);
+                setSidebarOpen(false);
+              }}
+              className={cn(
+                'w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-mono transition-colors text-left',
+                active
+                  ? 'bg-accent/15 text-accent font-semibold border border-accent/30'
+                  : 'text-ink-secondary hover:text-ink-primary hover:bg-border/40'
+              )}
             >
-              <LogOut className="w-3.5 h-3.5" />
-              <span>Logout</span>
+              <Icon className={cn('w-4 h-4', active ? 'text-accent' : 'text-ink-secondary')} />
+              <span>{item.label}</span>
             </button>
+          );
+        })}
+      </nav>
+
+      {/* User Profile Footer */}
+      <div className="p-3 border-t border-border bg-bg-deep/60 space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="min-w-0 flex-1 pr-2">
+            <div className="text-xs font-mono font-bold text-ink-primary truncate">
+              {user.full_name}
+            </div>
+            <div className="text-[10px] font-mono text-ink-secondary truncate">
+              {user.email}
+            </div>
           </div>
+          {getRoleBadge(user.role)}
         </div>
+
+        <div className="pt-2 border-t border-border/40 flex items-center justify-between">
+          <div className="flex items-center gap-1.5 text-[10px] font-mono text-ink-secondary">
+            <span
+              className={cn(
+                'w-2 h-2 rounded-full animate-pulse',
+                fleetStatus === 'healthy' ? 'bg-emerald-500' : fleetStatus === 'degraded' ? 'bg-amber-400' : 'bg-rose-500'
+              )}
+              title={`Fleet ${fleetStatus}`}
+            />
+            <span className="capitalize">{fleetStatus}</span>
+          </div>
+
+          <button
+            onClick={logout}
+            className="p-1 rounded text-ink-secondary hover:text-rose-400 hover:bg-rose-500/10 transition-colors flex items-center gap-1 font-mono text-[10px]"
+            title="Sign Out"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span>Logout</span>
+          </button>
+        </div>
+      </div>
+    </>
+  );
+
+  return (
+    <div className="min-h-screen bg-bg-deep text-ink-primary flex font-sans antialiased">
+      {/* Desktop sidebar */}
+      <aside className="hidden md:flex w-64 bg-surface border-r border-border flex-col flex-shrink-0">
+        {sidebarContent}
       </aside>
+
+      {/* Mobile drawer */}
+      {sidebarOpen && (
+        <div className="fixed inset-0 z-50 md:hidden">
+          <div
+            className="absolute inset-0 bg-black/60"
+            onClick={() => setSidebarOpen(false)}
+          />
+          <aside className="absolute inset-y-0 left-0 w-72 max-w-[85vw] bg-surface border-r border-border flex flex-col shadow-2xl">
+            <button
+              onClick={() => setSidebarOpen(false)}
+              className="absolute top-4 right-4 p-1 rounded text-ink-secondary hover:text-ink-primary hover:bg-border/40 transition-colors"
+              aria-label="Close menu"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            {sidebarContent}
+          </aside>
+        </div>
+      )}
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top Header */}
-        <header className="h-14 bg-[#131A22] border-b border-[#232B35] px-6 flex items-center justify-between flex-shrink-0">
+        <header className="h-14 bg-surface border-b border-border px-4 md:px-6 flex items-center justify-between flex-shrink-0">
           <div className="flex items-center gap-4">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="md:hidden p-1.5 rounded text-ink-secondary hover:text-ink-primary hover:bg-border/40 transition-colors"
+              aria-label="Open menu"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
             <StatusBadge status={fleetStatus} />
-            <div className="h-4 w-[1px] bg-[#232B35]" />
-            <div className="text-xs font-mono text-[#8B96A3]">
-              Active Fleet: <span className="text-[#E4E9EE] font-semibold">{instances.filter(i => i.status === 'active').length}</span> / {instances.length}
+            <div className="h-4 w-[1px] bg-border" />
+            <div className="text-xs font-mono text-ink-secondary">
+              Active Fleet: <span className="text-ink-primary font-semibold">{instances.filter(i => i.status === 'active').length}</span> / {instances.length}
             </div>
           </div>
 
           <div className="flex items-center gap-3">
             <button
               onClick={() => setShowHelpModal(true)}
-              className="px-2.5 py-1 rounded border border-[#232B35] bg-[#131A22] text-[#8B96A3] hover:text-[#E4E9EE] hover:bg-[#232B35]/50 font-mono text-xs transition-colors flex items-center gap-1.5"
+              className="px-2.5 py-1 rounded border border-border bg-surface text-ink-secondary hover:text-ink-primary hover:bg-border/50 font-mono text-xs transition-colors flex items-center gap-1.5"
               title="Getting Started Guide"
             >
-              <HelpCircle className="w-3.5 h-3.5 text-[#4C8DFF]" />
+              <HelpCircle className="w-3.5 h-3.5 text-accent" />
               <span>Help</span>
             </button>
 
             <button
               onClick={() => setShowShortcutsModal(true)}
-              className="px-2.5 py-1 rounded border border-[#232B35] bg-[#131A22] text-[#8B96A3] hover:text-[#E4E9EE] hover:bg-[#232B35]/50 font-mono text-xs transition-colors flex items-center gap-1"
+              className="px-2.5 py-1 rounded border border-border bg-surface text-ink-secondary hover:text-ink-primary hover:bg-border/50 font-mono text-xs transition-colors flex items-center gap-1"
               title="Keyboard Shortcuts (?)"
             >
-              <span className="text-[10px] text-[#4C8DFF]">?</span>
+              <span className="text-[10px] text-accent">?</span>
               <span>Shortcuts</span>
             </button>
 
@@ -606,21 +645,21 @@ function AppShellContent() {
       {/* Getting Started / Help Modal */}
       {showHelpModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="w-full max-w-lg border border-[#232B35] bg-[#131A22] p-5 shadow-2xl rounded-lg max-h-[85vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-[#232B35] pb-3 mb-4">
-              <h3 className="font-mono text-sm font-semibold uppercase tracking-wider text-[#E4E9EE] flex items-center gap-2">
-                <HelpCircle className="w-4 h-4 text-[#4C8DFF]" />
+          <div className="w-full max-w-lg border border-border bg-surface p-5 shadow-2xl rounded-lg max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-border pb-3 mb-4">
+              <h3 className="font-mono text-sm font-semibold uppercase tracking-wider text-ink-primary flex items-center gap-2">
+                <HelpCircle className="w-4 h-4 text-accent" />
                 Getting Started
               </h3>
               <button
                 onClick={() => setShowHelpModal(false)}
-                className="font-mono text-xs text-[#8B96A3] hover:text-[#E4E9EE]"
+                className="font-mono text-xs text-ink-secondary hover:text-ink-primary"
               >
                 ✕ Esc
               </button>
             </div>
 
-            <p className="text-xs text-[#8B96A3] mb-4 leading-relaxed">
+            <p className="text-xs text-ink-secondary mb-4 leading-relaxed">
               Reflex governs how AI agents talk to your banking APIs. Follow these steps to
               onboard and run your first governed agent:
             </p>
@@ -663,42 +702,42 @@ function AppShellContent() {
                   linkLabel: 'Command Center',
                 },
               ].map((s) => (
-                <div key={s.step} className="flex gap-3 rounded-lg border border-[#232B35] bg-[#0B0F14]/60 p-3">
-                  <div className="w-6 h-6 rounded-full bg-[#4C8DFF]/15 border border-[#4C8DFF]/30 flex items-center justify-center font-mono text-xs font-bold text-[#4C8DFF] flex-shrink-0">
+                <div key={s.step} className="flex gap-3 rounded-lg border border-border bg-bg-deep/60 p-3">
+                  <div className="w-6 h-6 rounded-full bg-accent/15 border border-accent/30 flex items-center justify-center font-mono text-xs font-bold text-accent flex-shrink-0">
                     {s.step}
                   </div>
                   <div className="min-w-0">
-                    <div className="font-mono text-xs font-semibold text-[#E4E9EE] mb-1 flex items-center gap-2 flex-wrap">
+                    <div className="font-mono text-xs font-semibold text-ink-primary mb-1 flex items-center gap-2 flex-wrap">
                       {s.title}
                       <button
                         onClick={() => {
                           setView(s.viewId);
                           setShowHelpModal(false);
                         }}
-                        className="px-1.5 py-0.5 rounded border border-[#4C8DFF]/30 bg-[#4C8DFF]/10 text-[10px] font-mono text-[#4C8DFF] hover:bg-[#4C8DFF]/20 transition-colors"
+                        className="px-1.5 py-0.5 rounded border border-accent/30 bg-accent/10 text-[10px] font-mono text-accent hover:bg-accent/20 transition-colors"
                       >
                         Open {s.linkLabel} →
                       </button>
                     </div>
-                    <p className="text-[11px] text-[#8B96A3] leading-relaxed">{s.desc}</p>
+                    <p className="text-[11px] text-ink-secondary leading-relaxed">{s.desc}</p>
                   </div>
                 </div>
               ))}
             </div>
 
-            <div className="mt-5 pt-3 border-t border-[#232B35] flex items-center justify-between">
-              <label className="flex items-center gap-2 font-mono text-[11px] text-[#8B96A3] cursor-pointer select-none">
+            <div className="mt-5 pt-3 border-t border-border flex items-center justify-between">
+              <label className="flex items-center gap-2 font-mono text-[11px] text-ink-secondary cursor-pointer select-none">
                 <input
                   type="checkbox"
                   checked={hideHelpOnStartup}
                   onChange={(e) => toggleHideHelpOnStartup(e.target.checked)}
-                  className="accent-[#4C8DFF]"
+                  className="accent-accent"
                 />
                 Don&apos;t show on startup
               </label>
               <button
                 onClick={() => setShowHelpModal(false)}
-                className="px-3 py-1.5 rounded bg-[#4C8DFF] text-white font-mono text-xs hover:bg-[#4C8DFF]/90 transition-colors"
+                className="px-3 py-1.5 rounded bg-accent text-white font-mono text-xs hover:bg-accent/90 transition-colors"
               >
                 Got it
               </button>
@@ -710,14 +749,14 @@ function AppShellContent() {
       {/* Keyboard Shortcuts Modal */}
       {showShortcutsModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="w-full max-w-md border border-[#232B35] bg-[#131A22] p-5 shadow-2xl rounded-lg">
-            <div className="flex items-center justify-between border-b border-[#232B35] pb-3 mb-4">
-              <h3 className="font-mono text-sm font-semibold uppercase tracking-wider text-[#E4E9EE]">
+          <div className="w-full max-w-md border border-border bg-surface p-5 shadow-2xl rounded-lg">
+            <div className="flex items-center justify-between border-b border-border pb-3 mb-4">
+              <h3 className="font-mono text-sm font-semibold uppercase tracking-wider text-ink-primary">
                 Operator Keyboard Shortcuts
               </h3>
               <button
                 onClick={() => setShowShortcutsModal(false)}
-                className="font-mono text-xs text-[#8B96A3] hover:text-[#E4E9EE]"
+                className="font-mono text-xs text-ink-secondary hover:text-ink-primary"
               >
                 ✕ Esc
               </button>
@@ -733,17 +772,17 @@ function AppShellContent() {
                 { key: '?', desc: 'Toggle Shortcuts Help' },
               ].map((sc) => (
                 <div key={sc.key} className="flex items-center justify-between py-1 border-b border-white/5 last:border-0">
-                  <span className="px-2 py-0.5 rounded bg-[#0B0F14] border border-[#232B35] text-[#4C8DFF] font-semibold">
+                  <span className="px-2 py-0.5 rounded bg-bg-deep border border-border text-accent font-semibold">
                     {sc.key}
                   </span>
-                  <span className="text-[#8B96A3]">{sc.desc}</span>
+                  <span className="text-ink-secondary">{sc.desc}</span>
                 </div>
               ))}
             </div>
-            <div className="mt-5 pt-3 border-t border-[#232B35] text-right">
+            <div className="mt-5 pt-3 border-t border-border text-right">
               <button
                 onClick={() => setShowShortcutsModal(false)}
-                className="px-3 py-1.5 rounded bg-[#4C8DFF] text-white font-mono text-xs hover:bg-[#4C8DFF]/90 transition-colors"
+                className="px-3 py-1.5 rounded bg-accent text-white font-mono text-xs hover:bg-accent/90 transition-colors"
               >
                 Close
               </button>

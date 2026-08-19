@@ -36,27 +36,27 @@ export function LatencyBreakdownBar({
       <div className="h-4 w-full bg-slate-900 rounded flex overflow-hidden border border-slate-800">
         <div
           style={{ width: `${ksPct}%` }}
-          className="bg-amber-500 h-full transition-all duration-300"
+          className="bg-amber-500 h-full transition-[width] duration-300"
           title={`Killswitch: ${killswitchMs.toFixed(2)}ms (${ksPct.toFixed(1)}%)`}
         />
         <div
           style={{ width: `${constPct}%` }}
-          className="bg-cyan-500 h-full transition-all duration-300"
+          className="bg-cyan-500 h-full transition-[width] duration-300"
           title={`Constraints: ${constraintMs.toFixed(2)}ms (${constPct.toFixed(1)}%)`}
         />
         <div
           style={{ width: `${policyPct}%` }}
-          className="bg-blue-500 h-full transition-all duration-300"
+          className="bg-blue-500 h-full transition-[width] duration-300"
           title={`OPA Policy: ${policyMs.toFixed(2)}ms (${policyPct.toFixed(1)}%)`}
         />
         <div
           style={{ width: `${spendPct}%` }}
-          className="bg-purple-500 h-full transition-all duration-300"
+          className="bg-purple-500 h-full transition-[width] duration-300"
           title={`Spend Check: ${spendMs.toFixed(2)}ms (${spendPct.toFixed(1)}%)`}
         />
         <div
           style={{ width: `${downPct}%` }}
-          className="bg-emerald-500 h-full transition-all duration-300"
+          className="bg-emerald-500 h-full transition-[width] duration-300"
           title={`Downstream Hop: ${downstreamMs.toFixed(2)}ms (${downPct.toFixed(1)}%)`}
         />
       </div>

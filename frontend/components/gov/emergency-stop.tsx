@@ -61,7 +61,7 @@ export function EmergencyStopControl({
         className={cn(
           'flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/20 px-4 py-2',
           'font-mono text-xs font-bold uppercase tracking-widest text-emerald-400',
-          'backdrop-blur-md transition-all hover:bg-emerald-500 hover:text-black shadow-[0_0_20px_-4px_rgba(52,211,153,0.4)] cursor-pointer',
+          'backdrop-blur-md transition-[background-color,color,border-color] hover:bg-emerald-500 hover:text-black shadow-[0_0_20px_-4px_rgba(52,211,153,0.4)] cursor-pointer',
           compact && 'px-3 py-1.5 text-[10px]'
         )}
       >
@@ -82,7 +82,7 @@ export function EmergencyStopControl({
           className={cn(
             'group flex items-center gap-2 rounded-xl border border-signal-stopped/30 bg-signal-stopped/15 px-4 py-2',
             'font-mono text-xs font-semibold uppercase tracking-widest text-signal-stopped',
-            'backdrop-blur-md transition-all hover:bg-signal-stopped hover:text-white',
+            'backdrop-blur-md transition-[background-color,color,border-color] hover:bg-signal-stopped hover:text-white',
             'shadow-[0_0_20px_-4px_rgba(229,72,77,0.4)]',
             compact && 'px-3 py-1.5 text-[10px]'
           )}
@@ -114,7 +114,7 @@ export function EmergencyStopControl({
         onTouchEnd={cancelHold}
         className={cn(
           'group relative flex items-center gap-2 overflow-hidden rounded-xl border px-4 py-2',
-          'font-mono text-xs font-semibold uppercase tracking-widest backdrop-blur-md transition-all',
+          'font-mono text-xs font-semibold uppercase tracking-widest backdrop-blur-md transition-[background-color,color,border-color]',
           compact && 'px-3 py-1.5 text-[10px]',
           holding
             ? 'border-signal-stopped/40 bg-signal-stopped/10 text-signal-stopped shadow-[0_0_24px_-4px_rgba(229,72,77,0.4)]'
@@ -126,7 +126,7 @@ export function EmergencyStopControl({
         <span>Emergency Stop</span>
         {holding && (
           <span
-            className="absolute bottom-0 left-0 h-0.5 bg-signal-stopped transition-all"
+            className="absolute bottom-0 left-0 h-0.5 bg-signal-stopped transition-[width] duration-150 ease-out"
             style={{ width: `${progress}%` }}
           />
         )}

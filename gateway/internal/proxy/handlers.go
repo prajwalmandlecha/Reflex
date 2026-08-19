@@ -106,9 +106,9 @@ func (p *MCPProxy) handleOpenAPIRequest(
 		// Use the shared extractor (declared money_params, else legacy amount/
 		// amount_cents; handles float/int/string) so caps and the $1000 bound
 		// aren't bypassed by non-float64 encodings or renamed money fields (G12).
-		amount, amountFound := p.extractAmount(agentCfg, toolName, args)
+		amount, _ := p.extractAmount(agentCfg, toolName, args)
 
-		allowed, denyStage, reason, timings, committedEntries := p.governCall(r.Context(), callKindTool, agentID, classID, agentKind, toolName, amount, amountFound, allowedTools, agentCfg, args)
+		allowed, denyStage, reason, timings, committedEntries := p.governCall(r.Context(), callKindTool, agentID, classID, agentKind, toolName, amount, allowedTools, agentCfg, args)
 
 		downstreamStart := time.Now()
 		var mcpResult map[string]any

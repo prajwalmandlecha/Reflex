@@ -271,6 +271,57 @@ func (c *Checker) CheckParamPresence(cfg *configcache.AgentConfig, toolName stri
 	return true, ""
 }
 
+// CheckRequiredMoneyFields enforces fail-closed behavior for REQUIRED money
+// fields. The backend propagates each tool's schema-required field list via
+// cfg.ToolSchemas so the gateway can tell a required money field (must be
+// present and numeric, or the call is denied) from an optional one (a
+// legitimate call may omit it, e.g. a "scale" multiplier). A money field is one
+// the amount extractor would read: a declared param rule, or the legacy
+// amount/amount_cents names. Returns (ok, denyReason).
+func (c *Checker) CheckRequiredMoneyFields(cfg *configcache.AgentConfig, toolName string, args map[string]any) (bool, string) {
+	if cfg == nil || cfg.ToolSchemas == nil {
+		return true, ""
+	}
+	ts, ok := cfg.ToolSchemas[toolName]
+	if !ok || len(ts.Required) == 0 {
+		return true, ""
+	}
+	// The set of fields the amount extractor treats as monetary for this tool.
+	moneyFields := c.moneyFieldsFor(cfg, toolName)
+	if len(moneyFields) == 0 {
+		return true, ""
+	}
+	for _, field := range ts.Required {
+		if _, isMoney := moneyFields[field]; !isMoney {
+			continue // only required MONEY fields fail closed
+		}
+		v, present := args[field]
+		if !present {
+			return false, fmt.Sprintf("action '%s' denied: required money field '%s' is missing from the call — omitting it would bypass spend caps", toolName, field)
+		}
+		if _, ok := toFloatOK(v); !ok {
+			return false, fmt.Sprintf("action '%s' denied: required money field '%s' is not numeric — a non-numeric value would bypass spend caps", toolName, field)
+		}
+	}
+	return true, ""
+}
+
+// moneyFieldsFor returns the set of argument names the amount extractor treats
+// as monetary for a tool: any declared param rule plus the legacy
+// amount/amount_cents names. Used to scope required-field enforcement to money.
+func (c *Checker) moneyFieldsFor(cfg *configcache.AgentConfig, toolName string) map[string]struct{} {
+	out := make(map[string]struct{})
+	for name := range c.ParamRules(cfg, toolName) {
+		out[name] = struct{}{}
+	}
+	for _, sc := range c.SharedCaps(cfg, toolName) {
+		out[sc.Param] = struct{}{}
+	}
+	out["amount"] = struct{}{}
+	out["amount_cents"] = struct{}{}
+	return out
+}
+
 // ParamCounterEntries builds the stateful per-parameter accumulation counters
 // (daily/hourly/monthly) as spend.Entry values. Each declared param with a daily,
 // hourly, or monthly cap produces its own counter keyed by tool+param+window, so caps are

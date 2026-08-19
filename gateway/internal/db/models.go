@@ -41,6 +41,7 @@ type AuditLog struct {
 	Action               string        `json:"action"`
 	BankConnectionID     pgtype.Text   `json:"bank_connection_id"`
 	Params               []byte        `json:"params"`
+	ResponseData         []byte        `json:"response_data"`
 	Decision             string        `json:"decision"`
 	DenyStage            pgtype.Text   `json:"deny_stage"`
 	Reason               pgtype.Text   `json:"reason"`
@@ -98,6 +99,27 @@ type PolicyChangelog struct {
 	OldValue   []byte             `json:"old_value"`
 	NewValue   []byte             `json:"new_value"`
 	ChangedAt  pgtype.Timestamptz `json:"changed_at"`
+}
+
+type Prompt struct {
+	ID               int32              `json:"id"`
+	BankConnectionID string             `json:"bank_connection_id"`
+	Name             string             `json:"name"`
+	Description      pgtype.Text        `json:"description"`
+	Arguments        []byte             `json:"arguments"`
+	Exposed          pgtype.Bool        `json:"exposed"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
+type Resource struct {
+	ID               int32              `json:"id"`
+	BankConnectionID string             `json:"bank_connection_id"`
+	Uri              string             `json:"uri"`
+	Name             pgtype.Text        `json:"name"`
+	Description      pgtype.Text        `json:"description"`
+	MimeType         pgtype.Text        `json:"mime_type"`
+	Exposed          pgtype.Bool        `json:"exposed"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 }
 
 type StopEvent struct {

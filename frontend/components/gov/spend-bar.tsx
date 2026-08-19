@@ -44,7 +44,7 @@ export function SpendBar({
     <div className={cn('flex items-center gap-2', className)}>
       <div className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-white/5">
         <div
-          className={cn('h-full rounded-full transition-all duration-500', barColor, barGlow)}
+          className={cn('h-full rounded-full transition-[width] duration-500', barColor, barGlow)}
           style={{ width: `${p}%` }}
         />
       </div>

@@ -179,25 +179,25 @@ export function UsersView() {
   return (
     <div className="space-y-6">
       {/* Top Section */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#232B35] pb-4">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-border pb-4">
         <div>
-          <h1 className="font-mono text-xl font-bold tracking-tight text-[#E4E9EE] flex items-center gap-2">
-            <Users className="w-5 h-5 text-[#4C8DFF]" />
+          <h1 className="font-mono text-xl font-bold tracking-tight text-ink-primary flex items-center gap-2">
+            <Users className="w-5 h-5 text-accent" />
             User & Access Management
           </h1>
-          <p className="text-xs font-mono text-[#8B96A3] mt-1">
+          <p className="text-xs font-mono text-ink-secondary mt-1">
             Manage organization users, role assignments, administrative privileges, and security status.
           </p>
         </div>
 
         <div className="flex items-center gap-3">
-          <div className="flex bg-[#131A22] border border-[#232B35] rounded-lg p-1">
+          <div className="flex bg-surface border border-border rounded-lg p-1">
             <button
               onClick={() => setActiveTab('directory')}
               className={`px-3 py-1 rounded text-xs font-mono transition-colors ${
                 activeTab === 'directory'
-                  ? 'bg-[#4C8DFF]/20 text-[#4C8DFF] font-semibold'
-                  : 'text-[#8B96A3] hover:text-[#E4E9EE]'
+                  ? 'bg-accent/20 text-accent font-semibold'
+                  : 'text-ink-secondary hover:text-ink-primary'
               }`}
             >
               User Directory
@@ -206,8 +206,8 @@ export function UsersView() {
               onClick={() => setActiveTab('matrix')}
               className={`px-3 py-1 rounded text-xs font-mono transition-colors ${
                 activeTab === 'matrix'
-                  ? 'bg-[#4C8DFF]/20 text-[#4C8DFF] font-semibold'
-                  : 'text-[#8B96A3] hover:text-[#E4E9EE]'
+                  ? 'bg-accent/20 text-accent font-semibold'
+                  : 'text-ink-secondary hover:text-ink-primary'
               }`}
             >
               3-Role Permission Matrix
@@ -216,7 +216,7 @@ export function UsersView() {
 
           <button
             onClick={() => setShowAddModal(true)}
-            className="px-3 py-1.5 rounded-lg bg-[#4C8DFF] hover:bg-[#4C8DFF]/90 text-white font-mono text-xs font-semibold flex items-center gap-2 shadow-md shadow-blue-500/20 transition-all"
+            className="px-3 py-1.5 rounded-lg bg-accent hover:bg-accent/90 text-white font-mono text-xs font-semibold flex items-center gap-2 shadow-md shadow-blue-500/20 transition-[background-color]"
           >
             <UserPlus className="w-4 h-4" />
             <span>Create User</span>
@@ -227,25 +227,25 @@ export function UsersView() {
       {activeTab === 'directory' ? (
         <div className="space-y-4">
           {/* Filter Bar */}
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-[#131A22] border border-[#232B35] p-3 rounded-lg">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-surface border border-border p-3 rounded-lg">
             <div className="relative w-full sm:w-72">
-              <Search className="w-4 h-4 text-[#8B96A3] absolute left-3 top-2.5" />
+              <Search className="w-4 h-4 text-ink-secondary absolute left-3 top-2.5" />
               <input
                 type="text"
                 placeholder="Search by name or email..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-[#0B0F14] border border-[#232B35] rounded-lg pl-9 pr-3 py-1.5 text-xs font-mono text-[#E4E9EE] focus:outline-none focus:border-[#4C8DFF]"
+                className="w-full bg-bg-deep border border-border rounded-lg pl-9 pr-3 py-1.5 text-xs font-mono text-ink-primary focus:outline-none focus:border-accent"
               />
             </div>
 
             <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
               <div className="flex items-center gap-2">
-                <span className="font-mono text-xs text-[#8B96A3]">Role:</span>
+                <span className="font-mono text-xs text-ink-secondary">Role:</span>
                 <select
                   value={roleFilter}
                   onChange={(e) => setRoleFilter(e.target.value)}
-                  className="bg-[#0B0F14] border border-[#232B35] rounded-lg px-2 py-1 text-xs font-mono text-[#E4E9EE]"
+                  className="bg-bg-deep border border-border rounded-lg px-2 py-1 text-xs font-mono text-ink-primary"
                 >
                   <option value="all">All Roles</option>
                   <option value="admin">Admin</option>
@@ -256,7 +256,7 @@ export function UsersView() {
 
               <button
                 onClick={loadUsers}
-                className="p-1.5 rounded border border-[#232B35] bg-[#0B0F14] text-[#8B96A3] hover:text-[#E4E9EE]"
+                className="p-1.5 rounded border border-border bg-bg-deep text-ink-secondary hover:text-ink-primary"
                 title="Refresh"
               >
                 <RefreshCw className="w-4 h-4" />
@@ -265,17 +265,17 @@ export function UsersView() {
           </div>
 
           {/* Users Table */}
-          <div className="border border-[#232B35] rounded-lg bg-[#131A22] overflow-hidden">
+          <div className="border border-border rounded-lg bg-surface overflow-hidden">
             {loading ? (
-              <div className="p-8 text-center font-mono text-xs text-[#8B96A3]">Loading users...</div>
+              <div className="p-8 text-center font-mono text-xs text-ink-secondary">Loading users...</div>
             ) : users.length === 0 ? (
-              <div className="p-8 text-center font-mono text-xs text-[#8B96A3]">
+              <div className="p-8 text-center font-mono text-xs text-ink-secondary">
                 No users found matching query filters.
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left font-mono text-xs">
-                  <thead className="bg-[#0B0F14]/80 border-b border-[#232B35] text-[#8B96A3] uppercase text-[10px]">
+                  <thead className="bg-bg-deep/80 border-b border-border text-ink-secondary uppercase text-[10px]">
                     <tr>
                       <th className="py-3 px-4">User Identity</th>
                       <th className="py-3 px-4">System Role</th>
@@ -284,12 +284,12 @@ export function UsersView() {
                       <th className="py-3 px-4 text-right">Actions</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-[#232B35]/50">
+                  <tbody className="divide-y divide-border/50">
                     {users.map((u) => (
-                      <tr key={u.id} className="hover:bg-[#232B35]/30 transition-colors">
+                      <tr key={u.id} className="hover:bg-border/30 transition-colors">
                         <td className="py-3 px-4">
-                          <div className="font-semibold text-[#E4E9EE]">{u.full_name}</div>
-                          <div className="text-[11px] text-[#8B96A3]">{u.email}</div>
+                          <div className="font-semibold text-ink-primary">{u.full_name}</div>
+                          <div className="text-[11px] text-ink-secondary">{u.email}</div>
                         </td>
                         <td className="py-3 px-4">{getRoleBadge(u.role)}</td>
                         <td className="py-3 px-4">
@@ -303,7 +303,7 @@ export function UsersView() {
                             </span>
                           )}
                         </td>
-                        <td className="py-3 px-4 text-[#8B96A3]">
+                        <td className="py-3 px-4 text-ink-secondary">
                           {u.last_login_at
                             ? new Date(u.last_login_at).toLocaleString()
                             : 'Never'}
@@ -314,7 +314,7 @@ export function UsersView() {
                               value={u.role}
                               onChange={(e) => handleUpdateRole(u.id, e.target.value as UserRole)}
                               disabled={u.id === currentUser?.id}
-                              className="bg-[#0B0F14] border border-[#232B35] rounded px-2 py-1 text-[11px] font-mono text-[#E4E9EE] disabled:opacity-50"
+                              className="bg-bg-deep border border-border rounded px-2 py-1 text-[11px] font-mono text-ink-primary disabled:opacity-50"
                               title="Change Role"
                             >
                               <option value="admin">Admin</option>
@@ -324,7 +324,7 @@ export function UsersView() {
 
                             <button
                               onClick={() => setShowResetModal(u.id)}
-                              className="p-1 rounded border border-[#232B35] bg-[#0B0F14] text-[#8B96A3] hover:text-[#4C8DFF]"
+                              className="p-1 rounded border border-border bg-bg-deep text-ink-secondary hover:text-accent"
                               title="Reset Password"
                             >
                               <Key className="w-3.5 h-3.5" />
@@ -334,9 +334,9 @@ export function UsersView() {
                               <>
                                 <button
                                   onClick={() => handleToggleSuspend(u.id, u.status)}
-                                  className={`p-1 rounded border border-[#232B35] bg-[#0B0F14] ${
+                                  className={`p-1 rounded border border-border bg-bg-deep ${
                                     u.status === 'active'
-                                      ? 'text-[#8B96A3] hover:text-amber-400'
+                                      ? 'text-ink-secondary hover:text-amber-400'
                                       : 'text-amber-400 hover:text-emerald-400'
                                   }`}
                                   title={u.status === 'active' ? 'Suspend Account' : 'Reactivate Account'}
@@ -350,7 +350,7 @@ export function UsersView() {
 
                                 <button
                                   onClick={() => handleDeleteUser(u.id, u.email)}
-                                  className="p-1 rounded border border-[#232B35] bg-[#0B0F14] text-[#8B96A3] hover:text-rose-400"
+                                  className="p-1 rounded border border-border bg-bg-deep text-ink-secondary hover:text-rose-400"
                                   title="Delete User"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
@@ -374,22 +374,22 @@ export function UsersView() {
             {roleMatrix.map((r) => (
               <div
                 key={r.id}
-                className="bg-[#131A22] border border-[#232B35] rounded-xl p-5 space-y-3"
+                className="bg-surface border border-border rounded-xl p-5 space-y-3"
               >
-                <div className="flex items-center justify-between border-b border-[#232B35] pb-3">
-                  <h3 className="font-mono text-sm font-bold text-[#E4E9EE]">{r.name}</h3>
+                <div className="flex items-center justify-between border-b border-border pb-3">
+                  <h3 className="font-mono text-sm font-bold text-ink-primary">{r.name}</h3>
                   {getRoleBadge(r.id)}
                 </div>
-                <p className="text-xs text-[#8B96A3] leading-relaxed">{r.description}</p>
+                <p className="text-xs text-ink-secondary leading-relaxed">{r.description}</p>
                 <div className="pt-2">
-                  <div className="font-mono text-[10px] uppercase text-[#8B96A3] mb-2 font-bold">
+                  <div className="font-mono text-[10px] uppercase text-ink-secondary mb-2 font-bold">
                     Granted Permissions ({r.permissions.length}):
                   </div>
                   <div className="flex flex-wrap gap-1 max-h-48 overflow-y-auto pr-1">
                     {r.permissions.map((p: string) => (
                       <span
                         key={p}
-                        className="px-1.5 py-0.5 rounded bg-[#0B0F14] border border-[#232B35] text-[10px] font-mono text-[#4C8DFF]"
+                        className="px-1.5 py-0.5 rounded bg-bg-deep border border-border text-[10px] font-mono text-accent"
                       >
                         {p}
                       </span>
@@ -405,15 +405,15 @@ export function UsersView() {
       {/* Add User Modal */}
       {showAddModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="w-full max-w-md bg-[#131A22] border border-[#232B35] rounded-xl p-6 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-[#232B35] pb-3 mb-4">
-              <h3 className="font-mono text-sm font-semibold uppercase text-[#E4E9EE] flex items-center gap-2">
-                <UserPlus className="w-4 h-4 text-[#4C8DFF]" />
+          <div className="w-full max-w-md bg-surface border border-border rounded-xl p-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-border pb-3 mb-4">
+              <h3 className="font-mono text-sm font-semibold uppercase text-ink-primary flex items-center gap-2">
+                <UserPlus className="w-4 h-4 text-accent" />
                 Create New Platform User
               </h3>
               <button
                 onClick={() => setShowAddModal(false)}
-                className="font-mono text-xs text-[#8B96A3] hover:text-[#E4E9EE]"
+                className="font-mono text-xs text-ink-secondary hover:text-ink-primary"
               >
                 ✕
               </button>
@@ -427,47 +427,47 @@ export function UsersView() {
 
             <form onSubmit={handleCreateUser} className="space-y-4 font-mono text-xs">
               <div>
-                <label className="block text-[#8B96A3] mb-1">Full Name</label>
+                <label className="block text-ink-secondary mb-1">Full Name</label>
                 <input
                   type="text"
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   placeholder="e.g. Sarah Connor"
-                  className="w-full bg-[#0B0F14] border border-[#232B35] rounded-lg px-3 py-2 text-[#E4E9EE] focus:outline-none focus:border-[#4C8DFF]"
+                  className="w-full bg-bg-deep border border-border rounded-lg px-3 py-2 text-ink-primary focus:outline-none focus:border-accent"
                   required
                 />
               </div>
 
               <div>
-                <label className="block text-[#8B96A3] mb-1">Work Email</label>
+                <label className="block text-ink-secondary mb-1">Work Email</label>
                 <input
                   type="email"
                   value={newEmail}
                   onChange={(e) => setNewEmail(e.target.value)}
                   placeholder="sarah@reflex.local"
-                  className="w-full bg-[#0B0F14] border border-[#232B35] rounded-lg px-3 py-2 text-[#E4E9EE] focus:outline-none focus:border-[#4C8DFF]"
+                  className="w-full bg-bg-deep border border-border rounded-lg px-3 py-2 text-ink-primary focus:outline-none focus:border-accent"
                   required
                 />
               </div>
 
               <div>
-                <label className="block text-[#8B96A3] mb-1">Initial Password</label>
+                <label className="block text-ink-secondary mb-1">Initial Password</label>
                 <input
                   type="password"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   placeholder="••••••••••••"
-                  className="w-full bg-[#0B0F14] border border-[#232B35] rounded-lg px-3 py-2 text-[#E4E9EE] focus:outline-none focus:border-[#4C8DFF]"
+                  className="w-full bg-bg-deep border border-border rounded-lg px-3 py-2 text-ink-primary focus:outline-none focus:border-accent"
                   required
                 />
               </div>
 
               <div>
-                <label className="block text-[#8B96A3] mb-1">Role Assignment</label>
+                <label className="block text-ink-secondary mb-1">Role Assignment</label>
                 <select
                   value={newRole}
                   onChange={(e) => setNewRole(e.target.value as UserRole)}
-                  className="w-full bg-[#0B0F14] border border-[#232B35] rounded-lg px-3 py-2 text-[#E4E9EE] focus:outline-none focus:border-[#4C8DFF]"
+                  className="w-full bg-bg-deep border border-border rounded-lg px-3 py-2 text-ink-primary focus:outline-none focus:border-accent"
                 >
                   <option value="admin">Admin (Full Control)</option>
                   <option value="operator">Operator (Governance & Fleet Ops)</option>
@@ -475,18 +475,18 @@ export function UsersView() {
                 </select>
               </div>
 
-              <div className="pt-3 flex justify-end gap-2 border-t border-[#232B35]">
+              <div className="pt-3 flex justify-end gap-2 border-t border-border">
                 <button
                   type="button"
                   onClick={() => setShowAddModal(false)}
-                  className="px-3 py-1.5 rounded border border-[#232B35] text-[#8B96A3] hover:text-[#E4E9EE]"
+                  className="px-3 py-1.5 rounded border border-border text-ink-secondary hover:text-ink-primary"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={actionLoading}
-                  className="px-4 py-1.5 rounded bg-[#4C8DFF] text-white font-semibold hover:bg-[#4C8DFF]/90 disabled:opacity-50"
+                  className="px-4 py-1.5 rounded bg-accent text-white font-semibold hover:bg-accent/90 disabled:opacity-50"
                 >
                   {actionLoading ? 'Creating...' : 'Create Account'}
                 </button>
@@ -499,19 +499,19 @@ export function UsersView() {
       {/* Reset Password Modal */}
       {showResetModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="w-full max-w-sm bg-[#131A22] border border-[#232B35] rounded-xl p-5 shadow-2xl">
-            <h3 className="font-mono text-sm font-semibold uppercase text-[#E4E9EE] mb-3">
+          <div className="w-full max-w-sm bg-surface border border-border rounded-xl p-5 shadow-2xl">
+            <h3 className="font-mono text-sm font-semibold uppercase text-ink-primary mb-3">
               Reset User Password
             </h3>
             <form onSubmit={handleResetPassword} className="space-y-4 font-mono text-xs">
               <div>
-                <label className="block text-[#8B96A3] mb-1">New Password</label>
+                <label className="block text-ink-secondary mb-1">New Password</label>
                 <input
                   type="password"
                   value={resetNewPass}
                   onChange={(e) => setResetNewPass(e.target.value)}
                   placeholder="Enter new password"
-                  className="w-full bg-[#0B0F14] border border-[#232B35] rounded-lg px-3 py-2 text-[#E4E9EE]"
+                  className="w-full bg-bg-deep border border-border rounded-lg px-3 py-2 text-ink-primary"
                   required
                 />
               </div>
@@ -519,14 +519,14 @@ export function UsersView() {
                 <button
                   type="button"
                   onClick={() => setShowResetModal(null)}
-                  className="px-3 py-1 rounded border border-[#232B35] text-[#8B96A3]"
+                  className="px-3 py-1 rounded border border-border text-ink-secondary"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={actionLoading}
-                  className="px-3 py-1 rounded bg-[#4C8DFF] text-white font-semibold"
+                  className="px-3 py-1 rounded bg-accent text-white font-semibold"
                 >
                   Reset Password
                 </button>
