@@ -303,6 +303,7 @@ export const api = {
     name?: string,
     credentialType?: string,
     credentials?: string,
+    sensitiveResponse?: boolean,
   ): Promise<{ tool_count: number }> {
     return request<{ tool_count: number }>(
       `/api/v1/connections/${connectionId}/openapi`,
@@ -314,6 +315,7 @@ export const api = {
           name,
           credential_type: credentialType,
           credentials,
+          sensitive_response: sensitiveResponse,
         }),
       },
     );

@@ -73,6 +73,7 @@ export type BankTool = {
   path?: string;
   description: string;
   exposed: boolean;
+  sensitive_response?: boolean;
   convertible?: boolean;
   input_schema?: Record<string, unknown>;
   underlying_ops?: Record<string, unknown>[];

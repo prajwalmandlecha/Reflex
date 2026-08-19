@@ -12,6 +12,7 @@ class ToolBase(BaseModel):
     input_schema: dict[str, Any] = Field(default_factory=dict)
     underlying_ops: list[dict[str, Any]] = Field(default_factory=list)
     exposed: bool = True
+    sensitive_response: bool = False
 
 
 class ToolCreate(ToolBase):
@@ -24,6 +25,7 @@ class ToolUpdate(BaseModel):
     input_schema: dict[str, Any] | None = None
     underlying_ops: list[dict[str, Any]] | None = None
     exposed: bool | None = None
+    sensitive_response: bool | None = None
 
 
 class ToolResponse(ToolBase):

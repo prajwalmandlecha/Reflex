@@ -85,7 +85,7 @@ type MCPProxy struct {
 	openAPIMux         sync.RWMutex
 	connAuth           map[string]*downstreamAuth // connection_id → downstream creds
 	connAuthMux        sync.RWMutex
-	toolRouting        map[string]string // tool_name → service/connection_id
+	toolRouting        map[string]toolRouteEntry // tool_name → {connection_id, sensitive}
 	toolRoutingMux     sync.RWMutex
 	promptRouting      map[string]string // prompt_name → service/connection_id
 	promptRoutingMux   sync.RWMutex
@@ -129,7 +129,7 @@ func NewMCPProxy(
 		targets:            targets,
 		openAPITargets:     make(map[string]*OpenAPISpecTarget),
 		connAuth:           make(map[string]*downstreamAuth),
-		toolRouting:        make(map[string]string),
+		toolRouting:        make(map[string]toolRouteEntry),
 		promptRouting:      make(map[string]string),
 		resourceRouting:    make(map[string]string),
 		ks:                 ks,
@@ -329,12 +329,12 @@ func (p *MCPProxy) isSensitiveResponse(connectionID string) bool {
 }
 
 // redactForStorage applies the full redaction policy to a value destined for
-// the audit log or event stream. If the connection is flagged sensitive, the
-// response body is replaced with a summary stub; otherwise it is recursively
-// key-redacted.
-func (p *MCPProxy) redactForStorage(connectionID string, v any) any {
-	if p.isSensitiveResponse(connectionID) {
-		return map[string]any{"redacted": true, "reason": "connection marked sensitive"}
+// the audit log or event stream. If the tool (or its owning connection) is
+// flagged sensitive, the response body is replaced with a summary stub;
+// otherwise it is recursively key-redacted.
+func (p *MCPProxy) redactForStorage(connectionID, toolName string, v any) any {
+	if p.isToolSensitive(toolName) || p.isSensitiveResponse(connectionID) {
+		return map[string]any{"redacted": true, "reason": "sensitive response suppressed"}
 	}
 	return redactValue(v, p.sensitiveKeys())
 }
@@ -390,9 +390,18 @@ func (p *MCPProxy) rangeTargets(fn func(svcName, targetBaseURL string)) {
 	}
 }
 
-// LoadToolRouting reads the tool_name → connection_id mapping from Redis.
-// This enables the gateway to route /mcp requests to the correct downstream
-// based on the tool name in tools/call, without requiring a service-specific URL.
+// toolRouteEntry is the per-tool routing + redaction metadata cached by the
+// backend under agp:tool_routing. The gateway uses it both to route tools/call
+// to the correct downstream and to decide per-tool response redaction.
+type toolRouteEntry struct {
+	ConnectionID string `json:"connection_id"`
+	Sensitive    bool   `json:"sensitive"`
+}
+
+// LoadToolRouting reads the tool_name → {connection_id, sensitive} mapping from
+// Redis. This enables the gateway to route /mcp requests to the correct
+// downstream based on the tool name in tools/call, without requiring a
+// service-specific URL, and to apply per-tool response redaction.
 func (p *MCPProxy) LoadToolRouting(ctx context.Context) {
 	if p.rdb == nil {
 		return
@@ -401,7 +410,7 @@ func (p *MCPProxy) LoadToolRouting(ctx context.Context) {
 	if err != nil || raw == "" {
 		return
 	}
-	var mapping map[string]string
+	var mapping map[string]toolRouteEntry
 	if err := json.Unmarshal([]byte(raw), &mapping); err != nil {
 		p.logger.Warn("failed to parse agp:tool_routing", "error", err)
 		return
@@ -416,7 +425,24 @@ func (p *MCPProxy) LoadToolRouting(ctx context.Context) {
 func (p *MCPProxy) resolveServiceForTool(toolName string) string {
 	p.toolRoutingMux.RLock()
 	defer p.toolRoutingMux.RUnlock()
-	return p.toolRouting[toolName]
+	if e, ok := p.toolRouting[toolName]; ok {
+		return e.ConnectionID
+	}
+	return ""
+}
+
+// isToolSensitive reports whether a specific tool's response body should be
+// suppressed entirely (per-tool Layer 3) rather than key-redacted.
+func (p *MCPProxy) isToolSensitive(toolName string) bool {
+	if toolName == "" {
+		return false
+	}
+	p.toolRoutingMux.RLock()
+	defer p.toolRoutingMux.RUnlock()
+	if e, ok := p.toolRouting[toolName]; ok {
+		return e.Sensitive
+	}
+	return false
 }
 
 // LoadPromptRouting reads the prompt_name → connection_id mapping from Redis.
@@ -515,6 +541,11 @@ func (p *MCPProxy) SubscribeConnectionUpdates(ctx context.Context) {
 				p.LoadNativeTargets(ctx)
 				p.loadConnectionAuth(ctx)
 				p.LoadRedactionConfig(ctx)
+			case "tool":
+				// A tool's sensitive_response flag changed — reload the routing
+				// map (which carries the per-tool sensitive flag) so redaction
+				// applies immediately.
+				p.LoadToolRouting(ctx)
 			case "redaction":
 				p.LoadRedactionConfig(ctx)
 			}

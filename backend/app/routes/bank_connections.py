@@ -36,7 +36,7 @@ async def list_bank_connections(current_user: dict = Depends(get_current_user)):
             """
         )
         tools_rows = await conn.fetch(
-            "SELECT id, bank_connection_id, name, description, input_schema, exposed FROM tools"
+            "SELECT id, bank_connection_id, name, description, input_schema, exposed, sensitive_response FROM tools"
         )
         resources_rows = await conn.fetch(
             "SELECT id, bank_connection_id, uri, name, description, mime_type, exposed FROM resources"
@@ -53,6 +53,7 @@ async def list_bank_connections(current_user: dict = Depends(get_current_user)):
                 "description": t["description"] or "",
                 "input_schema": json.loads(t["input_schema"]) if isinstance(t["input_schema"], str) else (t["input_schema"] or {}),
                 "exposed": t["exposed"],
+                "sensitive_response": t["sensitive_response"],
             })
 
         resources_by_conn = defaultdict(list)
@@ -110,7 +111,7 @@ async def _replace_tools(conn, connection_id: str, tools: list[dict], with_ops: 
                 INSERT INTO tools (bank_connection_id, name, description, input_schema, underlying_ops, exposed)
                 VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6)
                 ON CONFLICT DO NOTHING
-                RETURNING id, name, description, input_schema, exposed
+                RETURNING id, name, description, input_schema, exposed, sensitive_response
                 """,
                 connection_id, t["name"], t["description"], json.dumps(t["input_schema"]),
                 json.dumps(t["underlying_ops"]), t.get("exposed", True),
@@ -121,7 +122,7 @@ async def _replace_tools(conn, connection_id: str, tools: list[dict], with_ops: 
                 INSERT INTO tools (bank_connection_id, name, description, input_schema, exposed)
                 VALUES ($1, $2, $3, $4::jsonb, $5)
                 ON CONFLICT DO NOTHING
-                RETURNING id, name, description, input_schema, exposed
+                RETURNING id, name, description, input_schema, exposed, sensitive_response
                 """,
                 connection_id, t["name"], t["description"], json.dumps(t["input_schema"]), t.get("exposed", True),
             )
@@ -132,6 +133,7 @@ async def _replace_tools(conn, connection_id: str, tools: list[dict], with_ops: 
                 "description": t_row["description"] or "",
                 "input_schema": json.loads(t_row["input_schema"]) if isinstance(t_row["input_schema"], str) else (t_row["input_schema"] or {}),
                 "exposed": t_row["exposed"],
+                "sensitive_response": t_row["sensitive_response"],
             })
     return inserted
 
@@ -321,7 +323,7 @@ async def sync_bank_connection(connection_id: str, current_user: dict = Depends(
             # If we still have previously discovered tools, the operator needs to see that
             # the connection is usable even if the latest probe failed.
             tools_rows = await conn.fetch(
-                "SELECT id, name, description, input_schema, exposed FROM tools WHERE bank_connection_id = $1",
+                "SELECT id, name, description, input_schema, exposed, sensitive_response FROM tools WHERE bank_connection_id = $1",
                 connection_id,
             )
             existing_tools = [
@@ -331,6 +333,7 @@ async def sync_bank_connection(connection_id: str, current_user: dict = Depends(
                     "description": t["description"] or "",
                     "input_schema": json.loads(t["input_schema"]) if isinstance(t["input_schema"], str) else (t["input_schema"] or {}),
                     "exposed": t["exposed"],
+                    "sensitive_response": t["sensitive_response"],
                 }
                 for t in tools_rows
             ]
@@ -434,7 +437,7 @@ async def update_bank_connection(connection_id: str, b: BankConnectionUpdate, cu
         )
 
         tools_rows = await conn.fetch(
-            "SELECT id, name, description, input_schema, exposed FROM tools WHERE bank_connection_id = $1",
+            "SELECT id, name, description, input_schema, exposed, sensitive_response FROM tools WHERE bank_connection_id = $1",
             connection_id,
         )
         tools_list = [
@@ -444,6 +447,7 @@ async def update_bank_connection(connection_id: str, b: BankConnectionUpdate, cu
                 "description": t["description"] or "",
                 "input_schema": json.loads(t["input_schema"]) if isinstance(t["input_schema"], str) else (t["input_schema"] or {}),
                 "exposed": t["exposed"],
+                "sensitive_response": t["sensitive_response"],
             }
             for t in tools_rows
         ]
@@ -561,18 +565,20 @@ async def register_openapi_spec(connection_id: str, payload: dict, current_user:
         base_url = payload.get("base_url") or settings.gateway_url
         # Status is earned by a successful parse, not asserted.
         status_val = "connected" if extracted_tools else "error"
+        sensitive_response = bool(payload.get("sensitive_response", False))
         await conn.execute(
             """
-            INSERT INTO bank_connections (id, name, source_type, base_url, openapi_spec, credential_type, encrypted_creds, status)
-            VALUES ($1, $2, 'openapi', $3, $4, $5, $6, $7)
+            INSERT INTO bank_connections (id, name, source_type, base_url, openapi_spec, credential_type, encrypted_creds, status, sensitive_response)
+            VALUES ($1, $2, 'openapi', $3, $4, $5, $6, $7, $8)
             ON CONFLICT (id) DO UPDATE SET
                 openapi_spec = EXCLUDED.openapi_spec,
                 credential_type = EXCLUDED.credential_type,
                 encrypted_creds = COALESCE(EXCLUDED.encrypted_creds, bank_connections.encrypted_creds),
                 status = EXCLUDED.status,
+                sensitive_response = EXCLUDED.sensitive_response,
                 updated_at = NOW()
             """,
-            connection_id, name, base_url, spec_text, credential_type, enc_creds, status_val,
+            connection_id, name, base_url, spec_text, credential_type, enc_creds, status_val, sensitive_response,
         )
 
         # Replace, don't append: re-importing a spec must not duplicate tool
@@ -599,6 +605,7 @@ async def register_openapi_spec(connection_id: str, payload: dict, current_user:
     await cache_tool_routing()
     await cache_prompt_routing()
     await cache_resource_routing()
+    await cache_sensitive_responses()
     await publish_config_update("openapi", connection_id)
     await log_system_action(current_user, "openapi_imported", connection_id, name, {"tools_imported": len(inserted_tools)})
 

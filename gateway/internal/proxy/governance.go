@@ -205,7 +205,7 @@ func (p *MCPProxy) recordOutcome(ctx context.Context, o *outcomeParams) {
 	// tokens, or banking PII in plaintext. A connection flagged "sensitive
 	// response" has its body suppressed entirely (Layer 3).
 	redactedParams, _ := redactValue(o.params, p.sensitiveKeys()).(map[string]any)
-	redactedResponse := p.redactForStorage(o.serviceName, o.responseData)
+	redactedResponse := p.redactForStorage(o.serviceName, o.actionName, o.responseData)
 
 	// Redis pub/sub event for frontend WebSocket streaming
 	p.publishEvent(ctx, GovernanceEvent{

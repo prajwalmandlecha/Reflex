@@ -91,8 +91,11 @@ async def init_db_schema():
         input_schema            JSONB DEFAULT '{}',
         underlying_ops          JSONB DEFAULT '[]',
         exposed                 BOOLEAN DEFAULT true,
+        sensitive_response      BOOLEAN DEFAULT false,
         created_at              TIMESTAMPTZ DEFAULT NOW()
     );
+    -- Self-healing: add the sensitive_response column to existing tools tables.
+    ALTER TABLE tools ADD COLUMN IF NOT EXISTS sensitive_response BOOLEAN DEFAULT false;
 
     -- MCP resources exposed by a native MCP bank connection (resources/list).
     CREATE TABLE IF NOT EXISTS resources (

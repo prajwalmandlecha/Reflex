@@ -367,7 +367,7 @@ async def cache_bank_connections_list():
             """
         )
         tools_rows = await conn.fetch(
-            "SELECT id, bank_connection_id, name, description, input_schema, exposed FROM tools"
+            "SELECT id, bank_connection_id, name, description, input_schema, exposed, sensitive_response FROM tools"
         )
         resources_rows = await conn.fetch(
             "SELECT id, bank_connection_id, uri, name, description, mime_type, exposed FROM resources"
@@ -384,6 +384,7 @@ async def cache_bank_connections_list():
             "description": t["description"] or "",
             "input_schema": json.loads(t["input_schema"]) if isinstance(t["input_schema"], str) else (t["input_schema"] or {}),
             "exposed": t["exposed"],
+            "sensitive_response": t["sensitive_response"],
         })
 
     resources_by_conn: dict[str, list[dict[str, Any]]] = {}
@@ -436,14 +437,24 @@ async def cache_bank_connections_list():
 
 @_non_fatal_cache
 async def cache_tool_routing():
-    """Cache tool_name → bank_connection_id mapping in Redis for gateway routing."""
+    """Cache tool_name → {connection_id, sensitive} mapping in Redis for gateway routing.
+
+    The gateway uses this both to route tools/call to the correct downstream and
+    to decide per-tool response redaction (a tool flagged sensitive has its
+    response body suppressed in audit/events, not just key-redacted)."""
     pool = get_pool()
     redis = get_redis()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT name, bank_connection_id FROM tools WHERE exposed = true"
+            "SELECT name, bank_connection_id, sensitive_response FROM tools WHERE exposed = true"
         )
-        mapping = {r["name"]: r["bank_connection_id"] for r in rows}
+        mapping = {
+            r["name"]: {
+                "connection_id": r["bank_connection_id"],
+                "sensitive": bool(r["sensitive_response"]),
+            }
+            for r in rows
+        }
         await redis.set("agp:tool_routing", json.dumps(mapping))
 
 

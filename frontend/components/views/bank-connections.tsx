@@ -197,6 +197,27 @@ export function BankConnectionsView({
                         >
                           {tool.exposed ? 'EXPOSED' : 'DISABLED'}
                         </button>
+                        <button
+                          onClick={async () => {
+                            try {
+                              await api.updateTool(Number(tool.id), { sensitive_response: !tool.sensitive_response });
+                              if (onRefresh) onRefresh();
+                            } catch (err: any) {
+                              alert(`Failed to update tool: ${err.message || 'Unknown error'}`);
+                            }
+                          }}
+                          className={cn(
+                            'px-2 py-0.5 rounded font-mono text-[9px] uppercase tracking-wider transition-colors cursor-pointer',
+                            tool.sensitive_response
+                              ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30 hover:bg-amber-500/30'
+                              : 'bg-white/5 text-ink-secondary border border-white/10 hover:bg-amber-500/20 hover:text-amber-400'
+                          )}
+                          title={tool.sensitive_response
+                            ? 'Sensitive response — suppress this tool\'s response body in audit/events. Click to clear.'
+                            : 'Mark tool response as sensitive — suppress its body in audit/events (for PII key-redaction can\'t catch).'}
+                        >
+                          {tool.sensitive_response ? 'SENSITIVE' : 'REDACT'}
+                        </button>
                       </div>
                     ))}
                   </div>
@@ -491,6 +512,7 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
   const [sourceType, setSourceType] = useState<'native_mcp' | 'openapi'>('native_mcp');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [sensitiveResponse, setSensitiveResponse] = useState(false);
 
   // Native MCP Form Fields
   const [mcpName, setMcpName] = useState('');
@@ -526,6 +548,7 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
         mcpUrl: mcpUrl.trim(),
         credential_type: mcpAuthType,
         credentials: mcpAuthType !== 'none' && mcpToken ? mcpToken : undefined,
+        sensitive_response: sensitiveResponse,
       } as any);
       onComplete();
     } catch (err: any) {
@@ -577,6 +600,7 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
         apiName || undefined,
         apiAuthType,
         apiAuthType !== 'none' && apiToken ? apiToken : undefined,
+        sensitiveResponse,
       );
       onComplete();
     } catch (err: any) {
@@ -691,6 +715,20 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
             )}
           </div>
 
+          <label className="flex items-start gap-2 rounded border border-white/10 bg-white/[0.02] p-3">
+            <input
+              type="checkbox"
+              checked={sensitiveResponse}
+              onChange={(e) => setSensitiveResponse(e.target.checked)}
+              className="mt-0.5 h-4 w-4 accent-cyan-500"
+            />
+            <span className="font-sans text-[11px] text-ink-secondary">
+              <span className="font-mono text-xs text-ink-primary">Sensitive response</span> — suppress this
+              connection&apos;s response body from the audit log and live event stream entirely (for tools
+              that return full customer records or other PII that key-based redaction can&apos;t catch).
+            </span>
+          </label>
+
           <div className="flex justify-end pt-3">
             <Button
               type="submit"
@@ -802,6 +840,20 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
               />
             )}
           </div>
+
+          <label className="flex items-start gap-2 rounded border border-white/10 bg-white/[0.02] p-3">
+            <input
+              type="checkbox"
+              checked={sensitiveResponse}
+              onChange={(e) => setSensitiveResponse(e.target.checked)}
+              className="mt-0.5 h-4 w-4 accent-cyan-500"
+            />
+            <span className="font-sans text-[11px] text-ink-secondary">
+              <span className="font-mono text-xs text-ink-primary">Sensitive response</span> — suppress this
+              connection&apos;s response body from the audit log and live event stream entirely (for tools
+              that return full customer records or other PII that key-based redaction can&apos;t catch).
+            </span>
+          </label>
 
           <div className="flex justify-end pt-3">
             <Button
