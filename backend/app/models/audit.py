@@ -26,7 +26,6 @@ class AuditLogResponse(BaseModel):
     decision: str  # 'allow', 'deny'
     deny_stage: str = ""
     reason: str = ""
-    spend_delta: int = 0
     total_latency_ms: float = 0.0
     killswitch_latency_ms: float = 0.0
     policy_latency_ms: float = 0.0

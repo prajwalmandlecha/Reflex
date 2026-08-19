@@ -542,47 +542,9 @@ func toFloatOK(val any) (float64, bool) {
 	return 0, false
 }
 
-// ExtractAmountCents computes the monetary value of a call in cents.
-//
-// If the tool has parameter-level caps declared in cfg, ExtractAmountCents
-// inspects the call's args for those parameter names and returns their summed
-// monetary value in cents (handling _cents suffix vs major units). If no param
-// rules match, it falls back to the legacy heuristic (`amount_cents` in cents,
-// `amount` in major units).
-func (c *Checker) ExtractAmountCents(cfg *configcache.AgentConfig, toolName string, args map[string]any) (cents float64, found bool) {
-	if args == nil {
-		return 0, false
-	}
-	rules := c.ParamRules(cfg, toolName)
-	if len(rules) > 0 {
-		var totalCents float64
-		var anyFound bool
-		for name := range rules {
-			if v, ok := args[name]; ok {
-				if f, ok := toFloatOK(v); ok {
-					anyFound = true
-					if strings.HasSuffix(name, "_cents") {
-						totalCents += abs(f)
-					} else {
-						totalCents += abs(f) * 100.0
-					}
-				}
-			}
-		}
-		if anyFound {
-			return totalCents, true
-		}
-	}
-
-	if v, ok := args["amount_cents"]; ok {
-		if f, ok := toFloatOK(v); ok {
-			return abs(f), true
-		}
-	}
-	if v, ok := args["amount"]; ok {
-		if f, ok := toFloatOK(v); ok {
-			return abs(f) * 100.0, true
-		}
-	}
-	return 0, false
-}
+// Money is now fully declarative: the operator names the exact money field via
+// parameter-level caps (params.{param}.{daily,hourly,monthly}_cents) or shared
+// caps (shared_caps[{param, window, limit_cents}]). There is no synthesized
+// "amount" — the old ExtractAmountCents heuristic (sum any param with a rule,
+// or guess amount/amount_cents) was removed because it could not know which
+// field is money and billed non-money params (e.g. max_characters) as dollars.

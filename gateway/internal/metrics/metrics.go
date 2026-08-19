@@ -78,14 +78,6 @@ var (
 		Help:      "Total authorization decisions by outcome and deny stage.",
 	}, []string{"tool", "agent_class", "decision", "deny_stage"})
 
-	// SpendProcessed tracks processed spend amount in smallest currency unit.
-	SpendProcessed = promauto.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "agp",
-		Subsystem: "gateway",
-		Name:      "spend_processed_cents",
-		Help:      "Total spend processed in cents.",
-	}, []string{"agent_id", "agent_class"})
-
 	// ActiveSessions tracks active MCP sessions.
 	ActiveSessions = promauto.NewGauge(prometheus.GaugeOpts{
 		Namespace: "agp",

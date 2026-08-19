@@ -29,8 +29,6 @@ type Input struct {
 	Action        string         `json:"action"`
 	Resource      string         `json:"resource"`
 	PolicyVersion int            `json:"policy_version"`
-	Amount        float64        `json:"amount,omitempty"`
-	Currency      string         `json:"currency,omitempty"`
 	AllowedTools  []string       `json:"allowed_tools,omitempty"`
 	Params        map[string]any `json:"params,omitempty"`
 	// Constraints carries the tool's effective operational constraints (e.g.
@@ -383,9 +381,11 @@ func aggregatorModule(n int) string {
 	return b.String()
 }
 
-// subscribePolicyUpdates listens on Redis "config:updates" and "policy:updates" channels.
+// subscribePolicyUpdates listens on Redis "config:updates" for policy reload
+// notifications. (The backend publishes only "config:updates"; the old
+// "policy:updates" channel was never published to and has been removed.)
 func (e *Engine) subscribePolicyUpdates(ctx context.Context) {
-	sub := e.rdb.Subscribe(ctx, "config:updates", "policy:updates")
+	sub := e.rdb.Subscribe(ctx, "config:updates")
 	defer sub.Close()
 
 	ch := sub.Channel()
@@ -396,6 +396,16 @@ func (e *Engine) subscribePolicyUpdates(ctx context.Context) {
 		case msg, ok := <-ch:
 			if !ok {
 				return
+			}
+			// Only recompile when the change actually affects policies. A
+			// bank-connection edit, agent-instance change, or fleet toggle
+			// publishes on the same channel but must not trigger a full Rego
+			// recompile. The 30s poll is the safety net for any missed message.
+			var update struct {
+				Type string `json:"type"`
+			}
+			if json.Unmarshal([]byte(msg.Payload), &update) != nil || update.Type != "policy" {
+				continue
 			}
 			e.logger.Info("received policy reload notification", "channel", msg.Channel)
 			_ = e.loadAndCompile(ctx, true)

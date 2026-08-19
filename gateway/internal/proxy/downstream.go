@@ -11,6 +11,17 @@ import (
 	"time"
 )
 
+// extractRequestID pulls the JSON-RPC "id" field out of a request body so
+// downstream-failure error responses can echo it back and stay correlated with
+// the agent's request. Returns nil when the body isn't valid JSON-RPC.
+func extractRequestID(bodyBytes []byte) any {
+	var rpcReq map[string]any
+	if err := json.Unmarshal(bodyBytes, &rpcReq); err != nil {
+		return nil
+	}
+	return rpcReq["id"]
+}
+
 // proxyToTarget forwards the request downstream and writes the response.
 // Returns (false, nil) when the downstream exchange failed (unreachable, read
 // error, or 5xx) so callers can roll back any governance counters committed in
@@ -31,36 +42,44 @@ func (p *MCPProxy) proxyToTarget(w http.ResponseWriter, r *http.Request, targetB
 		connID = serviceName[0]
 	}
 
+	// Preserve the JSON-RPC request id so downstream-failure error responses
+	// stay correlated with the agent's request (previously id was nil).
+	reqID := extractRequestID(bodyBytes)
+
 	resp := p.doProxyRequest(r, targetURL, bodyBytes, false, connID)
 	if resp == nil {
 		p.logger.Error("failed to reach target MCP Server", "target", targetBaseURL)
-		p.sendErrorResponse(w, r, nil, fmt.Sprintf("downstream MCP Server (%s) unreachable", targetBaseURL))
+		p.sendErrorResponse(w, r, reqID, fmt.Sprintf("downstream MCP Server (%s) unreachable", targetBaseURL))
 		return false, nil
 	}
 	defer resp.Body.Close()
 
-	// Read the response body to check for session errors
-	respBytes, err := io.ReadAll(resp.Body)
+	// Read a bounded prefix to detect "Session has been terminated" so we can
+	// transparently retry with a fresh session BEFORE streaming anything to the
+	// client. The termination error is short and appears at the start of the
+	// body, so a small prefix is sufficient.
+	const sessionProbe = 64 * 1024
+	prefix, err := io.ReadAll(io.LimitReader(resp.Body, sessionProbe))
 	if err != nil {
-		p.sendErrorResponse(w, r, nil, "error reading downstream response")
+		p.sendErrorResponse(w, r, reqID, "error reading downstream response")
 		return false, nil
 	}
 
 	// Detect "Session has been terminated" and retry with a fresh session
-	if strings.Contains(string(respBytes), "Session has been terminated") {
+	if strings.Contains(string(prefix), "Session has been terminated") {
 		p.logger.Info("downstream session terminated, re-initializing", "target", targetURL)
-		p.invalidateDownstreamSession(r.Context(), targetURL)
+		p.invalidateDownstreamSession(r.Context(), connID, targetURL)
 		resp.Body.Close()
 
 		resp2 := p.doProxyRequest(r, targetURL, bodyBytes, true, connID)
 		if resp2 == nil {
-			p.sendErrorResponse(w, r, nil, fmt.Sprintf("downstream MCP Server (%s) unreachable", targetBaseURL))
+			p.sendErrorResponse(w, r, reqID, fmt.Sprintf("downstream MCP Server (%s) unreachable", targetBaseURL))
 			return false, nil
 		}
 		defer resp2.Body.Close()
-		respBytes, err = io.ReadAll(resp2.Body)
+		respBytes, err := io.ReadAll(resp2.Body)
 		if err != nil {
-			p.sendErrorResponse(w, r, nil, "error reading downstream response")
+			p.sendErrorResponse(w, r, reqID, "error reading downstream response")
 			return false, nil
 		}
 		for k, vv := range resp2.Header {
@@ -73,14 +92,28 @@ func (p *MCPProxy) proxyToTarget(w http.ResponseWriter, r *http.Request, targetB
 		return resp2.StatusCode < 500, respBytes
 	}
 
+	// Stream the response to the client while capturing the full body for the
+	// live governance event stream. A TeeReader forwards bytes as they arrive
+	// (no full buffering of large SSE responses) while a buffer accumulates the
+	// same bytes for parseResponseData.
 	for k, vv := range resp.Header {
 		for _, v := range vv {
 			w.Header().Add(k, v)
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	w.Write(respBytes)
-	return resp.StatusCode < 500, respBytes
+
+	var captured bytes.Buffer
+	captured.Write(prefix)
+	if _, err := w.Write(prefix); err != nil {
+		return false, nil
+	}
+	_, err = io.Copy(io.MultiWriter(w, &captured), resp.Body)
+	if err != nil {
+		p.logger.Warn("error streaming downstream response", "target", targetURL, "error", err)
+		return false, nil
+	}
+	return resp.StatusCode < 500, captured.Bytes()
 }
 
 // parseResponseData converts a raw downstream response body into a structured
@@ -147,10 +180,10 @@ func (p *MCPProxy) doProxyRequest(r *http.Request, targetURL string, bodyBytes [
 	}
 
 	if forceNewSession {
-		if sessID := p.createDownstreamSession(r.Context(), targetURL); sessID != "" {
+		if sessID := p.createDownstreamSession(r.Context(), connID, targetURL); sessID != "" {
 			outReq.Header.Set("Mcp-Session-Id", sessID)
 		}
-	} else if sessID := p.getOrCreateDownstreamSession(r.Context(), targetURL); sessID != "" {
+	} else if sessID := p.getOrCreateDownstreamSession(r.Context(), connID, targetURL); sessID != "" {
 		outReq.Header.Set("Mcp-Session-Id", sessID)
 	}
 
@@ -163,17 +196,17 @@ func (p *MCPProxy) doProxyRequest(r *http.Request, targetURL string, bodyBytes [
 
 // fetchToolsFromTarget fetches tools/list from a single native MCP downstream.
 // Handles session termination by retrying with a fresh session.
-func (p *MCPProxy) fetchToolsFromTarget(r *http.Request, targetURL string, bodyBytes []byte) []any {
-	tools, terminated := p.doFetchTools(r, targetURL, bodyBytes, false)
+func (p *MCPProxy) fetchToolsFromTarget(r *http.Request, connID, targetURL string, bodyBytes []byte) []any {
+	tools, terminated := p.doFetchTools(r, connID, targetURL, bodyBytes, false)
 	if terminated {
 		p.logger.Info("downstream session terminated during tools/list, re-initializing", "target", targetURL)
-		p.invalidateDownstreamSession(r.Context(), targetURL)
-		tools, _ = p.doFetchTools(r, targetURL, bodyBytes, true)
+		p.invalidateDownstreamSession(r.Context(), connID, targetURL)
+		tools, _ = p.doFetchTools(r, connID, targetURL, bodyBytes, true)
 	}
 	return tools
 }
 
-func (p *MCPProxy) doFetchTools(r *http.Request, targetURL string, bodyBytes []byte, forceNewSession bool) ([]any, bool) {
+func (p *MCPProxy) doFetchTools(r *http.Request, connID, targetURL string, bodyBytes []byte, forceNewSession bool) ([]any, bool) {
 	outReq, err := http.NewRequestWithContext(r.Context(), "POST", targetURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, false
@@ -182,10 +215,10 @@ func (p *MCPProxy) doFetchTools(r *http.Request, targetURL string, bodyBytes []b
 	outReq.Header.Set("Accept", "application/json, text/event-stream")
 
 	if forceNewSession {
-		if sessID := p.createDownstreamSession(r.Context(), targetURL); sessID != "" {
+		if sessID := p.createDownstreamSession(r.Context(), connID, targetURL); sessID != "" {
 			outReq.Header.Set("Mcp-Session-Id", sessID)
 		}
-	} else if sessID := p.getOrCreateDownstreamSession(r.Context(), targetURL); sessID != "" {
+	} else if sessID := p.getOrCreateDownstreamSession(r.Context(), connID, targetURL); sessID != "" {
 		outReq.Header.Set("Mcp-Session-Id", sessID)
 	}
 
@@ -232,9 +265,20 @@ func (p *MCPProxy) doFetchTools(r *http.Request, targetURL string, bodyBytes []b
 
 // --- Downstream Session Management ---
 
-func (p *MCPProxy) getOrCreateDownstreamSession(ctx context.Context, targetURL string) string {
+// sessionKey builds the Redis key for a downstream session. The connection ID
+// is included so two connections pointing at the SAME MCP URL but with
+// DIFFERENT credentials don't share a session (a session is scoped to the
+// authenticated downstream identity, not just the URL).
+func sessionKey(connID, targetURL string) string {
+	if connID != "" {
+		return fmt.Sprintf("mcp:auto_session:%s:%s", connID, targetURL)
+	}
+	return fmt.Sprintf("mcp:auto_session:%s", targetURL)
+}
+
+func (p *MCPProxy) getOrCreateDownstreamSession(ctx context.Context, connID, targetURL string) string {
 	if p.rdb != nil {
-		key := fmt.Sprintf("mcp:auto_session:%s", targetURL)
+		key := sessionKey(connID, targetURL)
 		if val, err := p.rdb.Get(ctx, key).Result(); err == nil && val != "" {
 			return val
 		}
@@ -267,7 +311,7 @@ func (p *MCPProxy) getOrCreateDownstreamSession(ctx context.Context, targetURL s
 	// Stateless servers may not return a session; only cache it if present.
 	sessID := resp.Header.Get("Mcp-Session-Id")
 	if sessID != "" && p.rdb != nil {
-		key := fmt.Sprintf("mcp:auto_session:%s", targetURL)
+		key := sessionKey(connID, targetURL)
 		p.rdb.Set(ctx, key, sessID, 1*time.Hour)
 	}
 
@@ -275,15 +319,15 @@ func (p *MCPProxy) getOrCreateDownstreamSession(ctx context.Context, targetURL s
 }
 
 // invalidateDownstreamSession removes the cached session for a target.
-func (p *MCPProxy) invalidateDownstreamSession(ctx context.Context, targetURL string) {
+func (p *MCPProxy) invalidateDownstreamSession(ctx context.Context, connID, targetURL string) {
 	if p.rdb != nil {
-		key := fmt.Sprintf("mcp:auto_session:%s", targetURL)
+		key := sessionKey(connID, targetURL)
 		p.rdb.Del(ctx, key)
 	}
 }
 
 // createDownstreamSession initializes a new session with the downstream and caches it.
-func (p *MCPProxy) createDownstreamSession(ctx context.Context, targetURL string) string {
+func (p *MCPProxy) createDownstreamSession(ctx context.Context, connID, targetURL string) string {
 	initBody, _ := json.Marshal(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
@@ -311,7 +355,7 @@ func (p *MCPProxy) createDownstreamSession(ctx context.Context, targetURL string
 	// Stateless servers may not return a session; only cache it if present.
 	sessID := resp.Header.Get("Mcp-Session-Id")
 	if sessID != "" && p.rdb != nil {
-		key := fmt.Sprintf("mcp:auto_session:%s", targetURL)
+		key := sessionKey(connID, targetURL)
 		p.rdb.Set(ctx, key, sessID, 1*time.Hour)
 	}
 	return sessID

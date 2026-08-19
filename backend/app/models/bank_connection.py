@@ -14,6 +14,7 @@ class BankConnectionBase(BaseModel):
     base_url: str | None = None
     openapi_spec: str | None = None
     credential_type: str | None = None
+    sensitive_response: bool = False  # suppress response body in audit/events
 
 
 class BankConnectionCreate(BankConnectionBase):
@@ -30,6 +31,7 @@ class BankConnectionUpdate(BaseModel):
     credential_type: str | None = None
     credentials: str | None = None
     status: str | None = None
+    sensitive_response: bool | None = None
 
 
 class BankConnectionResponse(BankConnectionBase):

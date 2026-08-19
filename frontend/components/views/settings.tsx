@@ -3,9 +3,11 @@
 import { useEffect, useState } from 'react';
 import { Panel } from '@/components/gov/panel';
 import { Label } from '@/components/ui/label';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
-import { User, Mail, Shield, Server, Database, CheckCircle2, XCircle, Cpu } from 'lucide-react';
+import { User, Mail, Shield, Server, Database, CheckCircle2, XCircle, Cpu, Plus, Trash2, Save, Loader2, EyeOff } from 'lucide-react';
 
 type SystemHealth = { gateway: string; redis: string; opa: string; database: string };
 
@@ -175,7 +177,125 @@ export function SettingsView({ operator }: { operator: string }) {
             </div>
           </div>
         </Panel>
+
+        {/* Redaction Settings */}
+        <RedactionSettings />
       </div>
     </div>
+  );
+}
+
+function RedactionSettings() {
+  const { hasPermission } = useAuth();
+  const canEdit = hasPermission('settings:update');
+  const [keys, setKeys] = useState<string[]>([]);
+  const [draft, setDraft] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    api.getRedactionKeys()
+      .then((res) => setKeys(res.keys || []))
+      .catch((err: any) => setError(err?.message || 'Failed to load redaction keys'))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const addKey = () => {
+    const k = draft.trim().toLowerCase();
+    if (!k || keys.includes(k)) return;
+    setKeys([...keys, k]);
+    setDraft('');
+    setSaved(false);
+  };
+
+  const removeKey = (k: string) => {
+    setKeys(keys.filter((x) => x !== k));
+    setSaved(false);
+  };
+
+  const save = async () => {
+    setSaving(true);
+    setError('');
+    setSaved(false);
+    try {
+      const res = await api.updateRedactionKeys(keys);
+      setKeys(res.keys || []);
+      setSaved(true);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to save redaction keys');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Panel title="Sensitive Field Redaction" className="lg:col-span-2">
+      <div className="space-y-4 p-4">
+        <p className="font-sans text-xs text-ink-secondary">
+          The gateway redacts sensitive fields (credentials, tokens, banking PII) from request
+          params and response bodies before they reach the audit log or live event stream. Add
+          extra field names below — they are merged with the built-in defaults and matched
+          case-insensitively at any nesting depth.
+        </p>
+
+        {loading ? (
+          <div className="flex items-center gap-2 font-mono text-xs text-ink-secondary">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…
+          </div>
+        ) : (
+          <>
+            <div className="flex flex-wrap gap-2">
+              {keys.length === 0 && (
+                <span className="font-mono text-[11px] text-ink-secondary">
+                  No extra keys configured — built-in defaults only.
+                </span>
+              )}
+              {keys.map((k) => (
+                <span
+                  key={k}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 font-mono text-[11px] text-ink-primary"
+                >
+                  <EyeOff className="h-3 w-3 text-signal-caution" />
+                  {k}
+                  {canEdit && (
+                    <button
+                      onClick={() => removeKey(k)}
+                      className="text-ink-secondary hover:text-signal-stopped"
+                      aria-label={`Remove ${k}`}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  )}
+                </span>
+              ))}
+            </div>
+
+            {canEdit && (
+              <div className="flex items-center gap-2">
+                <Input
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && addKey()}
+                  placeholder="e.g. internal_ref, customer_id"
+                  className="border-white/10 bg-white/[0.02] font-mono text-sm"
+                />
+                <Button variant="outline" size="sm" onClick={addKey} disabled={!draft.trim()}>
+                  <Plus className="h-3.5 w-3.5" /> Add
+                </Button>
+                <Button variant="default" size="sm" onClick={save} disabled={saving}>
+                  {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                  Save
+                </Button>
+              </div>
+            )}
+
+            {error && <div className="font-mono text-[11px] text-signal-stopped">{error}</div>}
+            {saved && <div className="font-mono text-[11px] text-signal-healthy">Saved.</div>}
+          </>
+        )}
+      </div>
+    </Panel>
   );
 }

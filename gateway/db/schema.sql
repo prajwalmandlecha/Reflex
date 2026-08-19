@@ -181,7 +181,6 @@ CREATE TABLE IF NOT EXISTS
         decision VARCHAR(16) NOT NULL, -- allow / deny
         deny_stage VARCHAR(32) DEFAULT '', -- killswitch / constraint / policy / spend
         reason TEXT DEFAULT '',
-        spend_delta BIGINT DEFAULT 0,
         -- Per-stage latency breakdown (all in milliseconds)
         total_latency_ms DOUBLE PRECISION DEFAULT 0,
         killswitch_latency_ms DOUBLE PRECISION DEFAULT 0,

@@ -103,12 +103,7 @@ func (p *MCPProxy) handleOpenAPIRequest(
 		toolName, _ := params["name"].(string)
 		args, _ := params["arguments"].(map[string]any)
 
-		// Use the shared extractor (declared money_params, else legacy amount/
-		// amount_cents; handles float/int/string) so caps and the $1000 bound
-		// aren't bypassed by non-float64 encodings or renamed money fields (G12).
-		amount, _ := p.extractAmount(agentCfg, toolName, args)
-
-		allowed, denyStage, reason, timings, committedEntries := p.governCall(r.Context(), callKindTool, agentID, classID, agentKind, toolName, amount, allowedTools, agentCfg, args)
+		allowed, denyStage, reason, timings, committedEntries := p.governCall(r.Context(), callKindTool, agentID, classID, agentKind, toolName, allowedTools, agentCfg, args)
 
 		downstreamStart := time.Now()
 		var mcpResult map[string]any
@@ -156,12 +151,6 @@ func (p *MCPProxy) handleOpenAPIRequest(
 
 		totalMs := ms(time.Since(reqStart))
 
-		// Denied requests must not contribute to spend totals
-		spendDeltaCents := int64(0)
-		if allowed {
-			spendDeltaCents = int64(amount * 100)
-		}
-
 		if allowed {
 			res := map[string]any{"jsonrpc": "2.0", "id": reqID, "result": mcpResult}
 			p.sendJSONRPCResponse(w, r, res)
@@ -175,7 +164,6 @@ func (p *MCPProxy) handleOpenAPIRequest(
 			allowed:      allowed,
 			denyStage:    denyStage,
 			reason:       reason,
-			spendDelta:   spendDeltaCents,
 			timings:      timings,
 			downstreamMs: downstreamMs,
 			totalMs:      totalMs,
@@ -236,18 +224,18 @@ func (p *MCPProxy) handleAggregatedToolsList(w http.ResponseWriter, r *http.Requ
 	var mu sync.Mutex
 	for _, job := range jobs {
 		wg.Add(1)
-		go func(targetURL string) {
+		go func(svcName, targetURL string) {
 			defer wg.Done()
 			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 			defer cancel()
 			reqWithTimeout := r.WithContext(ctx)
-			tools := p.fetchToolsFromTarget(reqWithTimeout, targetURL, bodyBytes)
+			tools := p.fetchToolsFromTarget(reqWithTimeout, svcName, targetURL, bodyBytes)
 			if len(tools) > 0 {
 				mu.Lock()
 				allTools = append(allTools, tools...)
 				mu.Unlock()
 			}
-		}(job.url)
+		}(job.svcName, job.url)
 	}
 	wg.Wait()
 
@@ -351,12 +339,12 @@ func (p *MCPProxy) handleAggregatedList(w http.ResponseWriter, r *http.Request, 
 	seen := make(map[string]bool)
 	for _, job := range jobs {
 		wg.Add(1)
-		go func(targetURL string) {
+		go func(svcName, targetURL string) {
 			defer wg.Done()
 			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 			defer cancel()
 			reqWithTimeout := r.WithContext(ctx)
-			items := p.fetchListFromTarget(reqWithTimeout, targetURL, bodyBytes, resultKey)
+			items := p.fetchListFromTarget(reqWithTimeout, svcName, targetURL, bodyBytes, resultKey)
 			if len(items) > 0 {
 				mu.Lock()
 				for _, item := range items {
@@ -376,7 +364,7 @@ func (p *MCPProxy) handleAggregatedList(w http.ResponseWriter, r *http.Request, 
 				}
 				mu.Unlock()
 			}
-		}(job.url)
+		}(job.svcName, job.url)
 	}
 	wg.Wait()
 	if merged == nil {
@@ -393,14 +381,14 @@ func (p *MCPProxy) handleAggregatedList(w http.ResponseWriter, r *http.Request, 
 
 // fetchListFromTarget forwards a resources/list or prompts/list to a single
 // native MCP downstream and returns the items array (empty on any failure).
-func (p *MCPProxy) fetchListFromTarget(r *http.Request, targetURL string, bodyBytes []byte, resultKey string) []any {
+func (p *MCPProxy) fetchListFromTarget(r *http.Request, connID, targetURL string, bodyBytes []byte, resultKey string) []any {
 	outReq, err := http.NewRequestWithContext(r.Context(), "POST", targetURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil
 	}
 	outReq.Header.Set("Content-Type", "application/json")
 	outReq.Header.Set("Accept", "application/json, text/event-stream")
-	if sessID := p.getOrCreateDownstreamSession(r.Context(), targetURL); sessID != "" {
+	if sessID := p.getOrCreateDownstreamSession(r.Context(), connID, targetURL); sessID != "" {
 		outReq.Header.Set("Mcp-Session-Id", sessID)
 	}
 

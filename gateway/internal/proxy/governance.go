@@ -20,7 +20,6 @@ func (p *MCPProxy) governCall(
 	ctx context.Context,
 	kind callKind,
 	agentID, classID, agentKind, toolName string,
-	amount float64,
 	allowedTools []string,
 	cfg *configcache.AgentConfig,
 	args map[string]any,
@@ -90,7 +89,6 @@ func (p *MCPProxy) governCall(
 		AgentKind:    agentKind,
 		Action:       toolName,
 		Resource:     string(kind), // "tool" | "resource" | "prompt" — lets policies distinguish action types
-		Amount:       amount,
 		AllowedTools: allowedTools,
 		Params:       args,
 		// Pass the tool's effective constraints into Rego so stateless rules
@@ -165,16 +163,6 @@ func (p *MCPProxy) rollbackCommittedEntries(entries []spend.Entry, agentID, tool
 	}
 }
 
-// extractAmount resolves a call's monetary value in major currency units from
-// the legacy amount/amount_cents heuristic. found reports whether a parseable
-// amount was present. All money extraction routes through
-// constraints.ExtractAmountCents so the proxy (OPA input, metrics) and the
-// per-param spend-cap counters can never disagree on the amount.
-func (p *MCPProxy) extractAmount(cfg *configcache.AgentConfig, toolName string, args map[string]any) (float64, bool) {
-	cents, found := p.constraintCheck.ExtractAmountCents(cfg, toolName, args)
-	return cents / 100.0, found
-}
-
 // outcomeParams bundles all the data needed to record telemetry (metrics, audit
 // log, and event publishing) after a governance decision. Used by recordOutcome
 // to eliminate the duplicated ~50-line telemetry block across all request paths.
@@ -186,7 +174,6 @@ type outcomeParams struct {
 	allowed      bool
 	denyStage    string
 	reason       string
-	spendDelta   int64 // in cents
 	timings      GovernanceTimings
 	downstreamMs float64
 	totalMs      float64
@@ -210,23 +197,26 @@ func (p *MCPProxy) recordOutcome(ctx context.Context, o *outcomeParams) {
 	metrics.GovernanceOverhead.WithLabelValues(o.actionName, decisionStr).Observe(govOverheadMs / 1000.0)
 	if o.allowed {
 		metrics.DownstreamDuration.WithLabelValues(o.serviceName, o.actionName).Observe(o.downstreamMs / 1000.0)
-		if o.spendDelta > 0 {
-			metrics.SpendProcessed.WithLabelValues(o.agentID, o.classID).Add(float64(o.spendDelta))
-		}
 	}
 	metrics.DecisionsTotal.WithLabelValues(o.actionName, o.classID, decisionStr, o.denyStage).Inc()
 
+	// Redact both request params and the response body before they leave the
+	// gateway: the event stream and audit log must never carry credentials,
+	// tokens, or banking PII in plaintext. A connection flagged "sensitive
+	// response" has its body suppressed entirely (Layer 3).
+	redactedParams, _ := redactValue(o.params, p.sensitiveKeys()).(map[string]any)
+	redactedResponse := p.redactForStorage(o.serviceName, o.responseData)
+
 	// Redis pub/sub event for frontend WebSocket streaming
 	p.publishEvent(ctx, GovernanceEvent{
-		Type:            "decision",
-		AgentID:         o.agentID,
-		AgentClassID:    o.classID,
-		Tool:            o.actionName,
-		Decision:        decisionStr,
-		DenyStage:       o.denyStage,
-		Reason:          o.reason,
-		SpendDeltaCents: o.spendDelta,
-		ResponseData:    o.responseData,
+		Type:         "decision",
+		AgentID:      o.agentID,
+		AgentClassID: o.classID,
+		Tool:         o.actionName,
+		Decision:     decisionStr,
+		DenyStage:    o.denyStage,
+		Reason:       o.reason,
+		ResponseData: redactedResponse,
 		Latency: map[string]float64{
 			"total_ms":               o.totalMs,
 			"killswitch_ms":          o.timings.KillswitchMs,
@@ -245,12 +235,11 @@ func (p *MCPProxy) recordOutcome(ctx context.Context, o *outcomeParams) {
 		AgentClassID:         o.classID,
 		Action:               o.actionName,
 		BankConnectionID:     o.serviceName,
-		Params:               redactParams(o.params),
-		ResponseData:         o.responseData,
+		Params:               redactedParams,
+		ResponseData:         redactedResponse,
 		Decision:             decisionStr,
 		DenyStage:            o.denyStage,
 		Reason:               o.reason,
-		SpendDelta:           o.spendDelta,
 		TotalLatencyMs:       o.totalMs,
 		KillswitchLatencyMs:  o.timings.KillswitchMs,
 		PolicyLatencyMs:      o.timings.PolicyMs,

@@ -44,7 +44,6 @@ INSERT INTO
         decision,
         deny_stage,
         reason,
-        spend_delta,
         total_latency_ms,
         killswitch_latency_ms,
         policy_latency_ms,
@@ -75,8 +74,7 @@ VALUES
         $16,
         $17,
         $18,
-        $19,
-        $20
+        $19
     )
 `
 
@@ -91,7 +89,6 @@ type InsertAuditEntryParams struct {
 	Decision             string          `json:"decision"`
 	DenyStage            pgtype.Text     `json:"deny_stage"`
 	Reason               pgtype.Text     `json:"reason"`
-	SpendDelta           pgtype.Int8     `json:"spend_delta"`
 	TotalLatencyMs       pgtype.Float8   `json:"total_latency_ms"`
 	KillswitchLatencyMs  pgtype.Float8   `json:"killswitch_latency_ms"`
 	PolicyLatencyMs      pgtype.Float8   `json:"policy_latency_ms"`
@@ -115,7 +112,6 @@ func (q *Queries) InsertAuditEntry(ctx context.Context, arg InsertAuditEntryPara
 		arg.Decision,
 		arg.DenyStage,
 		arg.Reason,
-		arg.SpendDelta,
 		arg.TotalLatencyMs,
 		arg.KillswitchLatencyMs,
 		arg.PolicyLatencyMs,
@@ -136,9 +132,10 @@ SELECT
     agent_id,
     agent_class_id,
     action,
+    params,
+    response_data,
     decision,
     deny_stage,
-    spend_delta,
     governance_overhead_ms,
     reason,
     prev_hash,
@@ -155,9 +152,10 @@ type ListAuditLogForVerifyRow struct {
 	AgentID              string        `json:"agent_id"`
 	AgentClassID         pgtype.Text   `json:"agent_class_id"`
 	Action               string        `json:"action"`
+	Params               []byte        `json:"params"`
+	ResponseData         []byte        `json:"response_data"`
 	Decision             string        `json:"decision"`
 	DenyStage            pgtype.Text   `json:"deny_stage"`
-	SpendDelta           pgtype.Int8   `json:"spend_delta"`
 	GovernanceOverheadMs pgtype.Float8 `json:"governance_overhead_ms"`
 	Reason               pgtype.Text   `json:"reason"`
 	PrevHash             pgtype.Text   `json:"prev_hash"`
@@ -179,9 +177,10 @@ func (q *Queries) ListAuditLogForVerify(ctx context.Context) ([]ListAuditLogForV
 			&i.AgentID,
 			&i.AgentClassID,
 			&i.Action,
+			&i.Params,
+			&i.ResponseData,
 			&i.Decision,
 			&i.DenyStage,
-			&i.SpendDelta,
 			&i.GovernanceOverheadMs,
 			&i.Reason,
 			&i.PrevHash,

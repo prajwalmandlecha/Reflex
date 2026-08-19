@@ -52,11 +52,19 @@ local group_labels = {}
 local group_keys_order = {}
 
 for i, e in ipairs(entries) do
-    local new_val = tonumber(redis.call('INCRBYFLOAT', e.key, e.amount))
-    table.insert(applied, e)
-    -- Set a TTL on first creation so windowed counters don't leak forever (G13).
-    if new_val == e.amount and e.ttl > 0 then
-        redis.call('EXPIRE', e.key, e.ttl)
+    local new_val = 0
+    -- Skip zero-amount entries for the increment: the sliding-window rate
+    -- limiter emits 9 zero-amount sub-bucket entries purely to register their
+    -- keys in the group for summing. INCRBYFLOAT 0 would CREATE those keys
+    -- (Redis creates a key on INCRBYFLOAT even with 0), so skipping them avoids
+    -- 9 wasted key creations per call. They still register in the group below.
+    if e.amount ~= 0 then
+        new_val = tonumber(redis.call('INCRBYFLOAT', e.key, e.amount))
+        table.insert(applied, e)
+        -- Set a TTL on first creation so windowed counters don't leak forever (G13).
+        if new_val == e.amount and e.ttl > 0 then
+            redis.call('EXPIRE', e.key, e.ttl)
+        end
     end
 
     if e.group and e.group ~= "" then
@@ -78,7 +86,10 @@ for i, e in ipairs(entries) do
     end
 end
 
--- Second pass: enforce per-group caps on the summed values.
+-- Second pass: enforce per-group caps on the summed values. GET on a
+-- never-created sub-bucket key returns nil -> 0, which is correct (that bucket
+-- has no calls). Only the current sub-bucket is ever incremented, so at most
+-- window/sub_buckets distinct keys are live at once.
 for group, cap in pairs(group_caps) do
     if cap > 0 then
         local sum = 0

@@ -12,11 +12,12 @@ from app.event_processor import init_event_processor, stop_event_processor
 from app.redis_client import close_redis, init_redis
 from app.routes import (
     agent_classes, agent_instances, audit, auth, bank_connections,
-    dashboard, fleet, fleet_caps, internal, metrics, policies, tokens, tools, users, websockets,
+    dashboard, fleet, fleet_caps, internal, metrics, policies, redaction, tokens, tools, users, websockets,
 )
 from app.services.config_propagation import (
     cache_active_policies, cache_bank_connections, cache_tool_routing,
     cache_bank_connections_list, cache_prompt_routing, cache_resource_routing,
+    cache_redaction_keys, cache_sensitive_responses,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -48,7 +49,9 @@ async def lifespan(app: FastAPI):
         await cache_tool_routing()
         await cache_prompt_routing()
         await cache_resource_routing()
-        logger.info("Pre-populated Redis cache with active policies, connections, tool routing, prompt routing, and resource routing")
+        await cache_redaction_keys()
+        await cache_sensitive_responses()
+        logger.info("Pre-populated Redis cache with active policies, connections, tool routing, prompt routing, resource routing, and redaction config")
     except Exception as e:
         logger.warning("Failed to pre-populate Redis cache on startup: %s", e)
 
@@ -96,6 +99,7 @@ app.include_router(policies.router)
 app.include_router(audit.router)
 app.include_router(fleet.router)
 app.include_router(fleet_caps.router)
+app.include_router(redaction.router)
 app.include_router(tokens.router)
 app.include_router(metrics.router)
 app.include_router(dashboard.router)

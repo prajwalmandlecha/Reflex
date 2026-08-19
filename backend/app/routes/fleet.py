@@ -32,7 +32,6 @@ async def publish_fleet_event(event_type: str, target_id: str, reason: str = "")
         "decision": "",
         "deny_stage": "",
         "reason": reason,
-        "spend_delta_cents": 0,
         "latency": {},
         "timestamp": _utc_now_iso(),
     }))

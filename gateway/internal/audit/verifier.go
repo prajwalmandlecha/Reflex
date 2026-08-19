@@ -2,6 +2,7 @@ package audit
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -39,7 +40,6 @@ func Verify(ctx context.Context, pool *pgxpool.Pool) (*VerifyResult, error) {
 		reason := row.Reason.String
 		rowPrevHash := row.PrevHash.String
 		entryHash := row.EntryHash
-		spendDelta := row.SpendDelta.Int64
 		govOverhead := row.GovernanceOverheadMs.Float64
 
 		result.TotalEntries++
@@ -58,9 +58,25 @@ func Verify(ctx context.Context, pool *pgxpool.Pool) (*VerifyResult, error) {
 			Action:               action,
 			Decision:             decision,
 			DenyStage:            denyStage,
-			SpendDelta:           spendDelta,
 			GovernanceOverheadMs: govOverhead,
 			Reason:               reason,
+		}
+
+		// Params and response_data are stored as JSONB ([]byte). Unmarshal them
+		// back into the Entry so computeHash hashes the same JSON the writer
+		// produced. A nil/empty column hashes as nil, matching the writer's
+		// nil Params/ResponseData on the same path.
+		if len(row.Params) > 0 {
+			var params map[string]any
+			if err := json.Unmarshal(row.Params, &params); err == nil {
+				entry.Params = params
+			}
+		}
+		if len(row.ResponseData) > 0 {
+			var resp any
+			if err := json.Unmarshal(row.ResponseData, &resp); err == nil {
+				entry.ResponseData = resp
+			}
 		}
 
 		expectedHash := computeHash(prevHash, entry)

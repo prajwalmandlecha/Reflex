@@ -62,6 +62,7 @@ export type BankConnection = {
   prompts?: BankPrompt[];
   authType?: string;
   credential_type?: string;
+  sensitive_response?: boolean;
   lastSync?: string;
 };
 
@@ -189,8 +190,6 @@ export type GovernanceEvent = {
   denyStage?: string;
   deny_stage?: string;
   reason?: string;
-  spendDeltaCents?: number;
-  spend_delta_cents?: number;
   latency?: LatencyBreakdown;
   timestamp: string;
 };

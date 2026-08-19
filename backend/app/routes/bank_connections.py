@@ -7,7 +7,7 @@ from app.crypto import encrypt
 from app.database import get_pool
 from app.models.bank_connection import BankConnectionCreate, BankConnectionResponse, BankConnectionUpdate
 from app.redis_client import get_redis
-from app.services.config_propagation import cache_bank_connections, cache_bank_connections_list, cache_tool_routing, cache_prompt_routing, cache_resource_routing, publish_config_update
+from app.services.config_propagation import cache_bank_connections, cache_bank_connections_list, cache_tool_routing, cache_prompt_routing, cache_resource_routing, cache_sensitive_responses, publish_config_update
 from app.services.mcp_discovery import fetch_mcp_tools, fetch_mcp_resources, fetch_mcp_prompts
 from app.services.openapi_ingestion import parse_openapi_spec
 from app.slugify import slugify
@@ -228,8 +228,8 @@ async def create_bank_connection(b: BankConnectionCreate, current_user: dict = D
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO bank_connections (id, name, source_type, mcp_url, base_url, openapi_spec, credential_type, encrypted_creds, status)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            INSERT INTO bank_connections (id, name, source_type, mcp_url, base_url, openapi_spec, credential_type, encrypted_creds, status, sensitive_response)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             ON CONFLICT (id) DO UPDATE SET
                 name = EXCLUDED.name,
                 source_type = EXCLUDED.source_type,
@@ -239,10 +239,11 @@ async def create_bank_connection(b: BankConnectionCreate, current_user: dict = D
                 credential_type = EXCLUDED.credential_type,
                 encrypted_creds = COALESCE(EXCLUDED.encrypted_creds, bank_connections.encrypted_creds),
                 status = EXCLUDED.status,
+                sensitive_response = EXCLUDED.sensitive_response,
                 updated_at = NOW()
-            RETURNING id, name, source_type, mcp_url, base_url, openapi_spec, credential_type, status, created_at, updated_at
+            RETURNING id, name, source_type, mcp_url, base_url, openapi_spec, credential_type, status, sensitive_response, created_at, updated_at
             """,
-            conn_id, b.name, b.source_type, b.mcp_url, b.base_url, b.openapi_spec, b.credential_type, enc_creds, status_val,
+            conn_id, b.name, b.source_type, b.mcp_url, b.base_url, b.openapi_spec, b.credential_type, enc_creds, status_val, b.sensitive_response,
         )
 
         if mcp_tools:
@@ -263,6 +264,7 @@ async def create_bank_connection(b: BankConnectionCreate, current_user: dict = D
     await cache_tool_routing()
     await cache_prompt_routing()
     await cache_resource_routing()
+    await cache_sensitive_responses()
     await publish_config_update("connection", conn_id)
     await log_system_action(current_user, "connection_created", conn_id, b.name, {"source_type": b.source_type})
 
@@ -270,6 +272,7 @@ async def create_bank_connection(b: BankConnectionCreate, current_user: dict = D
         id=row["id"], name=row["name"], source_type=row["source_type"],
         mcp_url=row["mcp_url"], base_url=row["base_url"], openapi_spec=row["openapi_spec"],
         credential_type=row["credential_type"], status=row["status"],
+        sensitive_response=row["sensitive_response"],
         created_at=row["created_at"], updated_at=row["updated_at"],
         tool_count=len(discovered_tools), tools=discovered_tools,
         resource_count=len(discovered_resources), resources=discovered_resources,
@@ -415,17 +418,19 @@ async def update_bank_connection(connection_id: str, b: BankConnectionUpdate, cu
         openapi_spec = b.openapi_spec if b.openapi_spec is not None else row["openapi_spec"]
         credential_type = b.credential_type if b.credential_type is not None else row["credential_type"]
         status_val = b.status if b.status is not None else row["status"]
+        sensitive_response = b.sensitive_response if b.sensitive_response is not None else row["sensitive_response"]
         enc_creds = encrypt(b.credentials) if b.credentials is not None else row["encrypted_creds"]
 
         updated = await conn.fetchrow(
             """
             UPDATE bank_connections
             SET name = $2, mcp_url = $3, base_url = $4, openapi_spec = $5,
-                credential_type = $6, encrypted_creds = $7, status = $8, updated_at = NOW()
+                credential_type = $6, encrypted_creds = $7, status = $8,
+                sensitive_response = $9, updated_at = NOW()
             WHERE id = $1
-            RETURNING id, name, source_type, mcp_url, base_url, openapi_spec, credential_type, status, created_at, updated_at
+            RETURNING id, name, source_type, mcp_url, base_url, openapi_spec, credential_type, status, sensitive_response, created_at, updated_at
             """,
-            connection_id, name, mcp_url, base_url, openapi_spec, credential_type, enc_creds, status_val,
+            connection_id, name, mcp_url, base_url, openapi_spec, credential_type, enc_creds, status_val, sensitive_response,
         )
 
         tools_rows = await conn.fetch(
@@ -479,6 +484,7 @@ async def update_bank_connection(connection_id: str, b: BankConnectionUpdate, cu
     await cache_tool_routing()
     await cache_prompt_routing()
     await cache_resource_routing()
+    await cache_sensitive_responses()
     await publish_config_update("connection", connection_id)
     await log_system_action(current_user, "connection_updated", connection_id, name)
 
@@ -486,6 +492,7 @@ async def update_bank_connection(connection_id: str, b: BankConnectionUpdate, cu
         id=updated["id"], name=updated["name"], source_type=updated["source_type"],
         mcp_url=updated["mcp_url"], base_url=updated["base_url"], openapi_spec=updated["openapi_spec"],
         credential_type=updated["credential_type"], status=updated["status"],
+        sensitive_response=updated["sensitive_response"],
         created_at=updated["created_at"], updated_at=updated["updated_at"],
         tool_count=len(tools_list), tools=tools_list,
         resource_count=len(resources_list), resources=resources_list,

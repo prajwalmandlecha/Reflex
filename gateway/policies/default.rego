@@ -129,16 +129,6 @@ reason := sprintf("agent kind '%s' is not allowed to perform action '%s'", [inpu
 	not deny
 }
 
-# Rule 6: Parameter Bounds Enforcement (Single-Transaction Transfer Cap of $1,000.00)
-deny if {
-	input.action == "transfer_money"
-	input.amount > 1000.00
-}
-
-reason := sprintf("transfer amount $%.2f exceeds maximum allowed single-transaction parameter bound of $1000.00", [input.amount]) if {
-	deny
-}
-
 # Rule 7: Execution Time Window (business hours) — enforced in Rego.
 # The tool's effective constraints are passed into the policy input as
 # input.constraints (see governance.go). If a tool declares a time_window

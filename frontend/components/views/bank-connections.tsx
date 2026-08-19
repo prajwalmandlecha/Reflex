@@ -371,6 +371,7 @@ function EditConnectionForm({
   const [error, setError] = useState('');
   const [authType, setAuthType] = useState(conn.authType || 'none');
   const [token, setToken] = useState('');
+  const [sensitiveResponse, setSensitiveResponse] = useState(!!conn.sensitive_response);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -380,6 +381,7 @@ function EditConnectionForm({
       await api.updateBankConnection(conn.id, {
         credential_type: authType,
         credentials: authType !== 'none' && token ? token : undefined,
+        sensitive_response: sensitiveResponse,
       });
       onComplete();
     } catch (err: any) {
@@ -439,6 +441,20 @@ function EditConnectionForm({
           </div>
         )}
       </div>
+
+      <label className="flex items-start gap-2 rounded border border-white/10 bg-white/[0.02] p-3">
+        <input
+          type="checkbox"
+          checked={sensitiveResponse}
+          onChange={(e) => setSensitiveResponse(e.target.checked)}
+          className="mt-0.5 h-4 w-4 accent-cyan-500"
+        />
+        <span className="font-sans text-[11px] text-ink-secondary">
+          <span className="font-mono text-xs text-ink-primary">Sensitive response</span> — suppress this
+          connection&apos;s response body from the audit log and live event stream entirely (for tools
+          that return full customer records or other PII that key-based redaction can&apos;t catch).
+        </span>
+      </label>
 
       <div className="flex justify-end gap-2 pt-3">
         <Button

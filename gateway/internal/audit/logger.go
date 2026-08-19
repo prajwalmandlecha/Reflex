@@ -28,7 +28,6 @@ type Entry struct {
 	ResponseData         any            `json:"response_data,omitempty"`
 	Decision             string         `json:"decision"`   // "allow" or "deny"
 	DenyStage            string         `json:"deny_stage"` // "killswitch", "constraint", "policy", "spend"
-	SpendDelta           int64          `json:"spend_delta"`
 	Reason               string         `json:"reason"`
 	TotalLatencyMs       float64        `json:"total_latency_ms"`
 	KillswitchLatencyMs  float64        `json:"killswitch_latency_ms"`
@@ -228,7 +227,6 @@ func (l *Logger) writeBatch(ctx context.Context, entries []*Entry) error {
 			Decision:             e.Decision,
 			DenyStage:            pgtype.Text{String: e.DenyStage, Valid: e.DenyStage != ""},
 			Reason:               pgtype.Text{String: e.Reason, Valid: e.Reason != ""},
-			SpendDelta:           pgtype.Int8{Int64: e.SpendDelta, Valid: true},
 			TotalLatencyMs:       pgtype.Float8{Float64: e.TotalLatencyMs, Valid: true},
 			KillswitchLatencyMs:  pgtype.Float8{Float64: e.KillswitchLatencyMs, Valid: true},
 			PolicyLatencyMs:      pgtype.Float8{Float64: e.PolicyLatencyMs, Valid: true},
@@ -257,9 +255,10 @@ type hashContent struct {
 	AgentID              string    `json:"agent_id"`
 	AgentClassID         string    `json:"agent_class_id"`
 	Action               string    `json:"action"`
+	Params               any       `json:"params"`
+	ResponseData         any       `json:"response_data"`
 	Decision             string    `json:"decision"`
 	DenyStage            string    `json:"deny_stage"`
-	SpendDelta           int64     `json:"spend_delta"`
 	GovernanceOverheadMs float64   `json:"governance_overhead_ms"`
 	Reason               string    `json:"reason"`
 }
@@ -270,9 +269,10 @@ func computeHash(prevHash string, entry *Entry) string {
 		AgentID:              entry.AgentID,
 		AgentClassID:         entry.AgentClassID,
 		Action:               entry.Action,
+		Params:               entry.Params,
+		ResponseData:         entry.ResponseData,
 		Decision:             entry.Decision,
 		DenyStage:            entry.DenyStage,
-		SpendDelta:           entry.SpendDelta,
 		GovernanceOverheadMs: entry.GovernanceOverheadMs,
 		Reason:               entry.Reason,
 	}

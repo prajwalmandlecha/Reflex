@@ -45,7 +45,6 @@ type AuditLog struct {
 	Decision             string        `json:"decision"`
 	DenyStage            pgtype.Text   `json:"deny_stage"`
 	Reason               pgtype.Text   `json:"reason"`
-	SpendDelta           pgtype.Int8   `json:"spend_delta"`
 	TotalLatencyMs       pgtype.Float8 `json:"total_latency_ms"`
 	KillswitchLatencyMs  pgtype.Float8 `json:"killswitch_latency_ms"`
 	PolicyLatencyMs      pgtype.Float8 `json:"policy_latency_ms"`

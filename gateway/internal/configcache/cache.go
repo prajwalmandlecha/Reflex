@@ -37,20 +37,35 @@ type AgentConfig struct {
 // ConfigCache manages agent configurations with atomic in-memory reads,
 // Redis pub/sub invalidations, and Backend REST fallbacks.
 type ConfigCache struct {
-	agents     sync.Map // agentID -> *AgentConfig
+	agents     sync.Map // agentID -> *cachedConfig
 	rdb        *redis.Client
 	backendURL string
 	logger     *slog.Logger
 	client     *http.Client
+	ttl        time.Duration
+}
+
+// cachedConfig wraps an AgentConfig with its in-memory expiry so a missed
+// config:updates pub/sub message can't leave a stale config served forever.
+type cachedConfig struct {
+	cfg       *AgentConfig
+	expiresAt time.Time
 }
 
 // New creates a new ConfigCache instance and starts the Redis pub/sub listener.
 func New(ctx context.Context, rdb *redis.Client, backendURL string, logger *slog.Logger) *ConfigCache {
+	return NewWithTTL(ctx, rdb, backendURL, logger, 30*time.Second)
+}
+
+// NewWithTTL is New with a configurable in-memory TTL. A TTL of 0 disables
+// expiry (entries live until invalidated by pub/sub).
+func NewWithTTL(ctx context.Context, rdb *redis.Client, backendURL string, logger *slog.Logger, ttl time.Duration) *ConfigCache {
 	c := &ConfigCache{
 		rdb:        rdb,
 		backendURL: backendURL,
 		logger:     logger,
 		client:     &http.Client{Timeout: 3 * time.Second},
+		ttl:        ttl,
 	}
 
 	go c.subscribeUpdates(ctx)
@@ -58,10 +73,18 @@ func New(ctx context.Context, rdb *redis.Client, backendURL string, logger *slog
 }
 
 // Get fetches effective configuration for an agent.
-// Check order: in-memory map -> Redis key (`agp:inst:{id}`) -> Backend HTTP `/internal/config/{id}`.
+// Check order: in-memory map (if fresh) -> Redis key (`agp:inst:{id}`) -> Backend HTTP `/internal/config/{id}`.
+// On any failure to determine the agent's config it returns a FAIL-CLOSED
+// config (Status "unknown") so an unreachable/unknown agent is denied rather
+// than silently falling through to permissive agent-kind rules.
 func (c *ConfigCache) Get(ctx context.Context, agentID string) *AgentConfig {
 	if val, ok := c.agents.Load(agentID); ok {
-		return val.(*AgentConfig)
+		cc := val.(*cachedConfig)
+		if c.ttl == 0 || time.Now().Before(cc.expiresAt) {
+			return cc.cfg
+		}
+		// Expired — fall through to re-fetch.
+		c.agents.Delete(agentID)
 	}
 
 	// Try Redis
@@ -70,7 +93,7 @@ func (c *ConfigCache) Get(ctx context.Context, agentID string) *AgentConfig {
 	if err == nil && redisVal != "" {
 		var cfg AgentConfig
 		if json.Unmarshal([]byte(redisVal), &cfg) == nil {
-			c.agents.Store(agentID, &cfg)
+			c.store(agentID, &cfg)
 			return &cfg
 		}
 	}
@@ -78,20 +101,29 @@ func (c *ConfigCache) Get(ctx context.Context, agentID string) *AgentConfig {
 	// Cache miss -> fallback to Backend REST API
 	cfg, err := c.fetchFromBackend(ctx, agentID)
 	if err != nil {
-		c.logger.Warn("failed to fetch config from backend fallback, using safe default", "agent_id", agentID, "error", err)
+		c.logger.Warn("failed to fetch config from backend fallback, failing closed", "agent_id", agentID, "error", err)
 		cfg = &AgentConfig{
 			ID:                   agentID,
 			ClassID:              "default",
-			Status:               "active",
+			Status:               "unknown",
 			EffectiveTools:       []string{},
 			EffectiveConstraints: make(map[string]map[string]any),
 			ToolSchemas:          make(map[string]ToolSchema),
 		}
 	} else {
-		c.agents.Store(agentID, cfg)
+		c.store(agentID, cfg)
 	}
 
 	return cfg
+}
+
+// store caches a config with its expiry.
+func (c *ConfigCache) store(agentID string, cfg *AgentConfig) {
+	cc := &cachedConfig{cfg: cfg}
+	if c.ttl > 0 {
+		cc.expiresAt = time.Now().Add(c.ttl)
+	}
+	c.agents.Store(agentID, cc)
 }
 
 func (c *ConfigCache) fetchFromBackend(ctx context.Context, agentID string) (*AgentConfig, error) {

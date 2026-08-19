@@ -152,36 +152,82 @@ func injectDownstreamAuth(req *http.Request, auth *downstreamAuth) {
 	}
 }
 
-// sensitiveParamKeys are argument keys whose values must never be persisted to
-// the audit log or published to the event stream (credentials, tokens, secrets).
-var sensitiveParamKeys = map[string]bool{
+// defaultSensitiveKeys are the well-known field names whose values must never
+// be persisted to the audit log or published to the event stream. This covers
+// credentials/tokens AND banking PII (account numbers, routing numbers, card
+// data, personal identifiers). Matching is case-insensitive and recursive, so a
+// nested field like transactions[].account_number is caught too.
+var defaultSensitiveKeys = map[string]bool{
+	// Credentials / tokens / secrets
 	"bearer_token":  true,
 	"token":         true,
+	"access_token":  true,
+	"refresh_token": true,
 	"password":      true,
+	"passwd":        true,
 	"secret":        true,
 	"api_key":       true,
 	"apikey":        true,
 	"authorization": true,
 	"private_key":   true,
 	"client_secret": true,
+	"credential":    true,
+	"credentials":   true,
+	// Banking / payment identifiers
+	"account_number": true,
+	"account_num":    true,
+	"account_no":     true,
+	"routing_number": true,
+	"routing_num":    true,
+	"card_number":    true,
+	"card_num":       true,
+	"cvv":            true,
+	"cvc":            true,
+	"pin":            true,
+	"iban":           true,
+	"bic":            true,
+	"swift":          true,
+	"swift_code":     true,
+	// Personal identifiers (PII)
+	"ssn":             true,
+	"social_security": true,
+	"tax_id":          true,
+	"tin":             true,
+	"date_of_birth":   true,
+	"dob":             true,
+	"email":           true,
+	"phone":           true,
+	"phone_number":    true,
+	"address":         true,
+	"customer_name":   true,
+	"full_name":       true,
 }
 
-// redactParams returns a copy of the params map with sensitive values replaced
-// by "[REDACTED]". The audit log and event stream must never store bearer
-// tokens or credentials in plaintext.
-func redactParams(params map[string]any) map[string]any {
-	if params == nil {
-		return nil
-	}
-	out := make(map[string]any, len(params))
-	for k, v := range params {
-		if sensitiveParamKeys[strings.ToLower(k)] {
-			out[k] = "[REDACTED]"
-		} else {
-			out[k] = v
+// redactValue returns a deep copy of v with any field whose (lowercased) key is
+// in the sensitive set replaced by "[REDACTED]". It recurses through maps and
+// slices so nested PII is caught, not just top-level keys. Non-map/slice values
+// are returned unchanged.
+func redactValue(v any, sensitive map[string]bool) any {
+	switch t := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, val := range t {
+			if sensitive[strings.ToLower(k)] {
+				out[k] = "[REDACTED]"
+			} else {
+				out[k] = redactValue(val, sensitive)
+			}
 		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, val := range t {
+			out[i] = redactValue(val, sensitive)
+		}
+		return out
+	default:
+		return v
 	}
-	return out
 }
 
 // ms converts a time.Duration to milliseconds with microsecond precision.

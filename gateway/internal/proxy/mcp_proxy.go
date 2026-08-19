@@ -53,17 +53,16 @@ type GovernanceTimings struct {
 // GovernanceEvent is the payload published to Redis pub/sub for real-time
 // frontend streaming.
 type GovernanceEvent struct {
-	Type            string             `json:"type"`
-	AgentID         string             `json:"agent_id"`
-	AgentClassID    string             `json:"agent_class_id"`
-	Tool            string             `json:"tool"`
-	Decision        string             `json:"decision"`
-	DenyStage       string             `json:"deny_stage"`
-	Reason          string             `json:"reason"`
-	SpendDeltaCents int64              `json:"spend_delta_cents"`
-	ResponseData    any                `json:"response_data,omitempty"`
-	Latency         map[string]float64 `json:"latency"`
-	Timestamp       string             `json:"timestamp"`
+	Type         string             `json:"type"`
+	AgentID      string             `json:"agent_id"`
+	AgentClassID string             `json:"agent_class_id"`
+	Tool         string             `json:"tool"`
+	Decision     string             `json:"decision"`
+	DenyStage    string             `json:"deny_stage"`
+	Reason       string             `json:"reason"`
+	ResponseData any                `json:"response_data,omitempty"`
+	Latency      map[string]float64 `json:"latency"`
+	Timestamp    string             `json:"timestamp"`
 }
 
 // callKind distinguishes what sort of MCP action is being governed, so the
@@ -102,6 +101,14 @@ type MCPProxy struct {
 	rdb                *redis.Client
 	logger             *slog.Logger
 	client             *http.Client
+
+	// Redaction config: extra sensitive keys (admin-configured) merged with the
+	// built-in defaults, plus a per-connection "sensitive response" flag that
+	// suppresses persisting/broadcasting the response body entirely.
+	redactKeysMux      sync.RWMutex
+	extraRedactKeys    map[string]bool
+	sensitiveRespMux   sync.RWMutex
+	sensitiveResponses map[string]bool // connection_id → suppress response body
 }
 
 // NewMCPProxy creates a governance-enforcing MCP proxy with the given
@@ -119,22 +126,24 @@ func NewMCPProxy(
 	logger *slog.Logger,
 ) *MCPProxy {
 	return &MCPProxy{
-		targets:         targets,
-		openAPITargets:  make(map[string]*OpenAPISpecTarget),
-		connAuth:        make(map[string]*downstreamAuth),
-		toolRouting:     make(map[string]string),
-		promptRouting:   make(map[string]string),
-		resourceRouting: make(map[string]string),
-		ks:              ks,
-		policyEngine:    policyEngine,
-		spendLimiter:    spendLimiter,
-		constraintCheck: constraintCheck,
-		configCache:     configCache,
-		auditor:         auditor,
-		jwtMgr:          jwtMgr,
-		rdb:             rdb,
-		logger:          logger,
-		client:          &http.Client{Timeout: 15 * time.Second},
+		targets:            targets,
+		openAPITargets:     make(map[string]*OpenAPISpecTarget),
+		connAuth:           make(map[string]*downstreamAuth),
+		toolRouting:        make(map[string]string),
+		promptRouting:      make(map[string]string),
+		resourceRouting:    make(map[string]string),
+		ks:                 ks,
+		policyEngine:       policyEngine,
+		spendLimiter:       spendLimiter,
+		constraintCheck:    constraintCheck,
+		configCache:        configCache,
+		auditor:            auditor,
+		jwtMgr:             jwtMgr,
+		rdb:                rdb,
+		logger:             logger,
+		client:             &http.Client{Timeout: 15 * time.Second},
+		extraRedactKeys:    make(map[string]bool),
+		sensitiveResponses: make(map[string]bool),
 	}
 }
 
@@ -250,6 +259,84 @@ func (p *MCPProxy) authForConnection(connectionID string) *downstreamAuth {
 	p.connAuthMux.RLock()
 	defer p.connAuthMux.RUnlock()
 	return p.connAuth[connectionID]
+}
+
+// LoadRedactionConfig reads the admin-configured extra sensitive keys and the
+// per-connection "sensitive response" flags from Redis. Called at startup and
+// on config:updates. The extra keys are merged with the built-in defaults at
+// redaction time; the sensitive-response flags suppress persisting/broadcasting
+// a connection's response body entirely.
+func (p *MCPProxy) LoadRedactionConfig(ctx context.Context) {
+	if p.rdb == nil {
+		return
+	}
+
+	// Extra sensitive keys: agp:redaction_keys → {"keys": ["field_a", ...]}
+	if raw, err := p.rdb.Get(ctx, "agp:redaction_keys").Result(); err == nil && raw != "" {
+		var payload struct {
+			Keys []string `json:"keys"`
+		}
+		if json.Unmarshal([]byte(raw), &payload) == nil {
+			keys := make(map[string]bool, len(payload.Keys))
+			for _, k := range payload.Keys {
+				if k = strings.TrimSpace(strings.ToLower(k)); k != "" {
+					keys[k] = true
+				}
+			}
+			p.redactKeysMux.Lock()
+			p.extraRedactKeys = keys
+			p.redactKeysMux.Unlock()
+			p.logger.Info("loaded extra redaction keys", "count", len(keys))
+		}
+	}
+
+	// Sensitive-response flags: agp:sensitive_responses → {"conn_id": true, ...}
+	if raw, err := p.rdb.Get(ctx, "agp:sensitive_responses").Result(); err == nil && raw != "" {
+		var flags map[string]bool
+		if json.Unmarshal([]byte(raw), &flags) == nil {
+			p.sensitiveRespMux.Lock()
+			p.sensitiveResponses = flags
+			p.sensitiveRespMux.Unlock()
+			p.logger.Info("loaded sensitive-response flags", "count", len(flags))
+		}
+	}
+}
+
+// sensitiveKeys returns the merged set of built-in + admin-configured sensitive
+// keys for redaction.
+func (p *MCPProxy) sensitiveKeys() map[string]bool {
+	p.redactKeysMux.RLock()
+	defer p.redactKeysMux.RUnlock()
+	merged := make(map[string]bool, len(defaultSensitiveKeys)+len(p.extraRedactKeys))
+	for k := range defaultSensitiveKeys {
+		merged[k] = true
+	}
+	for k := range p.extraRedactKeys {
+		merged[k] = true
+	}
+	return merged
+}
+
+// isSensitiveResponse reports whether a connection's response body should be
+// suppressed entirely (Layer 3) rather than key-redacted.
+func (p *MCPProxy) isSensitiveResponse(connectionID string) bool {
+	if connectionID == "" {
+		return false
+	}
+	p.sensitiveRespMux.RLock()
+	defer p.sensitiveRespMux.RUnlock()
+	return p.sensitiveResponses[connectionID]
+}
+
+// redactForStorage applies the full redaction policy to a value destined for
+// the audit log or event stream. If the connection is flagged sensitive, the
+// response body is replaced with a summary stub; otherwise it is recursively
+// key-redacted.
+func (p *MCPProxy) redactForStorage(connectionID string, v any) any {
+	if p.isSensitiveResponse(connectionID) {
+		return map[string]any{"redacted": true, "reason": "connection marked sensitive"}
+	}
+	return redactValue(v, p.sensitiveKeys())
 }
 
 // LoadNativeTargets rebuilds the native-MCP target map exclusively from
@@ -406,16 +493,31 @@ func (p *MCPProxy) SubscribeConnectionUpdates(ctx context.Context) {
 			if !ok {
 				return
 			}
-			// Reload on any connection/openapi change.
 			if msg == nil {
 				continue
 			}
-			p.LoadOpenAPISpecs(ctx)
-			p.LoadToolRouting(ctx)
-			p.LoadPromptRouting(ctx)
-			p.LoadResourceRouting(ctx)
-			p.LoadNativeTargets(ctx)
-			p.loadConnectionAuth(ctx)
+			// Only reload targets when the change actually affects connections.
+			// Agent-instance, class, policy, and fleet toggles publish on the
+			// same channel but must not re-parse every OpenAPI spec. The
+			// "openapi" type is a connection whose spec was re-ingested.
+			var update struct {
+				Type string `json:"type"`
+			}
+			if json.Unmarshal([]byte(msg.Payload), &update) != nil {
+				continue
+			}
+			switch update.Type {
+			case "connection", "openapi":
+				p.LoadOpenAPISpecs(ctx)
+				p.LoadToolRouting(ctx)
+				p.LoadPromptRouting(ctx)
+				p.LoadResourceRouting(ctx)
+				p.LoadNativeTargets(ctx)
+				p.loadConnectionAuth(ctx)
+				p.LoadRedactionConfig(ctx)
+			case "redaction":
+				p.LoadRedactionConfig(ctx)
+			}
 		}
 	}
 }
@@ -440,6 +542,14 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if agentCfg.Status == "revoked" {
 		p.logger.Warn("request blocked by agent status revocation", "agent_id", agentID)
 		p.sendErrorResponse(w, r, nil, "agent is revoked")
+		return
+	}
+	// Fail closed: if the config could not be determined (backend/Redis
+	// unreachable, agent unknown), deny rather than fall through to permissive
+	// agent-kind rules. Only an explicitly "active" agent may act.
+	if agentCfg.Status != "active" {
+		p.logger.Warn("request blocked: agent config not active", "agent_id", agentID, "status", agentCfg.Status)
+		p.sendErrorResponse(w, r, nil, "agent config unavailable or not active")
 		return
 	}
 
@@ -595,9 +705,7 @@ func (p *MCPProxy) handleToolsCall(
 	toolName, _ := params["name"].(string)
 	args, _ := params["arguments"].(map[string]any)
 
-	amount, _ := p.extractAmount(agentCfg, toolName, args)
-
-	allowed, denyStage, reason, timings, committedEntries := p.governCall(r.Context(), callKindTool, agentID, classID, agentKind, toolName, amount, allowedTools, agentCfg, args)
+	allowed, denyStage, reason, timings, committedEntries := p.governCall(r.Context(), callKindTool, agentID, classID, agentKind, toolName, allowedTools, agentCfg, args)
 
 	downstreamStart := time.Now()
 	var responseData any
@@ -624,12 +732,6 @@ func (p *MCPProxy) handleToolsCall(
 
 	totalMs := ms(time.Since(reqStart))
 
-	// Denied requests must not contribute to spend totals
-	spendDeltaCents := int64(0)
-	if allowed {
-		spendDeltaCents = int64(amount * 100)
-	}
-
 	p.recordOutcome(r.Context(), &outcomeParams{
 		agentID:      agentID,
 		classID:      classID,
@@ -638,7 +740,6 @@ func (p *MCPProxy) handleToolsCall(
 		allowed:      allowed,
 		denyStage:    denyStage,
 		reason:       reason,
-		spendDelta:   spendDeltaCents,
 		timings:      timings,
 		downstreamMs: downstreamMs,
 		totalMs:      totalMs,
@@ -668,8 +769,9 @@ func (p *MCPProxy) handleGovernedRead(
 		actionName, _ = params["name"].(string)
 	}
 
-	// No monetary amount for resources/prompts.
-	allowed, denyStage, reason, timings, committedEntries := p.governCall(r.Context(), kind, agentID, classID, agentKind, actionName, 0, allowedTools, agentCfg, params)
+	// Resources/prompts don't move money; governance still applies (killswitch,
+	// constraints, OPA, rate-limit) but no spend counters are committed.
+	allowed, denyStage, reason, timings, committedEntries := p.governCall(r.Context(), kind, agentID, classID, agentKind, actionName, allowedTools, agentCfg, params)
 
 	downstreamStart := time.Now()
 	var responseData any
@@ -702,7 +804,6 @@ func (p *MCPProxy) handleGovernedRead(
 		allowed:      allowed,
 		denyStage:    denyStage,
 		reason:       reason,
-		spendDelta:   0,
 		timings:      timings,
 		downstreamMs: downstreamMs,
 		totalMs:      totalMs,

@@ -277,6 +277,7 @@ export const api = {
       credential_type: string;
       credentials: string;
       status: string;
+      sensitive_response: boolean;
     }>,
   ): Promise<BankConnection> {
     return request<BankConnection>(`/api/v1/connections/${id}`, {
@@ -453,7 +454,6 @@ export const api = {
       decision: a.decision,
       denyStage: a.deny_stage || a.denyStage || "",
       reason: a.reason || "",
-      spendDeltaCents: a.spend_delta || a.spendDeltaCents || 0,
       latencyMs: a.total_latency_ms || a.totalLatencyMs || 0,
       totalLatencyMs: a.total_latency_ms || a.totalLatencyMs || 0,
       killswitch_latency_ms: a.killswitch_latency_ms || 0,
@@ -532,6 +532,18 @@ export const api = {
         body: JSON.stringify({ caps, rate_limits }),
       },
     );
+  },
+
+  // --- Redaction Settings ---
+  async getRedactionKeys(): Promise<{ keys: string[] }> {
+    return request<{ keys: string[] }>("/api/v1/redaction");
+  },
+
+  async updateRedactionKeys(keys: string[]): Promise<{ keys: string[] }> {
+    return request<{ keys: string[] }>("/api/v1/redaction", {
+      method: "PUT",
+      body: JSON.stringify({ keys }),
+    });
   },
 
   // --- Metrics Snapshot ---

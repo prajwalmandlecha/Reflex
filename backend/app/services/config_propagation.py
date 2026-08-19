@@ -303,7 +303,7 @@ async def cache_bank_connections():
     redis = get_redis()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id, name, source_type, mcp_url, base_url, openapi_spec, credential_type, encrypted_creds, status FROM bank_connections WHERE status = 'connected'"
+            "SELECT id, name, source_type, mcp_url, base_url, openapi_spec, credential_type, encrypted_creds, status, sensitive_response FROM bank_connections WHERE status = 'connected'"
         )
         mapping = {}
         for r in rows:
@@ -318,8 +318,38 @@ async def cache_bank_connections():
                 "openapi_spec": r["openapi_spec"],
                 # Decrypted downstream credentials for the gateway to inject.
                 "downstream_auth": _build_downstream_auth(r["credential_type"], r["encrypted_creds"]),
+                # Whether this connection's response body is PII and must be
+                # suppressed (not just key-redacted) in audit/events.
+                "sensitive_response": bool(r["sensitive_response"]),
             }
         await redis.set("agp:connections", json.dumps(mapping))
+
+
+@_non_fatal_cache
+async def cache_redaction_keys():
+    """Cache the admin-configured extra sensitive keys in Redis for the gateway."""
+    pool = get_pool()
+    redis = get_redis()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT keys FROM redaction_keys WHERE id = 1")
+    keys = []
+    if row:
+        raw = row["keys"]
+        keys = json.loads(raw) if isinstance(raw, str) else (raw or [])
+    await redis.set("agp:redaction_keys", json.dumps({"keys": keys}))
+
+
+@_non_fatal_cache
+async def cache_sensitive_responses():
+    """Cache the per-connection sensitive_response flags in Redis for the gateway."""
+    pool = get_pool()
+    redis = get_redis()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, sensitive_response FROM bank_connections WHERE sensitive_response = true"
+        )
+    flags = {r["id"]: True for r in rows}
+    await redis.set("agp:sensitive_responses", json.dumps(flags))
 
 
 @_non_fatal_cache

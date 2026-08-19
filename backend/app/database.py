@@ -76,9 +76,12 @@ async def init_db_schema():
         credential_type         VARCHAR(32),
         encrypted_creds         TEXT,
         status                  VARCHAR(32) DEFAULT 'pending',
+        sensitive_response      BOOLEAN DEFAULT false,
         created_at              TIMESTAMPTZ DEFAULT NOW(),
         updated_at              TIMESTAMPTZ DEFAULT NOW()
     );
+    -- Self-healing: add the sensitive_response column to existing tables.
+    ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS sensitive_response BOOLEAN DEFAULT false;
 
     CREATE TABLE IF NOT EXISTS tools (
         id                      SERIAL PRIMARY KEY,
@@ -150,6 +153,14 @@ async def init_db_schema():
     -- created before this column existed (idempotent, no-op if already present).
     ALTER TABLE fleet_caps ADD COLUMN IF NOT EXISTS rate_limits JSONB DEFAULT '{}';
 
+    CREATE TABLE IF NOT EXISTS redaction_keys (
+        id                      INT PRIMARY KEY DEFAULT 1,
+        keys                    JSONB DEFAULT '[]',
+        updated_by              VARCHAR(128) DEFAULT 'admin',
+        updated_at              TIMESTAMPTZ DEFAULT NOW()
+    );
+    INSERT INTO redaction_keys (id, keys) VALUES (1, '[]') ON CONFLICT (id) DO NOTHING;
+
     CREATE TABLE IF NOT EXISTS policy_changelog (
         id                      SERIAL PRIMARY KEY,
         policy_id               INT REFERENCES policies(id) ON DELETE SET NULL,
@@ -172,7 +183,6 @@ async def init_db_schema():
         decision                VARCHAR(16) NOT NULL,
         deny_stage              VARCHAR(32) DEFAULT '',
         reason                  TEXT DEFAULT '',
-        spend_delta             BIGINT DEFAULT 0,
         total_latency_ms        DOUBLE PRECISION DEFAULT 0,
         killswitch_latency_ms   DOUBLE PRECISION DEFAULT 0,
         policy_latency_ms       DOUBLE PRECISION DEFAULT 0,

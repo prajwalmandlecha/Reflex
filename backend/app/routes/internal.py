@@ -24,11 +24,15 @@ async def get_agent_internal_config(agent_id: str):
             agent_id,
         )
         if not row:
-            # Fallback default configuration if instance not registered in DB
+            # Fail closed: an agent not registered in the DB must NOT be able
+            # to act. Return a non-active status so the gateway denies it
+            # (ServeHTTP blocks any status != "active"). Previously this
+            # returned "active", letting an unknown agent fall through to
+            # permissive OPA agent-kind rules.
             return {
                 "id": agent_id,
                 "class_id": "default",
-                "status": "active",
+                "status": "unknown",
                 "effective_tools": [],
                 "effective_constraints": {},
             }
