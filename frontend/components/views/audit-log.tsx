@@ -15,7 +15,7 @@ import {
 import { formatDateTime, formatTimestamp } from '@/lib/format';
 import type { AuditLogEntry } from '@/lib/types';
 import { api } from '@/lib/api';
-import { Search, Download, Lock, ArrowRight, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { Search, Download, Lock, ArrowRight, ShieldCheck, AlertTriangle, AlertCircle } from 'lucide-react';
 
 const entryTypeLabel: Record<string, string> = {
   action: 'Action',
@@ -35,6 +35,7 @@ export function AuditLogView({ entries }: { entries: AuditLogEntry[] }) {
   const [activeTab, setActiveTab] = useState<'tools' | 'system'>('tools');
   const [search, setSearch] = useState('');
   const [outcomeFilter, setOutcomeFilter] = useState('all');
+  const [exportError, setExportError] = useState('');
 
   const [systemLogs, setSystemLogs] = useState<any[]>([]);
   const [loadingSystem, setLoadingSystem] = useState(false);
@@ -127,10 +128,11 @@ export function AuditLogView({ entries }: { entries: AuditLogEntry[] }) {
                 CSV-escaped by the backend — not limited to on-screen rows. */}
             <Button
               onClick={async () => {
+                setExportError('');
                 try {
                   await api.exportAuditLogCsv();
                 } catch (err: any) {
-                  alert(`Export failed: ${err.message || 'Unknown error'}`);
+                  setExportError(err.message || 'Export failed');
                 }
               }}
               variant="outline"
@@ -143,8 +145,16 @@ export function AuditLogView({ entries }: { entries: AuditLogEntry[] }) {
         </div>
       </div>
 
+      {exportError && (
+        <div className="flex items-center gap-2 border border-signal-stopped/30 bg-signal-stopped/10 p-2.5 rounded font-mono text-xs text-signal-stopped">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          <span>Export failed: {exportError}</span>
+          <button onClick={() => setExportError('')} className="ml-auto text-signal-stopped/60 hover:text-signal-stopped">×</button>
+        </div>
+      )}
+
       {/* Sub-Tab Selection: Agent Tool Calls vs System & Admin Operations */}
-      <div className="flex items-center gap-2 border-b border-white/10 pb-2">
+      <div className="flex items-center gap-2 border-b border-white/[0.06] pb-2">
         <button
           onClick={() => setActiveTab('tools')}
           className={cn(
@@ -216,11 +226,11 @@ export function AuditLogView({ entries }: { entries: AuditLogEntry[] }) {
                 placeholder="Search agent, action, operator, reason…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="border-white/10 bg-white/[0.02] pl-9 font-mono text-sm placeholder:text-ink-secondary/50"
+                className="border-white/[0.06] bg-white/[0.02] pl-9 font-mono text-sm placeholder:text-ink-secondary/50"
               />
             </div>
             <Select value={outcomeFilter} onValueChange={setOutcomeFilter}>
-              <SelectTrigger className="w-[120px] border-white/10 bg-white/[0.02] font-mono text-xs">
+              <SelectTrigger className="w-[120px] border-white/[0.06] bg-white/[0.02] font-mono text-xs">
                 <SelectValue placeholder="Outcome" />
               </SelectTrigger>
               <SelectContent className="border-border bg-slate-900 text-white">
@@ -357,8 +367,19 @@ export function AuditLogView({ entries }: { entries: AuditLogEntry[] }) {
                       <td className="px-4 py-2 font-mono text-xs text-ink-primary">
                         {item.target_email || item.target_id || '—'}
                       </td>
-                      <td className="px-4 py-2 font-mono text-[10px] text-ink-secondary">
-                        {JSON.stringify(item.details)}
+                      <td className="max-w-[300px] px-4 py-2 font-mono text-[10px] text-ink-secondary">
+                        {item.details && typeof item.details === 'object' && Object.keys(item.details).length > 0 ? (
+                          <div className="space-y-0.5">
+                            {Object.entries(item.details).map(([k, v]) => (
+                              <div key={k} className="flex gap-1.5">
+                                <span className="text-ink-secondary/70 shrink-0">{k}:</span>
+                                <span className="text-ink-primary truncate">{typeof v === 'object' ? JSON.stringify(v) : String(v)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-ink-secondary/50">—</span>
+                        )}
                       </td>
                     </tr>
                   ))}

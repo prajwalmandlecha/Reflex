@@ -96,11 +96,11 @@ export function ActivityView({
             placeholder="Search agent, action, or reason…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="border-white/10 bg-white/[0.02] pl-9 font-mono text-sm placeholder:text-ink-secondary/50"
+            className="border-white/[0.06] bg-white/[0.02] pl-9 font-mono text-sm placeholder:text-ink-secondary/50"
           />
         </div>
         <Select value={classFilter} onValueChange={setClassFilter}>
-          <SelectTrigger className="w-[180px] border-white/10 bg-white/[0.02] font-mono text-xs">
+          <SelectTrigger className="w-[180px] border-white/[0.06] bg-white/[0.02] font-mono text-xs">
             <SelectValue placeholder="Class" />
           </SelectTrigger>
           <SelectContent className="border-border bg-slate-900 text-white">
@@ -111,7 +111,7 @@ export function ActivityView({
           </SelectContent>
         </Select>
         <Select value={decisionFilter} onValueChange={setDecisionFilter}>
-          <SelectTrigger className="w-[120px] border-white/10 bg-white/[0.02] font-mono text-xs">
+          <SelectTrigger className="w-[120px] border-white/[0.06] bg-white/[0.02] font-mono text-xs">
             <SelectValue placeholder="Decision" />
           </SelectTrigger>
           <SelectContent className="border-border bg-slate-900 text-white">
@@ -213,7 +213,7 @@ export function ActivityView({
                             Input Argument Payload
                           </span>
                         </div>
-                        <pre className="h-[130px] overflow-auto border border-white/10 bg-slate-950 p-2 font-mono text-[11px] text-ink-primary rounded">
+                        <pre className="h-[130px] overflow-auto border border-white/[0.06] bg-slate-950 p-2 font-mono text-[11px] text-ink-primary rounded">
                           {JSON.stringify(evt.params || {}, null, 2)}
                         </pre>
                       </div>
@@ -225,7 +225,7 @@ export function ActivityView({
                             Tool Execution Response Payload
                           </span>
                         </div>
-                        <pre className="h-[130px] overflow-auto border border-white/10 bg-slate-950 p-2 font-mono text-[11px] text-emerald-300 rounded">
+                        <pre className="h-[130px] overflow-auto border border-white/[0.06] bg-slate-950 p-2 font-mono text-[11px] text-emerald-300 rounded">
                           {(() => {
                             const respData = evt.responseData || evt.response_data || (evt as any).result;
                             if (respData) {

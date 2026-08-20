@@ -40,10 +40,10 @@ export function PerformanceView() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <div className="border border-white/10 bg-slate-900 px-3 py-1.5 font-mono text-xs text-ink-secondary">
+          <div className="border border-white/[0.06] bg-slate-900 px-3 py-1.5 font-mono text-xs text-ink-secondary">
             Requests/sec: <strong className="text-emerald-400 font-semibold">{(currentMetrics?.requests_per_second || 0).toFixed(1)}</strong>
           </div>
-          <div className="border border-white/10 bg-slate-900 px-3 py-1.5 font-mono text-xs text-ink-secondary">
+          <div className="border border-white/[0.06] bg-slate-900 px-3 py-1.5 font-mono text-xs text-ink-secondary">
             Window: <strong className="text-accent font-semibold">{currentMetrics?.window_seconds || 300}s</strong>
           </div>
         </div>
@@ -51,7 +51,7 @@ export function PerformanceView() {
 
       {/* Top Stat Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="border border-border bg-slate-900/80 p-4">
+        <div className="rounded-lg border border-border bg-slate-900/80 p-4">
           <p className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Total Requests</p>
           <p className="mt-1 font-mono text-2xl font-bold text-white">
             {currentMetrics?.total_requests || 0}
@@ -62,7 +62,7 @@ export function PerformanceView() {
           </div>
         </div>
 
-        <div className="border border-border bg-slate-900/80 p-4">
+        <div className="rounded-lg border border-border bg-slate-900/80 p-4">
           <p className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Governance Overhead (p50)</p>
           <p className="mt-1 font-mono text-2xl font-bold text-amber-400">
             {overheadP50.toFixed(2)}ms
@@ -72,7 +72,7 @@ export function PerformanceView() {
           </p>
         </div>
 
-        <div className="border border-border bg-slate-900/80 p-4">
+        <div className="rounded-lg border border-border bg-slate-900/80 p-4">
           <p className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Downstream Bank Hop (p50)</p>
           <p className="mt-1 font-mono text-2xl font-bold text-emerald-400">
             {downstreamP50.toFixed(2)}ms
@@ -82,7 +82,7 @@ export function PerformanceView() {
           </p>
         </div>
 
-        <div className="border border-border bg-slate-900/80 p-4">
+        <div className="rounded-lg border border-border bg-slate-900/80 p-4">
           <p className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Total Request Time (p50)</p>
           <p className="mt-1 font-mono text-2xl font-bold text-accent">
             {totalP50.toFixed(2)}ms
@@ -99,7 +99,7 @@ export function PerformanceView() {
           <OverheadGauge overheadMs={overheadP50} totalMs={totalP50} />
         </div>
 
-        <div className="lg:col-span-2 border border-border bg-slate-900/80 p-5 flex flex-col justify-between">
+        <div className="lg:col-span-2 rounded-lg border border-border bg-slate-900/80 p-5 flex flex-col justify-between">
           <div>
             <h3 className="font-mono text-xs uppercase tracking-widest font-semibold text-white mb-1">
               Median Latency Stacked Breakdown
@@ -117,7 +117,7 @@ export function PerformanceView() {
             />
           </div>
 
-          <div className="mt-6 pt-4 border-t border-white/10 grid grid-cols-2 gap-4 font-mono text-xs">
+          <div className="mt-6 pt-4 border-t border-white/[0.06] grid grid-cols-2 gap-4 font-mono text-xs">
             <div>
               <span className="text-ink-secondary uppercase tracking-widest text-[10px]">Denials by Stage:</span>
               <div className="mt-2 space-y-1">

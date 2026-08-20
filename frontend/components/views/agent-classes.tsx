@@ -188,7 +188,7 @@ export function AgentClassesView({
                           <Trash2 className="mr-1 h-3 w-3" /> Delete
                         </Button>
                       </AlertDialogTrigger>
-                      <AlertDialogContent className="border-white/10 bg-slate-950 text-white">
+                      <AlertDialogContent className="border-white/[0.06] bg-slate-950 text-white">
                         <AlertDialogHeader>
                           <AlertDialogTitle className="font-mono text-sm uppercase tracking-widest text-rose-400">
                             Delete Agent Class '{cls.name}'?
@@ -198,7 +198,7 @@ export function AgentClassesView({
                           </AlertDialogDescription>
                         </AlertDialogHeader>
                         <AlertDialogFooter>
-                          <AlertDialogCancel className="border-white/10 bg-transparent text-ink-secondary font-mono text-xs">
+                          <AlertDialogCancel className="border-white/[0.06] bg-transparent text-ink-secondary font-mono text-xs">
                             Cancel
                           </AlertDialogCancel>
                           <AlertDialogAction
@@ -241,7 +241,7 @@ export function AgentClassesView({
                           Revoke all instances
                         </Button>
                       </AlertDialogTrigger>
-                      <AlertDialogContent className="border-white/10 bg-slate-950 text-white">
+                      <AlertDialogContent className="border-white/[0.06] bg-slate-950 text-white">
                         <AlertDialogHeader>
                           <AlertDialogTitle className="font-mono text-sm uppercase tracking-widest">
                             Revoke all instances of {cls.name}?
@@ -251,7 +251,7 @@ export function AgentClassesView({
                           </AlertDialogDescription>
                         </AlertDialogHeader>
                         <AlertDialogFooter>
-                          <AlertDialogCancel className="border-white/10 bg-transparent text-ink-secondary font-mono text-xs">
+                          <AlertDialogCancel className="border-white/[0.06] bg-transparent text-ink-secondary font-mono text-xs">
                             Cancel
                           </AlertDialogCancel>
                           <AlertDialogAction
@@ -305,7 +305,7 @@ export function AgentClassesView({
           }
         }}
       >
-        <DialogContent className="max-w-2xl border-white/10 bg-slate-950 text-white max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl border-white/[0.06] bg-slate-950 text-white max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-mono text-sm uppercase tracking-widest text-ink-primary">
               {editClass ? `Edit Class: ${editClass.name}` : 'Create New Agent Class'}
@@ -442,7 +442,7 @@ function ClassForm({
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="e.g. Analytics & Reporting Bot"
-          className="mt-1 border-white/10 bg-white/5 font-mono text-xs"
+          className="mt-1 border-white/[0.06] bg-white/5 font-mono text-xs"
           required
         />
         {!classData && (
@@ -458,7 +458,7 @@ function ClassForm({
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="Brief summary of group responsibilities"
-          className="mt-1 border-white/10 bg-white/5 font-mono text-xs"
+          className="mt-1 border-white/[0.06] bg-white/5 font-mono text-xs"
         />
       </div>
 
@@ -490,7 +490,7 @@ function ClassForm({
         </div>
 
         {tools.length > 0 ? (
-          <div className="space-y-2 border border-white/10 bg-white/[0.02] p-2.5 rounded-lg">
+          <div className="space-y-2 border border-white/[0.06] bg-white/[0.02] p-2.5 rounded-lg">
             {/* Search & Filter Bar */}
             <div className="flex flex-wrap items-center gap-2">
               <div className="relative flex-1 min-w-[180px]">
@@ -499,7 +499,7 @@ function ClassForm({
                   value={toolSearch}
                   onChange={(e) => setToolSearch(e.target.value)}
                   placeholder="Search tools by name..."
-                  className="h-8 border-white/10 bg-slate-900/80 pl-8 pr-7 font-mono text-xs text-white placeholder:text-ink-secondary/50 focus:border-cyan-500/50"
+                  className="h-8 border-white/[0.06] bg-slate-900/80 pl-8 pr-7 font-mono text-xs text-white placeholder:text-ink-secondary/50 focus:border-cyan-500/50"
                 />
                 {toolSearch && (
                   <button
@@ -511,7 +511,7 @@ function ClassForm({
                   </button>
                 )}
               </div>
-              <div className="flex rounded border border-white/10 bg-slate-900/80 p-0.5 font-mono text-[10px]">
+              <div className="flex rounded border border-white/[0.06] bg-slate-900/80 p-0.5 font-mono text-[10px]">
                 <button
                   type="button"
                   onClick={() => setToolFilter('all')}
@@ -609,7 +609,7 @@ function ClassForm({
           type="button"
           variant="outline"
           onClick={onComplete}
-          className="border-white/10 bg-transparent text-ink-secondary font-mono text-xs"
+          className="border-white/[0.06] bg-transparent text-ink-secondary font-mono text-xs"
         >
           Cancel
         </Button>
@@ -868,9 +868,9 @@ function VisualConstraintEditor({
     <Collapsible
       open={constraintsOpen}
       onOpenChange={setConstraintsOpen}
-      className="space-y-2 border border-white/10 bg-white/[0.02] p-3 rounded-lg"
+      className="space-y-2 border border-white/[0.06] bg-white/[0.02] p-3 rounded-lg"
     >
-      <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
+      <div className="flex items-center justify-between border-b border-white/[0.06] pb-2.5">
         <CollapsibleTrigger className="flex flex-1 items-center gap-2 text-left cursor-pointer group hover:opacity-90 select-none pr-3">
           <ChevronDown
             className={cn(
@@ -884,7 +884,7 @@ function VisualConstraintEditor({
           </span>
         </CollapsibleTrigger>
 
-        <div className="flex items-center gap-1 border border-white/10 bg-slate-900/90 p-1 rounded-md font-mono text-[10px] shrink-0 shadow-inner">
+        <div className="flex items-center gap-1 border border-white/[0.06] bg-slate-900/90 p-1 rounded-md font-mono text-[10px] shrink-0 shadow-inner">
           <button
             type="button"
             onClick={(e) => {
@@ -925,7 +925,7 @@ function VisualConstraintEditor({
           <div className="space-y-1.5">
             {Object.keys(parsedObj).length > 0 ? (
               Object.entries(parsedObj).map(([tName, conf]: [string, any]) => (
-                <div key={tName} className="flex items-center justify-between border border-white/10 bg-slate-900/90 p-2 rounded font-mono text-xs">
+                <div key={tName} className="flex items-center justify-between border border-white/[0.06] bg-slate-900/90 p-2 rounded font-mono text-xs">
                   <div>
                     <span className="text-cyan-400 font-bold">{tName}</span>
                     <div className="flex flex-wrap items-center gap-3 text-[11px] text-ink-secondary mt-0.5">
@@ -1016,7 +1016,7 @@ function VisualConstraintEditor({
                 <select
                   value={targetTool}
                   onChange={(e) => setTargetTool(e.target.value)}
-                  className="mt-1 h-8 w-full border border-white/10 bg-slate-900 px-2 font-mono text-xs text-white rounded"
+                  className="mt-1 h-8 w-full border border-white/[0.06] bg-slate-900 px-2 font-mono text-xs text-white rounded"
                 >
                   {selectedTools.length > 0 ? (
                     selectedTools.map((t) => (
@@ -1034,7 +1034,7 @@ function VisualConstraintEditor({
                   value={paramName}
                   onChange={(e) => setParamName(e.target.value)}
                   disabled={numericParams.length === 0}
-                  className="mt-1 h-8 w-full border border-white/10 bg-slate-900 px-2 font-mono text-xs text-white rounded disabled:opacity-50"
+                  className="mt-1 h-8 w-full border border-white/[0.06] bg-slate-900 px-2 font-mono text-xs text-white rounded disabled:opacity-50"
                 >
                   <option value="">
                     {!targetToolMeta
@@ -1063,7 +1063,7 @@ function VisualConstraintEditor({
                 onChange={(e) => setParamMax(e.target.value)}
                 placeholder="e.g. 1200"
                 disabled={!paramName}
-                className="mt-1 h-8 border-white/10 bg-slate-900 font-mono text-xs text-white disabled:opacity-40"
+                className="mt-1 h-8 border-white/[0.06] bg-slate-900 font-mono text-xs text-white disabled:opacity-40"
               />
             </div>
 
@@ -1096,7 +1096,7 @@ function VisualConstraintEditor({
                     {activeItems.map((item) => {
                       const scopeLabel = item.scope === 'fleet' ? '🌐 Fleet' : item.scope === 'class' ? '📦 Class' : '🤖 Instance';
                       return (
-                        <div key={item.key} className="flex items-center gap-1.5 border border-white/10 bg-slate-950 px-2 py-1 rounded font-mono text-[11px]">
+                        <div key={item.key} className="flex items-center gap-1.5 border border-white/[0.06] bg-slate-950 px-2 py-1 rounded font-mono text-[11px]">
                           <span className="text-white font-semibold">{scopeLabel}</span>
                           <span className="text-amber-300 font-semibold uppercase">{item.window}:</span>
                           <span className="text-cyan-300 font-bold">${(item.limitCents / 100).toLocaleString()}</span>
@@ -1123,7 +1123,7 @@ function VisualConstraintEditor({
                     value={accWindow}
                     onChange={(e) => setAccWindow(e.target.value as any)}
                     disabled={!paramName}
-                    className="mt-1 h-8 w-full border border-white/10 bg-slate-900 px-2 font-mono text-xs text-white rounded disabled:opacity-40"
+                    className="mt-1 h-8 w-full border border-white/[0.06] bg-slate-900 px-2 font-mono text-xs text-white rounded disabled:opacity-40"
                   >
                     <option value="daily">Daily</option>
                     <option value="hourly">Hourly</option>
@@ -1137,7 +1137,7 @@ function VisualConstraintEditor({
                     value={accScope}
                     onChange={(e) => setAccScope(e.target.value as any)}
                     disabled={!paramName}
-                    className="mt-1 h-8 w-full border border-white/10 bg-slate-900 px-2 font-mono text-xs text-white rounded disabled:opacity-40"
+                    className="mt-1 h-8 w-full border border-white/[0.06] bg-slate-900 px-2 font-mono text-xs text-white rounded disabled:opacity-40"
                   >
                     <option value="instance">Per Agent Instance</option>
                     <option value="class">Across Agent Class</option>
@@ -1152,7 +1152,7 @@ function VisualConstraintEditor({
                     onChange={(e) => setAccLimit(e.target.value)}
                     placeholder="e.g. 5000"
                     disabled={!paramName}
-                    className="mt-1 h-8 border-white/10 bg-slate-900 font-mono text-xs text-white disabled:opacity-40"
+                    className="mt-1 h-8 border-white/[0.06] bg-slate-900 font-mono text-xs text-white disabled:opacity-40"
                   />
                 </div>
 
@@ -1181,7 +1181,7 @@ function VisualConstraintEditor({
                 <select
                   value={rlScope}
                   onChange={(e) => setRlScope(e.target.value as any)}
-                  className="mt-1 h-8 w-full border border-white/10 bg-slate-900 px-2 font-mono text-xs text-white rounded"
+                  className="mt-1 h-8 w-full border border-white/[0.06] bg-slate-900 px-2 font-mono text-xs text-white rounded"
                 >
                   <option value="instance">Per Agent Instance</option>
                   <option value="class">Across Agent Class</option>
@@ -1194,7 +1194,7 @@ function VisualConstraintEditor({
                   value={maxCalls}
                   onChange={(e) => setMaxCalls(e.target.value)}
                   placeholder="e.g. 60"
-                  className="mt-1 h-8 border-white/10 bg-slate-900 font-mono text-xs text-white"
+                  className="mt-1 h-8 border-white/[0.06] bg-slate-900 font-mono text-xs text-white"
                 />
               </div>
               <div>
@@ -1204,7 +1204,7 @@ function VisualConstraintEditor({
                   value={windowSec}
                   onChange={(e) => setWindowSec(e.target.value)}
                   placeholder="e.g. 3600"
-                  className="mt-1 h-8 border-white/10 bg-slate-900 font-mono text-xs text-white"
+                  className="mt-1 h-8 border-white/[0.06] bg-slate-900 font-mono text-xs text-white"
                 />
               </div>
             </div>
@@ -1223,7 +1223,7 @@ function VisualConstraintEditor({
           value={constraintsJson}
           onChange={(e) => setConstraintsJson(e.target.value)}
           placeholder={`{\n  "transfer_money": {\n    "params": {\n      "amount_cents": {"max": 120000, "daily_cents": 500000, "hourly_cents": 100000}\n    },\n    "rate_limit": {"max_calls": 60, "window_seconds": 3600}\n  }\n}`}
-          className="mt-1 h-36 w-full border border-white/10 bg-slate-900 p-2 font-mono text-[11px] leading-relaxed rounded text-white focus:outline-none focus:border-cyan-500"
+          className="mt-1 h-36 w-full border border-white/[0.06] bg-slate-900 p-2 font-mono text-[11px] leading-relaxed rounded text-white focus:outline-none focus:border-cyan-500"
         />
       )}
       </CollapsibleContent>

@@ -210,7 +210,7 @@ export function FleetCapsView({ onRefresh }: { onRefresh?: () => void }) {
                   {entries.map((c) => (
                     <div
                       key={`${c.param}-${c.window}`}
-                      className="flex items-center gap-1.5 border border-white/10 bg-slate-950 px-2 py-1 rounded font-mono text-[11px]"
+                      className="flex items-center gap-1.5 border border-white/[0.06] bg-slate-950 px-2 py-1 rounded font-mono text-[11px]"
                     >
                       <span className="text-amber-300 font-semibold uppercase">{c.window}:</span>
                       <span className="text-white">{c.param}</span>
@@ -244,7 +244,7 @@ export function FleetCapsView({ onRefresh }: { onRefresh?: () => void }) {
               <select
                 value={draftTool}
                 onChange={(e) => setDraftTool(e.target.value)}
-                className="mt-1 h-8 w-full border border-white/10 bg-slate-900 px-2 font-mono text-xs text-white rounded"
+                className="mt-1 h-8 w-full border border-white/[0.06] bg-slate-900 px-2 font-mono text-xs text-white rounded"
               >
                 {tools.length > 0 ? (
                   tools.map((t) => (
@@ -262,7 +262,7 @@ export function FleetCapsView({ onRefresh }: { onRefresh?: () => void }) {
                 value={draftParam}
                 onChange={(e) => setDraftParam(e.target.value)}
                 disabled={numericParams.length === 0}
-                className="mt-1 h-8 w-full border border-white/10 bg-slate-900 px-2 font-mono text-xs text-white rounded disabled:opacity-50"
+                className="mt-1 h-8 w-full border border-white/[0.06] bg-slate-900 px-2 font-mono text-xs text-white rounded disabled:opacity-50"
               >
                 <option value="">
                   {!draftToolMeta
@@ -282,7 +282,7 @@ export function FleetCapsView({ onRefresh }: { onRefresh?: () => void }) {
               <select
                 value={draftWindow}
                 onChange={(e) => setDraftWindow(e.target.value as FleetCap['window'])}
-                className="mt-1 h-8 w-full border border-white/10 bg-slate-900 px-2 font-mono text-xs text-white rounded"
+                className="mt-1 h-8 w-full border border-white/[0.06] bg-slate-900 px-2 font-mono text-xs text-white rounded"
               >
                 {WINDOWS.map((w) => (
                   <option key={w.value} value={w.value}>{w.label}</option>
@@ -297,7 +297,7 @@ export function FleetCapsView({ onRefresh }: { onRefresh?: () => void }) {
                 value={draftLimit}
                 onChange={(e) => setDraftLimit(e.target.value)}
                 placeholder="e.g. 50000"
-                className="mt-1 h-8 border-white/10 bg-slate-900 font-mono text-xs text-white"
+                className="mt-1 h-8 border-white/[0.06] bg-slate-900 font-mono text-xs text-white"
               />
             </div>
           </div>
@@ -336,7 +336,7 @@ export function FleetCapsView({ onRefresh }: { onRefresh?: () => void }) {
                   {entries.map((r, i) => (
                     <div
                       key={`${r.max_calls}-${r.window_seconds}-${i}`}
-                      className="flex items-center gap-1.5 border border-white/10 bg-slate-950 px-2 py-1 rounded font-mono text-[11px]"
+                      className="flex items-center gap-1.5 border border-white/[0.06] bg-slate-950 px-2 py-1 rounded font-mono text-[11px]"
                     >
                       <span className="text-violet-300 font-semibold uppercase">every {fmtWindow(r.window_seconds)}:</span>
                       <span className="text-white">≤ {r.max_calls.toLocaleString()} calls</span>
@@ -367,7 +367,7 @@ export function FleetCapsView({ onRefresh }: { onRefresh?: () => void }) {
               <select
                 value={rlTool}
                 onChange={(e) => setRlTool(e.target.value)}
-                className="mt-1 h-8 w-full border border-white/10 bg-slate-900 px-2 font-mono text-xs text-white rounded"
+                className="mt-1 h-8 w-full border border-white/[0.06] bg-slate-900 px-2 font-mono text-xs text-white rounded"
               >
                 {tools.length > 0 ? (
                   tools.map((t) => (
@@ -386,7 +386,7 @@ export function FleetCapsView({ onRefresh }: { onRefresh?: () => void }) {
                 value={rlMaxCalls}
                 onChange={(e) => setRlMaxCalls(e.target.value)}
                 placeholder="e.g. 100"
-                className="mt-1 h-8 border-white/10 bg-slate-900 font-mono text-xs text-white"
+                className="mt-1 h-8 border-white/[0.06] bg-slate-900 font-mono text-xs text-white"
               />
             </div>
 
@@ -397,7 +397,7 @@ export function FleetCapsView({ onRefresh }: { onRefresh?: () => void }) {
                 value={rlWindowSec}
                 onChange={(e) => setRlWindowSec(e.target.value)}
                 placeholder="e.g. 3600"
-                className="mt-1 h-8 border-white/10 bg-slate-900 font-mono text-xs text-white"
+                className="mt-1 h-8 border-white/[0.06] bg-slate-900 font-mono text-xs text-white"
               />
             </div>
           </div>

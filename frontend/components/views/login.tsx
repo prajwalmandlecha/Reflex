@@ -2,7 +2,8 @@
 
 import { useState } from 'react';
 import { useAuth } from '@/lib/auth-context';
-import { Shield, Lock, Mail, ArrowRight, UserCheck, Eye, EyeOff } from 'lucide-react';
+import { ArrowRight, Eye, EyeOff, Mail, Lock } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 export function LoginView() {
   const { login } = useAuth();
@@ -11,6 +12,7 @@ export function LoginView() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedPreset, setSelectedPreset] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,82 +31,71 @@ export function LoginView() {
     }
   };
 
-  const fillQuickPreset = (presetEmail: string, presetPass: string) => {
+  const fillQuickPreset = (role: string, presetEmail: string, presetPass: string) => {
+    setSelectedPreset(role);
     setEmail(presetEmail);
     setPassword(presetPass);
     setError(null);
   };
 
   return (
-    <div className="min-h-screen bg-bg-deep text-ink-primary flex items-center justify-center p-4 font-sans antialiased">
-      <div className="w-full max-w-md">
-        {/* Header Branding */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-accent font-mono font-bold text-white text-xl shadow-lg shadow-blue-500/20 mb-3 border border-blue-400/30">
-            AGP
-          </div>
-          <h1 className="font-mono text-xl font-bold tracking-tight text-ink-primary">
-            REFLEX GOVERNANCE PLATFORM
+    <div className="min-h-screen bg-bg-deep text-ink-primary flex flex-col items-center justify-center p-4 font-sans antialiased">
+      <div className="w-full max-w-[380px]">
+        {/* Clean Minimal Title */}
+        <div className="text-center mb-6">
+          <h1 className="font-mono text-xl font-bold tracking-wider text-white">
+            REFLEX
           </h1>
-          <p className="text-xs font-mono text-ink-secondary mt-1">
-            In-Flight Security Interceptor & Control Plane
-          </p>
         </div>
 
-        {/* Login Form Container */}
-        <div className="bg-surface border border-border rounded-xl p-6 shadow-2xl backdrop-blur-md">
-          <div className="flex items-center gap-2 border-b border-border pb-4 mb-6">
-            <Shield className="w-4 h-4 text-accent" />
-            <h2 className="font-mono text-sm font-semibold uppercase tracking-wider text-ink-primary">
-              Operator Authentication
-            </h2>
-          </div>
-
+        {/* Card */}
+        <div className="rounded-xl bg-surface/50 border border-white/[0.06] p-6 shadow-2xl backdrop-blur-xl">
           {error && (
-            <div className="mb-5 p-3 rounded bg-rose-500/10 border border-rose-500/30 font-mono text-xs text-rose-300 flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
-              <span>{error}</span>
+            <div className="mb-4 p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/20 font-mono text-xs text-rose-300 flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0" />
+              <span className="flex-1">{error}</span>
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block font-mono text-xs text-ink-secondary mb-1.5">
-                Work Email Address
+          <form onSubmit={handleSubmit} className="space-y-3.5">
+            <div className="space-y-1">
+              <label className="block font-mono text-[10px] text-ink-secondary uppercase tracking-wider">
+                Email
               </label>
               <div className="relative">
-                <Mail className="w-4 h-4 text-ink-secondary absolute left-3 top-3" />
+                <Mail className="w-3.5 h-3.5 text-ink-secondary/50 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="operator@organisation.com"
-                  className="w-full bg-bg-deep border border-border rounded-lg pl-9 pr-3 py-2 text-xs font-mono text-ink-primary focus:outline-none focus:border-accent transition-colors"
+                  placeholder="operator@reflex.local"
+                  className="w-full bg-black/40 border border-white/[0.06] focus:border-accent/60 focus:ring-1 focus:ring-accent/20 rounded-lg pl-8 pr-3 py-2 text-xs font-mono text-white placeholder:text-ink-secondary/30 transition-colors outline-none"
                   required
                 />
               </div>
             </div>
 
-            <div>
-              <label className="block font-mono text-xs text-ink-secondary mb-1.5">
-                Account Password
+            <div className="space-y-1">
+              <label className="block font-mono text-[10px] text-ink-secondary uppercase tracking-wider">
+                Password
               </label>
               <div className="relative">
-                <Lock className="w-4 h-4 text-ink-secondary absolute left-3 top-3" />
+                <Lock className="w-3.5 h-3.5 text-ink-secondary/50 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input
                   type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••••••"
-                  className="w-full bg-bg-deep border border-border rounded-lg pl-9 pr-10 py-2 text-xs font-mono text-ink-primary focus:outline-none focus:border-accent transition-colors"
+                  className="w-full bg-black/40 border border-white/[0.06] focus:border-accent/60 focus:ring-1 focus:ring-accent/20 rounded-lg pl-8 pr-8 py-2 text-xs font-mono text-white placeholder:text-ink-secondary/30 transition-colors outline-none"
                   required
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-2.5 text-ink-secondary hover:text-ink-primary"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-secondary/50 hover:text-ink-primary p-0.5 transition-colors"
+                  tabIndex={-1}
                 >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                 </button>
               </div>
             </div>
@@ -112,55 +103,62 @@ export function LoginView() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full mt-2 bg-accent hover:bg-accent/90 text-white font-mono text-xs font-semibold py-2.5 rounded-lg transition-[background-color] shadow-md shadow-blue-500/20 flex items-center justify-center gap-2 disabled:opacity-50"
+              className="w-full mt-2 bg-accent hover:bg-accent/90 text-white font-mono text-xs font-semibold py-2.5 rounded-lg shadow-md shadow-blue-500/15 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
             >
               {loading ? (
-                <span className="animate-pulse">Authenticating...</span>
+                <span>Signing in...</span>
               ) : (
                 <>
-                  <span>Sign In to Control Center</span>
-                  <ArrowRight className="w-4 h-4" />
+                  <span>Sign In</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
                 </>
               )}
             </button>
           </form>
 
-          {/* Seed Account Quick Login Helpers */}
-          <div className="mt-6 pt-5 border-t border-border">
-            <div className="font-mono text-[10px] uppercase text-ink-secondary mb-2 font-semibold">
-              Demo Seed Accounts (Click to autofill)
-            </div>
-            <div className="grid grid-cols-3 gap-2">
+          {/* Clean preset selector */}
+          <div className="mt-5 pt-4 border-t border-white/[0.04]">
+            <div className="grid grid-cols-3 gap-1.5">
               <button
                 type="button"
-                onClick={() => fillQuickPreset('admin@reflex.local', 'AdminPass123!')}
-                className="p-2 rounded border border-border bg-bg-deep/60 hover:border-blue-500/50 hover:bg-accent/10 text-left transition-colors font-mono"
+                onClick={() => fillQuickPreset('admin', 'admin@reflex.local', 'AdminPass123!')}
+                className={cn(
+                  'py-1.5 px-2 rounded border text-center font-mono text-[11px] transition-colors cursor-pointer',
+                  selectedPreset === 'admin'
+                    ? 'border-accent/50 bg-accent/15 text-accent font-semibold'
+                    : 'border-white/[0.04] bg-white/[0.02] text-ink-secondary hover:text-white hover:bg-white/[0.04]'
+                )}
               >
-                <div className="text-xs text-accent font-bold">Admin</div>
-                <div className="text-[10px] text-ink-secondary">Full System</div>
+                Admin
               </button>
+
               <button
                 type="button"
-                onClick={() => fillQuickPreset('operator@reflex.local', 'OperatorPass123!')}
-                className="p-2 rounded border border-border bg-bg-deep/60 hover:border-emerald-500/50 hover:bg-emerald-500/10 text-left transition-colors font-mono"
+                onClick={() => fillQuickPreset('operator', 'operator@reflex.local', 'OperatorPass123!')}
+                className={cn(
+                  'py-1.5 px-2 rounded border text-center font-mono text-[11px] transition-colors cursor-pointer',
+                  selectedPreset === 'operator'
+                    ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-400 font-semibold'
+                    : 'border-white/[0.04] bg-white/[0.02] text-ink-secondary hover:text-white hover:bg-white/[0.04]'
+                )}
               >
-                <div className="text-xs text-emerald-400 font-bold">Operator</div>
-                <div className="text-[10px] text-ink-secondary">Fleet & Policy</div>
+                Operator
               </button>
+
               <button
                 type="button"
-                onClick={() => fillQuickPreset('auditor@reflex.local', 'AuditorPass123!')}
-                className="p-2 rounded border border-border bg-bg-deep/60 hover:border-amber-500/50 hover:bg-amber-500/10 text-left transition-colors font-mono"
+                onClick={() => fillQuickPreset('auditor', 'auditor@reflex.local', 'AuditorPass123!')}
+                className={cn(
+                  'py-1.5 px-2 rounded border text-center font-mono text-[11px] transition-colors cursor-pointer',
+                  selectedPreset === 'auditor'
+                    ? 'border-amber-400/50 bg-amber-400/15 text-amber-400 font-semibold'
+                    : 'border-white/[0.04] bg-white/[0.02] text-ink-secondary hover:text-white hover:bg-white/[0.04]'
+                )}
               >
-                <div className="text-xs text-amber-400 font-bold">Auditor</div>
-                <div className="text-[10px] text-ink-secondary">Read Only</div>
+                Auditor
               </button>
             </div>
           </div>
-        </div>
-
-        <div className="text-center mt-6 font-mono text-[11px] text-ink-secondary">
-          Reflex Enterprise Security Interceptor • v1.0.0
         </div>
       </div>
     </div>

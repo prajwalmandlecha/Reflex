@@ -114,7 +114,7 @@ export function SettingsView({ operator }: { operator: string }) {
         {/* Platform Architecture & Engine Status */}
         <Panel title="Governance Infrastructure & Engine Status">
           <div className="space-y-3 p-4">
-            <div className="flex items-center justify-between border border-border bg-slate-950 p-3">
+            <div className="flex items-center justify-between rounded-lg border border-border bg-slate-950 p-3 transition-colors hover:bg-slate-950/80">
               <div className="flex items-center gap-2.5">
                 <Server className="h-4 w-4 text-accent" />
                 <div>
@@ -125,7 +125,7 @@ export function SettingsView({ operator }: { operator: string }) {
               <EngineStatus status={health?.gateway} />
             </div>
 
-            <div className="flex items-center justify-between border border-border bg-slate-950 p-3">
+            <div className="flex items-center justify-between rounded-lg border border-border bg-slate-950 p-3 transition-colors hover:bg-slate-950/80">
               <div className="flex items-center gap-2.5">
                 <Database className="h-4 w-4 text-accent" />
                 <div>
@@ -136,7 +136,7 @@ export function SettingsView({ operator }: { operator: string }) {
               <EngineStatus status={health?.redis} />
             </div>
 
-            <div className="flex items-center justify-between border border-border bg-slate-950 p-3">
+            <div className="flex items-center justify-between rounded-lg border border-border bg-slate-950 p-3 transition-colors hover:bg-slate-950/80">
               <div className="flex items-center gap-2.5">
                 <Cpu className="h-4 w-4 text-accent" />
                 <div>
@@ -152,7 +152,7 @@ export function SettingsView({ operator }: { operator: string }) {
         {/* Global Security & Failure Mode Defaults */}
         <Panel title="Platform Security & Failure Mode Defaults" className="lg:col-span-2">
           <div className="grid grid-cols-1 gap-4 p-4 lg:grid-cols-3">
-            <div className="border border-white/5 bg-slate-950 p-3">
+            <div className="rounded-lg border border-white/5 bg-slate-950 p-3">
               <div className="font-mono text-xs text-ink-primary font-semibold">Default Failure Mode</div>
               <div className="mt-1 font-mono text-[11px] text-signal-stopped font-bold uppercase">FAIL-CLOSED (Strict Security)</div>
               <p className="mt-1 font-sans text-[11px] text-ink-secondary">
@@ -160,7 +160,7 @@ export function SettingsView({ operator }: { operator: string }) {
               </p>
             </div>
 
-            <div className="border border-white/5 bg-slate-950 p-3">
+            <div className="rounded-lg border border-white/5 bg-slate-950 p-3">
               <div className="font-mono text-xs text-ink-primary font-semibold">Audit Chain Security</div>
               <div className="mt-1 font-mono text-[11px] text-signal-healthy font-bold uppercase">SHA-256 Hash Chained</div>
               <p className="mt-1 font-sans text-[11px] text-ink-secondary">
@@ -168,7 +168,7 @@ export function SettingsView({ operator }: { operator: string }) {
               </p>
             </div>
 
-            <div className="border border-white/5 bg-slate-950 p-3">
+            <div className="rounded-lg border border-white/5 bg-slate-950 p-3">
               <div className="font-mono text-xs text-ink-primary font-semibold">Killswitch Propagation</div>
               <div className="mt-1 font-mono text-[11px] text-accent font-bold uppercase">Redis Pub/Sub Fan-out</div>
               <p className="mt-1 font-sans text-[11px] text-ink-secondary">
@@ -255,7 +255,7 @@ function RedactionSettings() {
               {keys.map((k) => (
                 <span
                   key={k}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 font-mono text-[11px] text-ink-primary"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-white/[0.06] bg-white/[0.03] px-2.5 py-1 font-mono text-[11px] text-ink-primary"
                 >
                   <EyeOff className="h-3 w-3 text-signal-caution" />
                   {k}
@@ -279,7 +279,7 @@ function RedactionSettings() {
                   onChange={(e) => setDraft(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && addKey()}
                   placeholder="e.g. internal_ref, customer_id"
-                  className="border-white/10 bg-white/[0.02] font-mono text-sm"
+                  className="border-white/[0.06] bg-white/[0.02] font-mono text-sm"
                 />
                 <Button variant="outline" size="sm" onClick={addKey} disabled={!draft.trim()}>
                   <Plus className="h-3.5 w-3.5" /> Add

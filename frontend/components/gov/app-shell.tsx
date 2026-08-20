@@ -421,12 +421,12 @@ function AppShellContent() {
 
   const sidebarContent = (
     <>
-      <div className="p-4 border-b border-border flex items-center gap-3">
-        <div className="w-8 h-8 rounded bg-accent flex items-center justify-center font-mono font-bold text-white text-sm shadow-md">
+      <div className="p-4 border-b border-white/[0.05] flex items-center gap-3">
+        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center font-mono font-bold text-white text-xs shadow-md shadow-blue-500/20 border border-white/20">
           AGP
         </div>
         <div>
-          <div className="font-mono font-bold text-sm text-ink-primary tracking-tight">
+          <div className="font-mono font-bold text-xs text-white tracking-tight">
             REFLEX AGP
           </div>
           <div className="text-[10px] font-mono text-ink-secondary">
@@ -447,10 +447,10 @@ function AppShellContent() {
                 setSidebarOpen(false);
               }}
               className={cn(
-                'w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-mono transition-colors text-left',
+                'w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-mono transition-all text-left cursor-pointer',
                 active
-                  ? 'bg-accent/15 text-accent font-semibold border border-accent/30'
-                  : 'text-ink-secondary hover:text-ink-primary hover:bg-border/40'
+                  ? 'bg-accent/10 text-accent font-semibold border border-accent/25 shadow-[0_0_12px_rgba(76,141,255,0.1)]'
+                  : 'text-ink-secondary hover:text-white hover:bg-white/[0.04]'
               )}
             >
               <Icon className={cn('w-4 h-4', active ? 'text-accent' : 'text-ink-secondary')} />
@@ -461,7 +461,7 @@ function AppShellContent() {
       </nav>
 
       {/* User Profile Footer */}
-      <div className="p-3 border-t border-border bg-bg-deep/60 space-y-2">
+      <div className="p-3 border-t border-white/[0.05] bg-black/20 space-y-2">
         <div className="flex items-center justify-between">
           <div className="min-w-0 flex-1 pr-2">
             <div className="text-xs font-mono font-bold text-ink-primary truncate">
@@ -474,7 +474,7 @@ function AppShellContent() {
           {getRoleBadge(user.role)}
         </div>
 
-        <div className="pt-2 border-t border-border/40 flex items-center justify-between">
+        <div className="pt-2 border-t border-white/[0.04] flex items-center justify-between">
           <div className="flex items-center gap-1.5 text-[10px] font-mono text-ink-secondary">
             <span
               className={cn(
@@ -502,7 +502,7 @@ function AppShellContent() {
   return (
     <div className="min-h-screen bg-bg-deep text-ink-primary flex font-sans antialiased">
       {/* Desktop sidebar */}
-      <aside className="hidden md:flex w-64 bg-surface border-r border-border flex-col flex-shrink-0">
+      <aside className="hidden md:flex w-64 bg-[#0b1018]/90 border-r border-white/[0.05] backdrop-blur-xl flex-col flex-shrink-0">
         {sidebarContent}
       </aside>
 
@@ -529,26 +529,26 @@ function AppShellContent() {
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top Header */}
-        <header className="h-14 bg-surface border-b border-border px-4 md:px-6 flex items-center justify-between flex-shrink-0">
+        <header className="h-14 bg-[#0b1018]/80 border-b border-white/[0.05] backdrop-blur-xl px-4 md:px-6 flex items-center justify-between flex-shrink-0">
           <div className="flex items-center gap-4">
             <button
               onClick={() => setSidebarOpen(true)}
-              className="md:hidden p-1.5 rounded text-ink-secondary hover:text-ink-primary hover:bg-border/40 transition-colors"
+              className="md:hidden p-1.5 rounded-lg text-ink-secondary hover:text-ink-primary hover:bg-white/[0.06] transition-colors"
               aria-label="Open menu"
             >
               <Menu className="w-5 h-5" />
             </button>
             <StatusBadge status={fleetStatus} />
-            <div className="h-4 w-[1px] bg-border" />
+            <div className="h-4 w-[1px] bg-white/[0.06]" />
             <div className="text-xs font-mono text-ink-secondary">
-              Active Fleet: <span className="text-ink-primary font-semibold">{instances.filter(i => i.status === 'active').length}</span> / {instances.length}
+              Active Fleet: <span className="text-white font-semibold">{instances.filter(i => i.status === 'active').length}</span> / {instances.length}
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5">
             <button
               onClick={() => setShowHelpModal(true)}
-              className="px-2.5 py-1 rounded border border-border bg-surface text-ink-secondary hover:text-ink-primary hover:bg-border/50 font-mono text-xs transition-colors flex items-center gap-1.5"
+              className="px-2.5 py-1.5 rounded-lg border border-white/[0.06] bg-white/[0.02] text-ink-secondary hover:text-white hover:bg-white/[0.06] hover:border-white/[0.12] font-mono text-xs transition-all flex items-center gap-1.5 cursor-pointer"
               title="Getting Started Guide"
             >
               <HelpCircle className="w-3.5 h-3.5 text-accent" />
@@ -557,7 +557,7 @@ function AppShellContent() {
 
             <button
               onClick={() => setShowShortcutsModal(true)}
-              className="px-2.5 py-1 rounded border border-border bg-surface text-ink-secondary hover:text-ink-primary hover:bg-border/50 font-mono text-xs transition-colors flex items-center gap-1"
+              className="px-2.5 py-1.5 rounded-lg border border-white/[0.06] bg-white/[0.02] text-ink-secondary hover:text-white hover:bg-white/[0.06] hover:border-white/[0.12] font-mono text-xs transition-all flex items-center gap-1 cursor-pointer"
               title="Keyboard Shortcuts (?)"
             >
               <span className="text-[10px] text-accent">?</span>

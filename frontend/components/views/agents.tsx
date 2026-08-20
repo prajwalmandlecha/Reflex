@@ -134,7 +134,7 @@ export function AgentsView({
         <div className="flex items-center gap-2">
           <Button
             onClick={() => setShowGuide(true)}
-            className="border border-white/10 bg-white/5 text-ink-primary hover:bg-white/10 font-mono text-xs"
+            className="border border-white/[0.06] bg-white/5 text-ink-primary hover:bg-white/10 font-mono text-xs"
           >
             <Terminal className="mr-1.5 h-4 w-4 text-cyan-400" />
             Connection Guide
@@ -225,7 +225,7 @@ export function AgentsView({
 
       {/* Instance Detail Drawer */}
       <Dialog open={!!selectedAgent} onOpenChange={(open) => !open && onSelectAgent(null)}>
-        <DialogContent hideClose className="max-w-4xl border-white/10 bg-slate-950 text-white p-0 gap-0 overflow-hidden">
+        <DialogContent hideClose className="max-w-4xl border-white/[0.06] bg-slate-950 text-white p-0 gap-0 overflow-hidden">
           {selectedAgent && (
               <AgentDetail
                 agent={selectedAgent}
@@ -269,7 +269,7 @@ export function AgentsView({
 
       {/* Create Instance Dialog */}
       <Dialog open={showCreate} onOpenChange={setShowCreate}>
-        <DialogContent className="max-w-lg border-white/10 bg-slate-950 text-white">
+        <DialogContent className="max-w-lg border-white/[0.06] bg-slate-950 text-white">
           <DialogHeader>
             <DialogTitle className="font-mono text-sm uppercase tracking-widest text-ink-primary">
               Register Agent Instance
@@ -363,7 +363,7 @@ function CreateInstanceForm({ classes, onComplete }: { classes: AgentClass[]; on
           <textarea
             readOnly
             value={mintedToken}
-            className="h-28 w-full border border-white/10 bg-white/5 p-2 font-mono text-[10px] leading-relaxed rounded text-cyan-300 select-text focus:outline-none"
+            className="h-28 w-full border border-white/[0.06] bg-white/5 p-2 font-mono text-[10px] leading-relaxed rounded text-cyan-300 select-text focus:outline-none"
           />
         </div>
 
@@ -400,10 +400,10 @@ function CreateInstanceForm({ classes, onComplete }: { classes: AgentClass[]; on
       <div>
         <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Assigned Agent Class</Label>
         <Select value={classId} onValueChange={setClassId}>
-          <SelectTrigger className="mt-1 border-white/10 bg-white/5 font-mono text-xs">
+          <SelectTrigger className="mt-1 border-white/[0.06] bg-white/5 font-mono text-xs">
             <SelectValue />
           </SelectTrigger>
-          <SelectContent className="border-white/10 bg-slate-900 text-white font-mono text-xs">
+          <SelectContent className="border-white/[0.06] bg-slate-900 text-white font-mono text-xs">
             {classes.map((c) => (
               <SelectItem key={c.id} value={c.id}>
                 {c.name} ({c.id})
@@ -432,7 +432,7 @@ function CreateInstanceForm({ classes, onComplete }: { classes: AgentClass[]; on
         </div>
 
         {useScopeDown ? (
-          <div className="border border-white/10 bg-white/5 p-3 rounded space-y-2">
+          <div className="border border-white/[0.06] bg-white/5 p-3 rounded space-y-2">
             <p className="font-mono text-[10px] text-ink-secondary">
               Select allowed tools from class permissions ({classTools.length} available):
             </p>
@@ -470,7 +470,7 @@ function CreateInstanceForm({ classes, onComplete }: { classes: AgentClass[]; on
             )}
           </div>
         ) : (
-          <div className="border border-white/10 bg-white/[0.02] p-2.5 rounded font-mono text-[11px] text-ink-secondary flex items-center justify-between">
+          <div className="border border-white/[0.06] bg-white/[0.02] p-2.5 rounded font-mono text-[11px] text-ink-secondary flex items-center justify-between">
             <span>Inheriting all {classTools.length} tool(s) from class</span>
             <span className="text-emerald-400 text-[10px] uppercase tracking-wider font-semibold">Full Inheritance</span>
           </div>
@@ -482,7 +482,7 @@ function CreateInstanceForm({ classes, onComplete }: { classes: AgentClass[]; on
           type="button"
           variant="outline"
           onClick={onComplete}
-          className="border-white/10 bg-transparent text-ink-secondary font-mono text-xs"
+          className="border-white/[0.06] bg-transparent text-ink-secondary font-mono text-xs"
         >
           Cancel
         </Button>
@@ -595,7 +595,7 @@ function AgentDetail({
   return (
     <div className="flex flex-col">
       {/* Modal header */}
-      <div className="flex items-center justify-between border-b border-white/10 px-6 py-4">
+      <div className="flex items-center justify-between border-b border-white/[0.06] px-6 py-4">
         <div className="flex items-center gap-3">
           <span className="font-mono text-base font-semibold text-ink-primary">{agent.id}</span>
           <span className="font-mono text-xs text-ink-secondary">
@@ -632,7 +632,7 @@ function AgentDetail({
       {/* Single-column body */}
       <div className="space-y-4 p-6 overflow-y-auto max-h-[70vh]">
       {/* JWT Bearer Token Controls */}
-      <div className="border border-white/10 bg-white/[0.02] p-3 rounded space-y-2">
+      <div className="border border-white/[0.06] bg-white/[0.02] p-3 rounded space-y-2">
         <div className="flex items-center justify-between">
           <span className="font-mono text-[10px] uppercase tracking-widest text-cyan-400 font-semibold flex items-center gap-1.5">
             <Key className="h-3.5 w-3.5" /> Bearer JWT Token
@@ -654,7 +654,7 @@ function AgentDetail({
             <textarea
               readOnly
               value={jwtToken}
-              className="h-20 w-full border border-white/10 bg-white/5 p-1.5 font-mono text-[10px] leading-relaxed rounded text-cyan-300 select-text focus:outline-none whitespace-pre-wrap break-all resize-none"
+              className="h-20 w-full border border-white/[0.06] bg-white/5 p-1.5 font-mono text-[10px] leading-relaxed rounded text-cyan-300 select-text focus:outline-none whitespace-pre-wrap break-all resize-none"
             />
             <Button
               size="sm"
@@ -676,7 +676,7 @@ function AgentDetail({
       <AgentConnectionSnippet agent={agent} cls={cls} token={jwtToken} />
 
       {/* Instance Governance Overrides & Tool Control Card */}
-      <div className="border border-white/10 bg-slate-900/90 p-3.5 rounded space-y-3 font-mono text-xs">
+      <div className="border border-white/[0.06] bg-slate-900/90 p-3.5 rounded space-y-3 font-mono text-xs">
         <div className="flex items-center justify-between border-b border-white/5 pb-2 text-ink-secondary uppercase tracking-widest text-[10px]">
           <span className="flex items-center gap-1.5 text-cyan-400 font-semibold">
             <Wrench className="h-3.5 w-3.5" /> Tool Governance (Scoped Down)
@@ -744,12 +744,12 @@ function AgentDetail({
                 </div>
               )}
 
-              <div className="flex justify-end gap-2 pt-1 border-t border-white/10">
+              <div className="flex justify-end gap-2 pt-1 border-t border-white/[0.06]">
                 <Button
                   size="sm"
                   type="button"
                   onClick={() => setEditingTools(false)}
-                  className="h-6 px-2 text-[10px] font-mono border border-white/10 bg-transparent text-ink-secondary"
+                  className="h-6 px-2 text-[10px] font-mono border border-white/[0.06] bg-transparent text-ink-secondary"
                 >
                   Cancel
                 </Button>
@@ -779,7 +779,7 @@ function AgentDetail({
                         className={cn(
                           'inline-flex items-center gap-1 px-2 py-0.5 rounded font-mono text-[10px] border',
                           isEnabled
-                            ? 'bg-white/5 text-cyan-300 border-white/10'
+                            ? 'bg-white/5 text-cyan-300 border-white/[0.06]'
                             : 'bg-white/[0.02] text-ink-secondary/50 border-white/5 line-through'
                         )}
                       >
@@ -889,7 +889,7 @@ function AgentDetail({
                 Delete Agent Instance
               </Button>
             </AlertDialogTrigger>
-            <AlertDialogContent className="border-white/10 bg-slate-950 text-white">
+            <AlertDialogContent className="border-white/[0.06] bg-slate-950 text-white">
               <AlertDialogHeader>
                 <AlertDialogTitle className="font-mono text-sm uppercase tracking-widest text-rose-400">
                   Delete Agent Instance '{agent.id}'?
@@ -899,7 +899,7 @@ function AgentDetail({
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
-                <AlertDialogCancel className="border-white/10 bg-transparent text-ink-secondary font-mono text-xs">
+                <AlertDialogCancel className="border-white/[0.06] bg-transparent text-ink-secondary font-mono text-xs">
                   Cancel
                 </AlertDialogCancel>
                 <AlertDialogAction
@@ -981,12 +981,12 @@ function AgentConnectionSnippet({ agent, cls, token }: { agent: AgentInstance; c
   };
 
   return (
-    <div className="border border-white/10 bg-white/[0.02] p-3 rounded space-y-2 font-mono text-xs">
+    <div className="border border-white/[0.06] bg-white/[0.02] p-3 rounded space-y-2 font-mono text-xs">
       <div className="flex items-center justify-between">
         <span className="text-[10px] uppercase tracking-widest text-cyan-400 font-semibold flex items-center gap-1.5">
           <Terminal className="h-3.5 w-3.5" /> MCP Server Config & Connection
         </span>
-        <div className="flex items-center gap-1 bg-white/5 p-0.5 rounded border border-white/10">
+        <div className="flex items-center gap-1 bg-white/5 p-0.5 rounded border border-white/[0.06]">
           {(['mcp.json', 'curl'] as const).map((tab) => (
             <button
               key={tab}
@@ -1003,12 +1003,12 @@ function AgentConnectionSnippet({ agent, cls, token }: { agent: AgentInstance; c
       </div>
 
       <div className="relative">
-        <pre className="min-h-[180px] max-h-[320px] overflow-auto bg-slate-950/80 border border-white/10 p-3.5 rounded-lg text-xs font-mono leading-relaxed select-text whitespace-pre-wrap break-all">
+        <pre className="min-h-[180px] max-h-[320px] overflow-auto bg-slate-950/80 border border-white/[0.06] p-3.5 rounded-lg text-xs font-mono leading-relaxed select-text whitespace-pre-wrap break-all">
           {activeTab === 'mcp.json' ? renderHighlightedJson(activeSnippet) : activeSnippet}
         </pre>
         <button
           onClick={copySnippet}
-          className="absolute top-2.5 right-2.5 bg-white/10 hover:bg-white/20 text-white px-2 py-1 rounded transition-colors text-xs cursor-pointer flex items-center gap-1 font-mono border border-white/10 shadow-sm"
+          className="absolute top-2.5 right-2.5 bg-white/10 hover:bg-white/20 text-white px-2 py-1 rounded transition-colors text-xs cursor-pointer flex items-center gap-1 font-mono border border-white/[0.06] shadow-sm"
           title="Copy Code Snippet"
         >
           {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
@@ -1025,7 +1025,7 @@ function AgentConnectionSnippet({ agent, cls, token }: { agent: AgentInstance; c
           {allowedTools.length > 0 ? (
             <div className="flex flex-wrap gap-1">
               {allowedTools.map((tool) => (
-                <code key={tool} className="rounded bg-white/5 border border-white/10 px-1.5 py-0.5 text-[10px] text-cyan-300">
+                <code key={tool} className="rounded bg-white/5 border border-white/[0.06] px-1.5 py-0.5 text-[10px] text-cyan-300">
                   {tool}
                 </code>
               ))}
@@ -1095,7 +1095,7 @@ function renderHighlightedJson(jsonStr: string) {
 function AgentConnectionGuideModal({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl border-white/10 bg-slate-950 text-white">
+      <DialogContent className="max-w-2xl border-white/[0.06] bg-slate-950 text-white">
         <DialogHeader>
           <DialogTitle className="font-mono text-sm uppercase tracking-widest text-ink-primary flex items-center gap-2">
             <Terminal className="h-4 w-4 text-cyan-400" />
@@ -1123,15 +1123,15 @@ function AgentConnectionGuideModal({ open, onOpenChange }: { open: boolean; onOp
               Complete 3-Step Setup Flow:
             </span>
             <div className="grid grid-cols-3 gap-3 text-center">
-              <div className="border border-white/10 bg-white/[0.02] p-3 rounded">
+              <div className="border border-white/[0.06] bg-white/[0.02] p-3 rounded">
                 <div className="text-cyan-400 font-bold text-xs mb-1 font-mono">1. Bank Connections</div>
                 <div className="text-[10px] text-ink-secondary font-sans">Connect native MCP servers or virtualize OpenAPI REST services.</div>
               </div>
-              <div className="border border-white/10 bg-white/[0.02] p-3 rounded">
+              <div className="border border-white/[0.06] bg-white/[0.02] p-3 rounded">
                 <div className="text-cyan-400 font-bold text-xs mb-1 font-mono">2. Classes & Policies</div>
                 <div className="text-[10px] text-ink-secondary font-sans">Set allowed tools, spend caps, and author OPA Rego governance rules.</div>
               </div>
-              <div className="border border-white/10 bg-white/[0.02] p-3 rounded">
+              <div className="border border-white/[0.06] bg-white/[0.02] p-3 rounded">
                 <div className="text-cyan-400 font-bold text-xs mb-1 font-mono">3. Register & Connect</div>
                 <div className="text-[10px] text-ink-secondary font-sans">Register agent instance ID, mint JWT token, and point agent to AGP.</div>
               </div>

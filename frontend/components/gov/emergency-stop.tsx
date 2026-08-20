@@ -93,7 +93,7 @@ export function EmergencyStopControl({
         <button
           onClick={() => setArmed(false)}
           className={cn(
-            'rounded-xl border border-white/10 bg-white/5 px-3 py-2 font-mono text-xs uppercase tracking-widest text-ink-secondary backdrop-blur-md',
+            'rounded-xl border border-white/[0.06] bg-white/5 px-3 py-2 font-mono text-xs uppercase tracking-widest text-ink-secondary backdrop-blur-md',
             'transition-colors hover:text-ink-primary',
             compact && 'px-2 py-1.5 text-[10px]'
           )}

@@ -194,7 +194,7 @@ function PoliciesGuide() {
           />
         </div>
         <div className="px-3 pb-3">
-          <div className="border border-white/10 bg-slate-950 p-3 rounded font-mono text-[11px] text-ink-secondary leading-relaxed">
+          <div className="border border-white/[0.06] bg-slate-950 p-3 rounded font-mono text-[11px] text-ink-secondary leading-relaxed">
             <span className="text-cyan-400 font-semibold">Tip:</span> Policies are the
             &ldquo;what&rdquo; (rules about tool usage). Operational limits like rate limits and
             spend caps live in the{' '}
@@ -600,7 +600,7 @@ function PolicyEditor({
                     'flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs transition-colors border cursor-pointer',
                     scope === 'global'
                       ? 'border-accent bg-accent/20 text-accent font-medium'
-                      : 'border-white/10 bg-white/5 text-ink-secondary hover:text-white'
+                      : 'border-white/[0.06] bg-white/5 text-ink-secondary hover:text-white'
                   )}
                 >
                   <Shield className="h-3.5 w-3.5" />
@@ -613,7 +613,7 @@ function PolicyEditor({
                 onClick={() => setScope('class')}
                 className={cn(
                   'flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs transition-colors border cursor-pointer',
-                  scope === 'class' ? 'border-accent bg-accent/20 text-accent font-medium' : 'border-white/10 bg-white/5 text-ink-secondary hover:text-white'
+                  scope === 'class' ? 'border-accent bg-accent/20 text-accent font-medium' : 'border-white/[0.06] bg-white/5 text-ink-secondary hover:text-white'
                 )}
               >
                 <Layers className="h-3.5 w-3.5" />
@@ -625,7 +625,7 @@ function PolicyEditor({
                 onClick={() => setScope('instance')}
                 className={cn(
                   'flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs transition-colors border cursor-pointer',
-                  scope === 'instance' ? 'border-accent bg-accent/20 text-accent font-medium' : 'border-white/10 bg-white/5 text-ink-secondary hover:text-white'
+                  scope === 'instance' ? 'border-accent bg-accent/20 text-accent font-medium' : 'border-white/[0.06] bg-white/5 text-ink-secondary hover:text-white'
                 )}
               >
                 <User className="h-3.5 w-3.5" />
@@ -661,7 +661,7 @@ function PolicyEditor({
                   Target Agent Class
                 </Label>
                 <Select value={targetClassId} onValueChange={(v) => { setTargetClassId(v); setTargetInstanceId(''); }}>
-                  <SelectTrigger className="mt-1 border-white/10 bg-slate-900 font-mono text-xs">
+                  <SelectTrigger className="mt-1 border-white/[0.06] bg-slate-900 font-mono text-xs">
                     <SelectValue placeholder="Select Agent Class" />
                   </SelectTrigger>
                   <SelectContent className="border-border bg-slate-900 text-white">
@@ -680,7 +680,7 @@ function PolicyEditor({
                     Target Agent Instance
                   </Label>
                   <Select value={targetInstanceId} onValueChange={setTargetInstanceId}>
-                    <SelectTrigger className="mt-1 border-white/10 bg-slate-900 font-mono text-xs">
+                    <SelectTrigger className="mt-1 border-white/[0.06] bg-slate-900 font-mono text-xs">
                       <SelectValue placeholder="Select Specific Instance" />
                     </SelectTrigger>
                     <SelectContent className="border-border bg-slate-900 text-white">
@@ -741,7 +741,7 @@ function PolicyEditor({
             </div>
             <div className="flex items-center gap-2">
               {/* Runner View Mode Switch */}
-              <div className="flex items-center border border-white/10 bg-white/5 p-0.5 font-mono text-[10px]">
+              <div className="flex items-center border border-white/[0.06] bg-white/5 p-0.5 font-mono text-[10px]">
                 <button
                   type="button"
                   onClick={() => setRunnerViewMode('form')}
@@ -797,7 +797,7 @@ function PolicyEditor({
                             value={String(testFormValues[pName] ?? false)}
                             onValueChange={(v) => setTestFormValues({ ...testFormValues, [pName]: v === 'true' })}
                           >
-                            <SelectTrigger className="h-6 w-[90px] border-white/10 bg-white/5 font-mono text-[11px]">
+                            <SelectTrigger className="h-6 w-[90px] border-white/[0.06] bg-white/5 font-mono text-[11px]">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent className="border-border bg-slate-900 text-white">
@@ -810,14 +810,14 @@ function PolicyEditor({
                             type="number"
                             value={testFormValues[pName] ?? 0}
                             onChange={(e) => setTestFormValues({ ...testFormValues, [pName]: parseFloat(e.target.value) || 0 })}
-                            className="h-6 w-[120px] border-white/10 bg-white/5 font-mono text-[11px]"
+                            className="h-6 w-[120px] border-white/[0.06] bg-white/5 font-mono text-[11px]"
                           />
                         ) : (
                           <Input
                             type="text"
                             value={testFormValues[pName] ?? ''}
                             onChange={(e) => setTestFormValues({ ...testFormValues, [pName]: e.target.value })}
-                            className="h-6 w-[140px] border-white/10 bg-white/5 font-mono text-[11px]"
+                            className="h-6 w-[140px] border-white/[0.06] bg-white/5 font-mono text-[11px]"
                           />
                         )}
                       </div>
@@ -830,7 +830,7 @@ function PolicyEditor({
                           type="number"
                           value={testFormValues.amount_cents ?? 150000}
                           onChange={(e) => setTestFormValues({ ...testFormValues, amount_cents: parseFloat(e.target.value) || 0 })}
-                          className="h-6 w-[120px] border-white/10 bg-white/5 font-mono text-[11px]"
+                          className="h-6 w-[120px] border-white/[0.06] bg-white/5 font-mono text-[11px]"
                         />
                       </div>
                       <div className="flex items-center justify-between gap-2">
@@ -839,7 +839,7 @@ function PolicyEditor({
                           type="text"
                           value={testFormValues.recipient_account ?? '1000000002'}
                           onChange={(e) => setTestFormValues({ ...testFormValues, recipient_account: e.target.value })}
-                          className="h-6 w-[140px] border-white/10 bg-white/5 font-mono text-[11px]"
+                          className="h-6 w-[140px] border-white/[0.06] bg-white/5 font-mono text-[11px]"
                         />
                       </div>
                       <div className="flex items-center justify-between gap-2">
@@ -848,7 +848,7 @@ function PolicyEditor({
                           value={String(testFormValues.is_external ?? true)}
                           onValueChange={(v) => setTestFormValues({ ...testFormValues, is_external: v === 'true' })}
                         >
-                          <SelectTrigger className="h-6 w-[90px] border-white/10 bg-white/5 font-mono text-[11px]">
+                          <SelectTrigger className="h-6 w-[90px] border-white/[0.06] bg-white/5 font-mono text-[11px]">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent className="border-border bg-slate-900 text-white">
@@ -1103,7 +1103,7 @@ function VisualRuleBuilder({
             Target Scoped Tool Action ({allowedTools.length} tools available)
           </Label>
           <Select value={rule.action} onValueChange={(v) => setRule({ ...rule, action: v })}>
-            <SelectTrigger className="w-full border-white/10 bg-slate-900 font-mono text-xs">
+            <SelectTrigger className="w-full border-white/[0.06] bg-slate-900 font-mono text-xs">
               <SelectValue placeholder="Select Tool Action" />
             </SelectTrigger>
             <SelectContent className="border-border bg-slate-900 text-white max-h-[280px]">
@@ -1129,7 +1129,7 @@ function VisualRuleBuilder({
             Policy Enforcement Effect
           </Label>
           <Select value={rule.effect || 'deny'} onValueChange={(v) => setRule({ ...rule, effect: v as any })}>
-            <SelectTrigger className="w-full border-white/10 bg-slate-900 font-mono text-xs">
+            <SelectTrigger className="w-full border-white/[0.06] bg-slate-900 font-mono text-xs">
               <SelectValue />
             </SelectTrigger>
             <SelectContent className="border-border bg-slate-900 text-white">
@@ -1162,7 +1162,7 @@ function VisualRuleBuilder({
               <div key={idx} className="flex items-center gap-2">
                 {/* Schema Parameter Selector */}
                 <Select value={cond.field} onValueChange={(v) => updateCondition(idx, { field: v })}>
-                  <SelectTrigger className="w-[180px] border-white/10 bg-slate-900 font-mono text-xs">
+                  <SelectTrigger className="w-[180px] border-white/[0.06] bg-slate-900 font-mono text-xs">
                     <SelectValue placeholder="Select parameter" />
                   </SelectTrigger>
                   <SelectContent className="border-border bg-slate-900 text-white">
@@ -1179,7 +1179,7 @@ function VisualRuleBuilder({
                   value={cond.operator}
                   onValueChange={(v) => updateCondition(idx, { operator: v as RuleCondition['operator'] })}
                 >
-                  <SelectTrigger className="w-[200px] border-white/10 bg-slate-900 font-mono text-xs">
+                  <SelectTrigger className="w-[200px] border-white/[0.06] bg-slate-900 font-mono text-xs">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="border-border bg-slate-900 text-white">
@@ -1193,7 +1193,7 @@ function VisualRuleBuilder({
                 <Input
                   value={String(cond.value)}
                   onChange={(e) => updateCondition(idx, { value: e.target.value })}
-                  className="flex-1 border-white/10 bg-slate-900 font-mono text-xs"
+                  className="flex-1 border-white/[0.06] bg-slate-900 font-mono text-xs"
                   placeholder={cond.operator === 'outside_hours' ? '09:00-17:00 (Start-End UTC)' : fieldType === 'boolean' ? 'true or false' : 'Target value or regex pattern'}
                 />
 

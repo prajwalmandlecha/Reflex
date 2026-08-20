@@ -14,6 +14,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Switch } from '@/components/ui/switch';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import {
   Select,
   SelectContent,
@@ -32,11 +39,11 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import type { BankConnection } from '@/lib/types';
+import type { BankConnection, BankTool } from '@/lib/types';
 import { formatRelative } from '@/lib/format';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
-import { Plus, Check, RefreshCw, Server, AlertCircle, FileUp, Link2, Plug, Loader2, Trash2, Eye, Pencil } from 'lucide-react';
+import { Plus, Check, RefreshCw, Server, AlertCircle, FileUp, Link2, Plug, Loader2, Trash2, EyeOff, Pencil, ShieldAlert } from 'lucide-react';
 
 const sourceTypeLabel: Record<string, string> = {
   native_mcp: 'Native MCP',
@@ -103,7 +110,7 @@ export function BankConnectionsView({
             <Panel key={conn.id}>
               <div className="flex items-start justify-between gap-3 border-b border-white/5 p-4">
                 <div className="flex min-w-0 flex-1 items-start gap-3">
-                  <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded border border-white/10 bg-white/5 font-mono text-xs font-bold text-accent">
+                  <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded border border-white/[0.06] bg-white/5 font-mono text-xs font-bold text-accent">
                     <Server className="h-4 w-4" />
                   </div>
                   <div className="min-w-0">
@@ -145,7 +152,7 @@ export function BankConnectionsView({
                   {canUpdate && (
                     <button
                       onClick={() => setEditingConn(conn)}
-                      className="flex h-7 w-7 items-center justify-center rounded border border-white/10 bg-white/5 text-ink-secondary transition-colors hover:border-accent/30 hover:bg-accent/10 hover:text-accent cursor-pointer"
+                      className="flex h-7 w-7 items-center justify-center rounded border border-white/[0.06] bg-white/5 text-ink-secondary transition-colors hover:border-accent/30 hover:bg-accent/10 hover:text-accent cursor-pointer"
                       title="Edit connection — update URL, credentials, or auth type"
                     >
                       <Pencil className="h-3.5 w-3.5" />
@@ -155,7 +162,7 @@ export function BankConnectionsView({
                     <button
                       disabled={syncingId === conn.id}
                       onClick={() => handleSync(conn.id)}
-                      className="flex h-7 w-7 items-center justify-center rounded border border-white/10 bg-white/5 text-ink-secondary transition-colors hover:border-accent/30 hover:bg-accent/10 hover:text-accent cursor-pointer disabled:opacity-50"
+                      className="flex h-7 w-7 items-center justify-center rounded border border-white/[0.06] bg-white/5 text-ink-secondary transition-colors hover:border-accent/30 hover:bg-accent/10 hover:text-accent cursor-pointer disabled:opacity-50"
                       title="Reload — re-probe the server and re-discover tools & status"
                     >
                       <RefreshCw className={cn('h-3.5 w-3.5', syncingId === conn.id && 'animate-spin')} />
@@ -167,59 +174,23 @@ export function BankConnectionsView({
 
               {(conn.tools?.length ?? 0) > 0 ? (
                 <div className="p-3">
-                  <div className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary mb-2">
-                    Exposed MCP Tools ({conn.tools?.filter((t) => t.exposed).length} / {conn.tools?.length})
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">
+                      Exposed MCP Tools ({conn.tools?.filter((t) => t.exposed).length} / {conn.tools?.length})
+                    </div>
+                    {conn.tools?.some((t) => t.sensitive_response) && (
+                      <div className="flex items-center gap-1 font-mono text-[10px] text-amber-400">
+                        <ShieldAlert className="h-3 w-3" />
+                        {conn.tools?.filter((t) => t.sensitive_response).length} redacted
+                      </div>
+                    )}
                   </div>
                   <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-                    {conn.tools?.map((tool) => (
-                      <div key={tool.id} className="flex items-center gap-2 border border-white/5 bg-white/[0.02] p-1.5 rounded">
-                        <span className={cn('rounded px-1.5 py-0.5 font-mono text-[9px] font-semibold', methodColor(tool.method || 'GET'))}>
-                          {tool.method || 'MCP'}
-                        </span>
-                        <span className="font-mono text-xs text-ink-primary font-medium">{tool.name}</span>
-                        <span className="truncate font-mono text-[10px] text-ink-secondary flex-1">{tool.path || tool.description}</span>
-                        <button
-                          onClick={async () => {
-                            try {
-                              await api.updateTool(Number(tool.id), { exposed: !tool.exposed });
-                              if (onRefresh) onRefresh();
-                            } catch (err: any) {
-                              alert(`Failed to update tool: ${err.message || 'Unknown error'}`);
-                            }
-                          }}
-                          className={cn(
-                            'px-2 py-0.5 rounded font-mono text-[9px] uppercase tracking-wider transition-colors cursor-pointer',
-                            tool.exposed
-                              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-rose-500/20 hover:text-rose-400'
-                              : 'bg-white/5 text-ink-secondary border border-white/10 hover:bg-emerald-500/20 hover:text-emerald-400'
-                          )}
-                          title={tool.exposed ? 'Click to disable tool' : 'Click to expose tool'}
-                        >
-                          {tool.exposed ? 'EXPOSED' : 'DISABLED'}
-                        </button>
-                        <button
-                          onClick={async () => {
-                            try {
-                              await api.updateTool(Number(tool.id), { sensitive_response: !tool.sensitive_response });
-                              if (onRefresh) onRefresh();
-                            } catch (err: any) {
-                              alert(`Failed to update tool: ${err.message || 'Unknown error'}`);
-                            }
-                          }}
-                          className={cn(
-                            'px-2 py-0.5 rounded font-mono text-[9px] uppercase tracking-wider transition-colors cursor-pointer',
-                            tool.sensitive_response
-                              ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30 hover:bg-amber-500/30'
-                              : 'bg-white/5 text-ink-secondary border border-white/10 hover:bg-amber-500/20 hover:text-amber-400'
-                          )}
-                          title={tool.sensitive_response
-                            ? 'Sensitive response — suppress this tool\'s response body in audit/events. Click to clear.'
-                            : 'Mark tool response as sensitive — suppress its body in audit/events (for PII key-redaction can\'t catch).'}
-                        >
-                          {tool.sensitive_response ? 'SENSITIVE' : 'REDACT'}
-                        </button>
-                      </div>
-                    ))}
+                    <TooltipProvider delayDuration={200}>
+                      {conn.tools?.map((tool) => (
+                        <ToolRow key={tool.id} tool={tool} onRefresh={onRefresh} />
+                      ))}
+                    </TooltipProvider>
                   </div>
                 </div>
               ) : (
@@ -281,7 +252,7 @@ export function BankConnectionsView({
                       <Trash2 className="mr-1 h-3 w-3" /> Remove Server Connection
                     </Button>
                   </AlertDialogTrigger>
-                  <AlertDialogContent className="border-white/10 bg-slate-950 text-white">
+                  <AlertDialogContent className="border-white/[0.06] bg-slate-950 text-white">
                     <AlertDialogHeader>
                       <AlertDialogTitle className="font-mono text-sm uppercase tracking-widest text-rose-400">
                         Remove Connection '{conn.name}'?
@@ -291,7 +262,7 @@ export function BankConnectionsView({
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
-                      <AlertDialogCancel className="border-white/10 bg-transparent text-ink-secondary font-mono text-xs">
+                      <AlertDialogCancel className="border-white/[0.06] bg-transparent text-ink-secondary font-mono text-xs">
                         Cancel
                       </AlertDialogCancel>
                       <AlertDialogAction
@@ -344,7 +315,7 @@ export function BankConnectionsView({
       )}
 
       <Dialog open={showWizard} onOpenChange={setShowWizard}>
-        <DialogContent className="max-w-2xl border-white/10 bg-slate-950 text-white">
+        <DialogContent className="max-w-2xl border-white/[0.06] bg-slate-950 text-white">
           <DialogHeader>
             <DialogTitle className="font-mono text-sm uppercase tracking-widest text-ink-primary">
               Register Bank Connection / MCP Server
@@ -360,7 +331,7 @@ export function BankConnectionsView({
       </Dialog>
 
       <Dialog open={!!editingConn} onOpenChange={(open) => !open && setEditingConn(null)}>
-        <DialogContent className="max-w-2xl border-white/10 bg-slate-950 text-white">
+        <DialogContent className="max-w-2xl border-white/[0.06] bg-slate-950 text-white">
           <DialogHeader>
             <DialogTitle className="font-mono text-sm uppercase tracking-widest text-ink-primary">
               Edit Connection — {editingConn?.name}
@@ -414,7 +385,7 @@ function EditConnectionForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-3 pt-2">
-      <div className="rounded border border-white/10 bg-white/[0.02] p-3 font-mono text-[11px] text-ink-secondary">
+      <div className="rounded border border-white/[0.06] bg-white/[0.02] p-3 font-mono text-[11px] text-ink-secondary">
         <div>Type: <span className="text-ink-primary">{conn.sourceType === 'native_mcp' ? 'Native MCP' : 'OpenAPI Virtualized'}</span></div>
         {conn.mcpUrl && <div>URL: <span className="text-ink-primary">{conn.mcpUrl}</span></div>}
         {conn.baseUrl && !conn.mcpUrl && <div>Base URL: <span className="text-ink-primary">{conn.baseUrl}</span></div>}
@@ -434,10 +405,10 @@ function EditConnectionForm({
         <div>
           <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Authentication</Label>
           <Select value={authType} onValueChange={setAuthType}>
-            <SelectTrigger className="mt-1 border-white/10 bg-white/5 font-mono text-xs">
+            <SelectTrigger className="mt-1 border-white/[0.06] bg-white/5 font-mono text-xs">
               <SelectValue />
             </SelectTrigger>
-            <SelectContent className="border-white/10 bg-slate-900 text-white font-mono text-xs">
+            <SelectContent className="border-white/[0.06] bg-slate-900 text-white font-mono text-xs">
               <SelectItem value="none">None / Public</SelectItem>
               <SelectItem value="bearer">Bearer Token</SelectItem>
               <SelectItem value="api_key">API Key Header</SelectItem>
@@ -456,32 +427,37 @@ function EditConnectionForm({
               value={token}
               onChange={(e) => setToken(e.target.value)}
               placeholder={authType === 'header' ? 'X-Api-Key: secret' : '••••••••••••'}
-              className="mt-1 border-white/10 bg-white/5 font-mono text-xs"
+              className="mt-1 border-white/[0.06] bg-white/5 font-mono text-xs"
               required
             />
           </div>
         )}
       </div>
 
-      <label className="flex items-start gap-2 rounded border border-white/10 bg-white/[0.02] p-3">
-        <input
-          type="checkbox"
+      <div className="flex items-start gap-3 rounded border border-white/[0.06] bg-white/[0.02] p-3">
+        <Switch
           checked={sensitiveResponse}
-          onChange={(e) => setSensitiveResponse(e.target.checked)}
-          className="mt-0.5 h-4 w-4 accent-cyan-500"
+          onCheckedChange={setSensitiveResponse}
+          className="mt-0.5 data-[state=checked]:bg-amber-500"
         />
-        <span className="font-sans text-[11px] text-ink-secondary">
-          <span className="font-mono text-xs text-ink-primary">Sensitive response</span> — suppress this
-          connection&apos;s response body from the audit log and live event stream entirely (for tools
-          that return full customer records or other PII that key-based redaction can&apos;t catch).
-        </span>
-      </label>
+        <div className="space-y-0.5">
+          <div className="flex items-center gap-1.5">
+            <EyeOff className="h-3.5 w-3.5 text-amber-400" />
+            <span className="font-mono text-xs text-ink-primary font-medium">Suppress response body</span>
+          </div>
+          <p className="font-sans text-[11px] text-ink-secondary leading-relaxed">
+            Redact the entire response body from audit logs and live event stream for all tools
+            on this connection. Use for tools that return full customer records or PII that
+            field-level redaction can&apos;t catch.
+          </p>
+        </div>
+      </div>
 
       <div className="flex justify-end gap-2 pt-3">
         <Button
           type="button"
           onClick={onComplete}
-          className="border border-white/10 bg-transparent text-ink-secondary hover:bg-white/5 font-mono text-xs"
+          className="border border-white/[0.06] bg-transparent text-ink-secondary hover:bg-white/5 font-mono text-xs"
         >
           Cancel
         </Button>
@@ -506,6 +482,120 @@ function methodColor(method: string): string {
     case 'PUT': return 'bg-amber-500/10 text-amber-400 border border-amber-500/20';
     default: return 'bg-purple-500/10 text-purple-400 border border-purple-500/20';
   }
+}
+
+/** Single tool row with proper redaction toggle UX. */
+function ToolRow({ tool, onRefresh }: { tool: BankTool; onRefresh?: () => void }) {
+  const [updating, setUpdating] = useState(false);
+  const [error, setError] = useState('');
+
+  // Optimistic local state for the sensitive_response toggle so the switch
+  // flips instantly without waiting for the round-trip.
+  const [localSensitive, setLocalSensitive] = useState(!!tool.sensitive_response);
+
+  const toggleExposed = async () => {
+    setError('');
+    setUpdating(true);
+    try {
+      await api.updateTool(Number(tool.id), { exposed: !tool.exposed });
+      if (onRefresh) onRefresh();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to update tool');
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const toggleSensitive = async (checked: boolean) => {
+    setError('');
+    setLocalSensitive(checked); // optimistic
+    try {
+      await api.updateTool(Number(tool.id), { sensitive_response: checked });
+      if (onRefresh) onRefresh();
+    } catch (err: any) {
+      setLocalSensitive(!checked); // revert on failure
+      setError(err?.message || 'Failed to update tool');
+    }
+  };
+
+  return (
+    <div className="space-y-1">
+      <div
+        className={cn(
+          'flex items-center gap-2 border bg-white/[0.02] p-1.5 rounded transition-colors',
+          localSensitive ? 'border-amber-500/20' : 'border-white/5'
+        )}
+      >
+        <span className={cn('rounded px-1.5 py-0.5 font-mono text-[9px] font-semibold shrink-0', methodColor(tool.method || 'GET'))}>
+          {tool.method || 'MCP'}
+        </span>
+        <span className="font-mono text-xs text-ink-primary font-medium shrink-0">{tool.name}</span>
+        <span className="truncate font-mono text-[10px] text-ink-secondary flex-1">{tool.path || tool.description}</span>
+
+        {/* Expose / Disable toggle */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              onClick={toggleExposed}
+              disabled={updating}
+              className={cn(
+                'px-2 py-0.5 rounded font-mono text-[9px] uppercase tracking-wider transition-colors cursor-pointer shrink-0',
+                tool.exposed
+                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-rose-500/20 hover:text-rose-400'
+                  : 'bg-white/5 text-ink-secondary border border-white/[0.06] hover:bg-emerald-500/20 hover:text-emerald-400',
+                updating && 'opacity-50 cursor-wait'
+              )}
+            >
+              {tool.exposed ? 'EXPOSED' : 'DISABLED'}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent
+            side="top"
+            className="max-w-[220px] border-white/[0.06] bg-slate-900 text-white font-sans text-[11px] leading-snug"
+          >
+            {tool.exposed
+              ? 'Tool is live — agents can call it. Click to disable.'
+              : 'Tool is hidden from agents. Click to expose.'}
+          </TooltipContent>
+        </Tooltip>
+
+        {/* Redact toggle — styled Switch with Tooltip explaining behavior */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <EyeOff
+                className={cn(
+                  'h-3 w-3 transition-colors',
+                  localSensitive ? 'text-amber-400' : 'text-ink-secondary/40'
+                )}
+              />
+              <Switch
+                checked={localSensitive}
+                onCheckedChange={toggleSensitive}
+                className="data-[state=checked]:bg-amber-500 data-[state=unchecked]:bg-white/10"
+              />
+            </div>
+          </TooltipTrigger>
+          <TooltipContent
+            side="top"
+            className="max-w-[260px] border-white/[0.06] bg-slate-900 text-white font-sans text-[11px] leading-snug"
+          >
+            <span className="font-semibold text-amber-400">Response redaction</span>
+            <br />
+            {localSensitive
+              ? 'ON — This tool\'s response body is fully suppressed in audit logs and the live event stream.'
+              : 'OFF — Response body is logged with key-level redaction only. Enable to suppress the entire body (for PII that field-level redaction can\'t catch).'}
+          </TooltipContent>
+        </Tooltip>
+      </div>
+      {error && (
+        <div className="flex items-center gap-1.5 px-1.5 font-mono text-[10px] text-signal-stopped">
+          <AlertCircle className="h-3 w-3 shrink-0" />
+          {error}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
@@ -625,7 +715,7 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
               'flex flex-col items-center gap-1.5 border p-4 transition-[background-color,border-color,color] rounded',
               sourceType === 'native_mcp'
                 ? 'border-cyan-500 bg-cyan-500/10 text-cyan-400 font-semibold'
-                : 'border-white/10 bg-white/[0.02] text-ink-secondary hover:text-ink-primary hover:border-white/20'
+                : 'border-white/[0.06] bg-white/[0.02] text-ink-secondary hover:text-ink-primary hover:border-white/20'
             )}
           >
             <Link2 className="h-6 w-6" />
@@ -640,7 +730,7 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
               'flex flex-col items-center gap-1.5 border p-4 transition-[background-color,border-color,color] rounded',
               sourceType === 'openapi'
                 ? 'border-cyan-500 bg-cyan-500/10 text-cyan-400 font-semibold'
-                : 'border-white/10 bg-white/[0.02] text-ink-secondary hover:text-ink-primary hover:border-white/20'
+                : 'border-white/[0.06] bg-white/[0.02] text-ink-secondary hover:text-ink-primary hover:border-white/20'
             )}
           >
             <FileUp className="h-6 w-6" />
@@ -667,7 +757,7 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
                 value={mcpName}
                 onChange={(e) => setMcpName(e.target.value)}
                 placeholder="e.g. Bank of Anthos Payments"
-                className="mt-1 border-white/10 bg-white/5 font-mono text-xs"
+                className="mt-1 border-white/[0.06] bg-white/5 font-mono text-xs"
                 required
               />
               <p className="mt-1 font-mono text-[10px] text-ink-secondary">
@@ -682,7 +772,7 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
               value={mcpUrl}
               onChange={(e) => setMcpUrl(e.target.value)}
               placeholder="https://your-mcp-server.example.com/mcp"
-              className="mt-1 border-white/10 bg-white/5 font-mono text-xs"
+              className="mt-1 border-white/[0.06] bg-white/5 font-mono text-xs"
               required
             />
           </div>
@@ -691,10 +781,10 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
             <div>
               <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Authentication</Label>
               <Select value={mcpAuthType} onValueChange={setMcpAuthType}>
-                <SelectTrigger className="mt-1 border-white/10 bg-white/5 font-mono text-xs">
+                <SelectTrigger className="mt-1 border-white/[0.06] bg-white/5 font-mono text-xs">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent className="border-white/10 bg-slate-900 text-white font-mono text-xs">
+                <SelectContent className="border-white/[0.06] bg-slate-900 text-white font-mono text-xs">
                   <SelectItem value="none">None / Public</SelectItem>
                   <SelectItem value="bearer">Bearer Token</SelectItem>
                   <SelectItem value="api_key">API Key Header</SelectItem>
@@ -709,25 +799,30 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
                   value={mcpToken}
                   onChange={(e) => setMcpToken(e.target.value)}
                   placeholder="••••••••••••"
-                  className="mt-1 border-white/10 bg-white/5 font-mono text-xs"
+                  className="mt-1 border-white/[0.06] bg-white/5 font-mono text-xs"
                 />
               </div>
             )}
           </div>
 
-          <label className="flex items-start gap-2 rounded border border-white/10 bg-white/[0.02] p-3">
-            <input
-              type="checkbox"
+          <div className="flex items-start gap-3 rounded border border-white/[0.06] bg-white/[0.02] p-3">
+            <Switch
               checked={sensitiveResponse}
-              onChange={(e) => setSensitiveResponse(e.target.checked)}
-              className="mt-0.5 h-4 w-4 accent-cyan-500"
+              onCheckedChange={setSensitiveResponse}
+              className="mt-0.5 data-[state=checked]:bg-amber-500"
             />
-            <span className="font-sans text-[11px] text-ink-secondary">
-              <span className="font-mono text-xs text-ink-primary">Sensitive response</span> — suppress this
-              connection&apos;s response body from the audit log and live event stream entirely (for tools
-              that return full customer records or other PII that key-based redaction can&apos;t catch).
-            </span>
-          </label>
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-1.5">
+                <EyeOff className="h-3.5 w-3.5 text-amber-400" />
+                <span className="font-mono text-xs text-ink-primary font-medium">Suppress response body</span>
+              </div>
+              <p className="font-sans text-[11px] text-ink-secondary leading-relaxed">
+                Redact the entire response body from audit logs and live event stream for all tools
+                on this connection. Use for tools that return full customer records or PII that
+                field-level redaction can&apos;t catch.
+              </p>
+            </div>
+          </div>
 
           <div className="flex justify-end pt-3">
             <Button
@@ -752,7 +847,7 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
                 value={apiName}
                 onChange={(e) => setApiName(e.target.value)}
                 placeholder="e.g. Core Banking REST API"
-                className="mt-1 border-white/10 bg-white/5 font-mono text-xs"
+                className="mt-1 border-white/[0.06] bg-white/5 font-mono text-xs"
                 required
               />
               <p className="mt-1 font-mono text-[10px] text-ink-secondary">
@@ -767,7 +862,7 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
               value={apiBaseUrl}
               onChange={(e) => setApiBaseUrl(e.target.value)}
               placeholder="https://your-api.example.com"
-              className="mt-1 border-white/10 bg-white/5 font-mono text-xs"
+              className="mt-1 border-white/[0.06] bg-white/5 font-mono text-xs"
             />
           </div>
 
@@ -775,10 +870,10 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
             <div>
               <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-secondary">Authentication</Label>
               <Select value={apiAuthType} onValueChange={setApiAuthType}>
-                <SelectTrigger className="mt-1 border-white/10 bg-white/5 font-mono text-xs">
+                <SelectTrigger className="mt-1 border-white/[0.06] bg-white/5 font-mono text-xs">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent className="border-white/10 bg-slate-900 text-white font-mono text-xs">
+                <SelectContent className="border-white/[0.06] bg-slate-900 text-white font-mono text-xs">
                   <SelectItem value="none">None / Public</SelectItem>
                   <SelectItem value="bearer">Bearer Token</SelectItem>
                   <SelectItem value="api_key">API Key Header</SelectItem>
@@ -797,7 +892,7 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
                   value={apiToken}
                   onChange={(e) => setApiToken(e.target.value)}
                   placeholder={apiAuthType === 'header' ? 'X-Api-Key: secret' : '••••••••••••'}
-                  className="mt-1 border-white/10 bg-white/5 font-mono text-xs"
+                  className="mt-1 border-white/[0.06] bg-white/5 font-mono text-xs"
                 />
               </div>
             )}
@@ -829,31 +924,36 @@ function RegisterConnectionForm({ onComplete }: { onComplete: () => void }) {
                 value={specRaw}
                 onChange={(e) => setSpecRaw(e.target.value)}
                 placeholder='{"openapi": "3.0.0", "info": {"title": "Bank REST API"}, "paths": {...}}'
-                className="h-36 border-white/10 bg-white/5 font-mono text-[11px] leading-relaxed"
+                className="h-36 border-white/[0.06] bg-white/5 font-mono text-[11px] leading-relaxed"
               />
             ) : (
               <Input
                 value={specUrl}
                 onChange={(e) => setSpecUrl(e.target.value)}
                 placeholder="https://api.bank.example/v1/openapi.json"
-                className="border-white/10 bg-white/5 font-mono text-xs"
+                className="border-white/[0.06] bg-white/5 font-mono text-xs"
               />
             )}
           </div>
 
-          <label className="flex items-start gap-2 rounded border border-white/10 bg-white/[0.02] p-3">
-            <input
-              type="checkbox"
+          <div className="flex items-start gap-3 rounded border border-white/[0.06] bg-white/[0.02] p-3">
+            <Switch
               checked={sensitiveResponse}
-              onChange={(e) => setSensitiveResponse(e.target.checked)}
-              className="mt-0.5 h-4 w-4 accent-cyan-500"
+              onCheckedChange={setSensitiveResponse}
+              className="mt-0.5 data-[state=checked]:bg-amber-500"
             />
-            <span className="font-sans text-[11px] text-ink-secondary">
-              <span className="font-mono text-xs text-ink-primary">Sensitive response</span> — suppress this
-              connection&apos;s response body from the audit log and live event stream entirely (for tools
-              that return full customer records or other PII that key-based redaction can&apos;t catch).
-            </span>
-          </label>
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-1.5">
+                <EyeOff className="h-3.5 w-3.5 text-amber-400" />
+                <span className="font-mono text-xs text-ink-primary font-medium">Suppress response body</span>
+              </div>
+              <p className="font-sans text-[11px] text-ink-secondary leading-relaxed">
+                Redact the entire response body from audit logs and live event stream for all tools
+                on this connection. Use for tools that return full customer records or PII that
+                field-level redaction can&apos;t catch.
+              </p>
+            </div>
+          </div>
 
           <div className="flex justify-end pt-3">
             <Button
