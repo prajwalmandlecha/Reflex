@@ -82,26 +82,67 @@ func SpecToMCPTools(doc *openapi3.T) ([]MCPTool, error) {
 	return tools, nil
 }
 
+// extractSchema converts openapi3.Schema into a JSON Schema map preserving enum, items, default, bounds, format.
+func extractSchema(s *openapi3.Schema) map[string]any {
+	if s == nil {
+		return map[string]any{"type": "string"}
+	}
+	m := make(map[string]any)
+	if s.Type != nil {
+		types := s.Type.Slice()
+		if len(types) > 0 {
+			m["type"] = types[0]
+		}
+	}
+	if m["type"] == nil {
+		m["type"] = "string"
+	}
+	if s.Description != "" {
+		m["description"] = s.Description
+	}
+	if s.Default != nil {
+		m["default"] = s.Default
+	}
+	if len(s.Enum) > 0 {
+		m["enum"] = s.Enum
+	}
+	if s.Format != "" {
+		m["format"] = s.Format
+	}
+	if s.Min != nil {
+		m["minimum"] = *s.Min
+	}
+	if s.Max != nil {
+		m["maximum"] = *s.Max
+	}
+	if s.Pattern != "" {
+		m["pattern"] = s.Pattern
+	}
+	if m["type"] == "array" && s.Items != nil && s.Items.Value != nil {
+		m["items"] = extractSchema(s.Items.Value)
+	}
+	return m
+}
+
 // buildInputSchema constructs JSON Schema properties for path parameters, query parameters, and request body.
 func buildInputSchema(op *openapi3.Operation) map[string]any {
 	properties := make(map[string]any)
 	var required []string
 
-	// 1. Process Parameters (Path & Query)
+	// 1. Process Parameters (Path, Query, Header, Cookie)
 	for _, paramRef := range op.Parameters {
 		if paramRef == nil || paramRef.Value == nil {
 			continue
 		}
 		p := paramRef.Value
-		paramSchema := map[string]any{
-			"type":        "string",
-			"description": p.Description,
+		var paramSchema map[string]any
+		if p.Schema != nil && p.Schema.Value != nil {
+			paramSchema = extractSchema(p.Schema.Value)
+		} else {
+			paramSchema = map[string]any{"type": "string"}
 		}
-		if p.Schema != nil && p.Schema.Value != nil && p.Schema.Value.Type != nil {
-			types := p.Schema.Value.Type.Slice()
-			if len(types) > 0 {
-				paramSchema["type"] = types[0]
-			}
+		if p.Description != "" {
+			paramSchema["description"] = p.Description
 		}
 		properties[p.Name] = paramSchema
 		if p.Required {
@@ -119,17 +160,11 @@ func buildInputSchema(op *openapi3.Operation) map[string]any {
 					continue
 				}
 				pVal := propRef.Value
-				pType := "string"
-				if pVal.Type != nil {
-					types := pVal.Type.Slice()
-					if len(types) > 0 {
-						pType = types[0]
-					}
+				propSchema := extractSchema(pVal)
+				if pVal.Description != "" {
+					propSchema["description"] = pVal.Description
 				}
-				properties[propName] = map[string]any{
-					"type":        pType,
-					"description": pVal.Description,
-				}
+				properties[propName] = propSchema
 			}
 			required = append(required, schemaVal.Required...)
 		}
@@ -195,25 +230,57 @@ func BuildRESTRequest(baseURL string, doc *openapi3.T, toolName string, args map
 		return nil, fmt.Errorf("operation for tool '%s' not found in openapi spec", toolName)
 	}
 
-	// Substitute path parameters & collect query parameters
+	// Substitute path parameters, collect query parameters, and collect header parameters
 	finalPath := targetPath
 	usedArgs := make(map[string]bool)
 	queryParams := make(map[string]string)
+	headerParams := make(map[string]string)
+
+	// Helper to find arg with case-insensitive / snake_case flexibility
+	findArg := func(name string) (any, string, bool) {
+		if val, exists := args[name]; exists {
+			return val, name, true
+		}
+		normTarget := strings.ToLower(strings.ReplaceAll(name, "-", "_"))
+		for k, v := range args {
+			if strings.ToLower(strings.ReplaceAll(k, "-", "_")) == normTarget {
+				return v, k, true
+			}
+		}
+		return nil, "", false
+	}
 
 	for _, paramRef := range targetOp.Parameters {
 		if paramRef == nil || paramRef.Value == nil {
 			continue
 		}
 		p := paramRef.Value
-		val, exists := args[p.Name]
+		val, matchedKey, exists := findArg(p.Name)
 		if exists {
-			usedArgs[p.Name] = true
+			usedArgs[matchedKey] = true
 			valStr := fmt.Sprintf("%v", val)
-			if p.In == "path" {
+			switch strings.ToLower(p.In) {
+			case "path":
 				// Path-escape so values containing '/', '?' or '%' don't break routing (G21).
 				finalPath = strings.ReplaceAll(finalPath, "{"+p.Name+"}", url.PathEscape(valStr))
-			} else if p.In == "query" {
+			case "query":
 				queryParams[p.Name] = valStr
+			case "header":
+				headerParams[p.Name] = valStr
+			case "cookie":
+				// Cookie parameter
+				headerParams["Cookie"] = fmt.Sprintf("%s=%s", p.Name, valStr)
+			}
+		}
+	}
+
+	// Also check for common idempotency key argument names if not already captured
+	if _, hasIdem := headerParams["Idempotency-Key"]; !hasIdem {
+		for _, keyName := range []string{"Idempotency-Key", "idempotency_key", "idempotencyKey", "X-Idempotency-Key", "idempotency"} {
+			if val, exists := args[keyName]; exists && val != nil {
+				usedArgs[keyName] = true
+				headerParams["Idempotency-Key"] = fmt.Sprintf("%v", val)
+				break
 			}
 		}
 	}
@@ -243,6 +310,9 @@ func BuildRESTRequest(baseURL string, doc *openapi3.T, toolName string, args map
 				return nil, fmt.Errorf("failed to marshal REST request body: %w", err)
 			}
 			reqBody = bytes.NewReader(b)
+		} else {
+			// Supply clean empty JSON object for POST/PUT/PATCH to satisfy strict REST servers
+			reqBody = bytes.NewReader([]byte("{}"))
 		}
 	}
 
@@ -251,28 +321,60 @@ func BuildRESTRequest(baseURL string, doc *openapi3.T, toolName string, args map
 		return nil, err
 	}
 
-	if reqBody != nil {
+	// Set content headers and any operation headers (like Idempotency-Key)
+	for hKey, hVal := range headerParams {
+		req.Header.Set(hKey, hVal)
+	}
+
+	if reqBody != nil && req.Header.Get("Content-Type") == "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	req.Header.Set("Accept", "application/json")
+	if req.Header.Get("Accept") == "" {
+		req.Header.Set("Accept", "application/json")
+	}
 
 	return req, nil
 }
 
-// RESTResponseToMCPResult converts an HTTP REST response into a standard MCP JSON-RPC call result object.
+// RESTResponseToMCPResult converts an HTTP REST response into a standard MCP JSON-RPC call result object,
+// preserving important REST headers (Location, X-Idempotent-Replay, Retry-After) and synthesizing
+// informative JSON when body is empty.
 func RESTResponseToMCPResult(resp *http.Response) map[string]any {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 
 	isError := resp.StatusCode >= 400
 
+	meta := map[string]any{
+		"http_status": resp.StatusCode,
+	}
+
+	for _, h := range []string{"Location", "X-Idempotent-Replay", "Retry-After", "ETag", "Content-Type", "RateLimit-Remaining", "RateLimit-Reset", "X-Request-Id"} {
+		if v := resp.Header.Get(h); v != "" {
+			meta[strings.ToLower(strings.ReplaceAll(h, "-", "_"))] = v
+		}
+	}
+
+	bodyText := strings.TrimSpace(string(body))
+	if bodyText == "" {
+		if loc := resp.Header.Get("Location"); loc != "" {
+			bodyText = fmt.Sprintf(`{"status":%d,"location":%q,"message":"Resource created or updated"}`, resp.StatusCode, loc)
+		} else if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			bodyText = fmt.Sprintf(`{"status":%d,"success":true}`, resp.StatusCode)
+		} else {
+			bodyText = fmt.Sprintf(`{"status":%d,"error":%q}`, resp.StatusCode, http.StatusText(resp.StatusCode))
+		}
+	}
+
 	return map[string]any{
 		"content": []map[string]any{
 			{
 				"type": "text",
-				"text": string(body),
+				"text": bodyText,
 			},
 		},
 		"isError": isError,
+		"_meta":   meta,
 	}
 }
+

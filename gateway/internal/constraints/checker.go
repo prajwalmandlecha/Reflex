@@ -154,10 +154,20 @@ func (c *Checker) CounterEntries(cfg *configcache.AgentConfig, toolName string, 
 }
 
 func toolConstraintsFor(cfg *configcache.AgentConfig, toolName string) map[string]any {
-	if cfg == nil || cfg.EffectiveConstraints == nil {
+	if cfg == nil || cfg.EffectiveConstraints == nil || toolName == "" {
 		return nil
 	}
-	return cfg.EffectiveConstraints[toolName]
+	if tc, ok := cfg.EffectiveConstraints[toolName]; ok {
+		return tc
+	}
+	// Try normalized hyphen <-> underscore matching (e.g. bk_transfer vs bk-transfer)
+	normTool := strings.ToLower(strings.ReplaceAll(toolName, "-", "_"))
+	for k, v := range cfg.EffectiveConstraints {
+		if strings.ToLower(strings.ReplaceAll(k, "-", "_")) == normTool {
+			return v
+		}
+	}
+	return nil
 }
 
 // ToolConstraints returns the effective operational constraints declared for a

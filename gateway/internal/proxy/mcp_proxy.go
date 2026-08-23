@@ -18,8 +18,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
+
 	"time"
 
 	"github.com/agp/gateway/internal/audit"
@@ -561,9 +563,29 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Step 1: Extract Agent Identity
 	agentID, agentKind, err := p.extractIdentity(r)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"unauthorized: %v"}`, err), http.StatusUnauthorized)
+		scheme := "http"
+		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+			scheme = "https"
+		}
+		host := r.Host
+		if xfh := r.Header.Get("X-Forwarded-Host"); xfh != "" {
+			host = xfh
+		}
+		prmURL := fmt.Sprintf("%s://%s/.well-known/oauth-protected-resource", scheme, host)
+		if qAgentID := r.URL.Query().Get("agent_id"); qAgentID != "" {
+			prmURL += "?agent_id=" + url.QueryEscape(qAgentID)
+		}
+		w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer error="invalid_token", error_description="%s", resource_metadata="%s"`, err.Error(), prmURL))
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"error":             "unauthorized",
+			"error_description": err.Error(),
+		})
 		return
 	}
+
 
 	// Step 2: Fetch Agent Config from ConfigCache (Redis with Backend fallback)
 	agentCfg := p.configCache.Get(r.Context(), agentID)
@@ -605,6 +627,17 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if reqID == nil && method != "" && strings.HasPrefix(method, "notifications/") {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+
+	// Handle standard MCP ping heartbeats at the Gateway level
+	if method == "ping" {
+		res := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      reqID,
+			"result":  map[string]any{},
+		}
+		p.sendJSONRPCResponse(w, r, res)
 		return
 	}
 

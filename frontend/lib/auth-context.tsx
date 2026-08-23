@@ -46,17 +46,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const res = await api.getMe();
       if (res && res.user) {
+        if (typeof document !== 'undefined') {
+          document.cookie = `reflex_auth_token=${storedToken}; path=/; max-age=86400; SameSite=Lax`;
+        }
         setUser(res.user);
         setPermissions(new Set(res.permissions || []));
         setToken(storedToken);
       } else {
         localStorage.removeItem('reflex_auth_token');
+        if (typeof document !== 'undefined') {
+          document.cookie = 'reflex_auth_token=; path=/; max-age=0; SameSite=Lax';
+        }
         setUser(null);
         setPermissions(new Set());
         setToken(null);
       }
     } catch {
       localStorage.removeItem('reflex_auth_token');
+      if (typeof document !== 'undefined') {
+        document.cookie = 'reflex_auth_token=; path=/; max-age=0; SameSite=Lax';
+      }
       setUser(null);
       setPermissions(new Set());
       setToken(null);
@@ -73,6 +82,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const res = await api.login(email, pass);
     if (res && res.token && res.user) {
       localStorage.setItem('reflex_auth_token', res.token);
+      if (typeof document !== 'undefined') {
+        document.cookie = `reflex_auth_token=${res.token}; path=/; max-age=86400; SameSite=Lax`;
+      }
       setToken(res.token);
       setUser(res.user);
       setPermissions(new Set(res.user.permissions || []));
@@ -86,11 +98,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Ignore network errors during logout
     } finally {
       localStorage.removeItem('reflex_auth_token');
+      if (typeof document !== 'undefined') {
+        document.cookie = 'reflex_auth_token=; path=/; max-age=0; SameSite=Lax';
+      }
       setUser(null);
       setPermissions(new Set());
       setToken(null);
     }
   };
+
 
   const hasPermission = (perm: string): boolean => {
     if (!user) return false;

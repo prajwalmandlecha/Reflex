@@ -63,7 +63,15 @@ func (p *MCPProxy) handleOpenAPIRequest(
 		}
 		p.sendJSONRPCResponse(w, r, res)
 
-	case "notifications/initialized":
+	case "ping":
+		res := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      reqID,
+			"result":  map[string]any{},
+		}
+		p.sendJSONRPCResponse(w, r, res)
+
+	case "notifications/initialized", "notifications/cancelled":
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusAccepted)
 
@@ -119,6 +127,14 @@ func (p *MCPProxy) handleOpenAPIRequest(
 				p.sendErrorResponse(w, r, reqID, reason)
 			} else {
 				restReq = restReq.WithContext(r.Context())
+				// Fallback to incoming HTTP request Idempotency-Key if not set via args
+				if restReq.Header.Get("Idempotency-Key") == "" {
+					if idem := r.Header.Get("Idempotency-Key"); idem != "" {
+						restReq.Header.Set("Idempotency-Key", idem)
+					} else if idem := r.Header.Get("X-Idempotency-Key"); idem != "" {
+						restReq.Header.Set("Idempotency-Key", idem)
+					}
+				}
 				// Inject the downstream bank's OWN credentials (never the agent's JWT).
 				injectDownstreamAuth(restReq, p.authForConnection(serviceName))
 				resp, err := p.client.Do(restReq)

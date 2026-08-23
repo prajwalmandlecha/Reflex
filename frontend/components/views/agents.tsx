@@ -38,7 +38,7 @@ import { useToast } from '@/hooks/use-toast';
 import type { AgentInstance, AgentClass, ActivityEvent } from '@/lib/types';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
-import { Search, Ban, Shield, Clock, Wrench, Plus, Key, Copy, Check, RefreshCw, Play, Terminal, Trash2, X, Eye } from 'lucide-react';
+import { Search, Ban, Shield, Clock, Wrench, Plus, Key, Copy, Check, RefreshCw, Play, Terminal, Trash2, X, Eye, Sparkles } from 'lucide-react';
 
 export function AgentsView({
   instances,
@@ -491,12 +491,13 @@ function CreateInstanceForm({ classes, onComplete }: { classes: AgentClass[]; on
           disabled={loading}
           className="bg-cyan-500 text-slate-950 hover:bg-cyan-400 font-mono text-xs font-semibold px-5 h-8"
         >
-          Register & Mint Token
+          Register Agent Instance
         </Button>
       </div>
     </form>
   );
 }
+
 
 function AgentDetail({
   agent,
@@ -631,49 +632,15 @@ function AgentDetail({
 
       {/* Single-column body */}
       <div className="space-y-4 p-6 overflow-y-auto max-h-[70vh]">
-      {/* JWT Bearer Token Controls */}
-      <div className="border border-white/[0.06] bg-white/[0.02] p-3 rounded space-y-2">
-        <div className="flex items-center justify-between">
-          <span className="font-mono text-[10px] uppercase tracking-widest text-cyan-400 font-semibold flex items-center gap-1.5">
-            <Key className="h-3.5 w-3.5" /> Bearer JWT Token
-          </span>
-          {canMint && (
-            <Button
-              size="sm"
-              onClick={handleMintToken}
-              disabled={loadingToken}
-              className="h-6 px-2 text-[10px] font-mono border border-cyan-500/30 bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20"
-            >
-              {loadingToken ? <RefreshCw className="h-3 w-3 animate-spin" /> : 'Mint Token'}
-            </Button>
-          )}
-        </div>
-
-        {jwtToken ? (
-          <div className="space-y-2">
-            <textarea
-              readOnly
-              value={jwtToken}
-              className="h-20 w-full border border-white/[0.06] bg-white/5 p-1.5 font-mono text-[10px] leading-relaxed rounded text-cyan-300 select-text focus:outline-none whitespace-pre-wrap break-all resize-none"
-            />
-            <Button
-              size="sm"
-              onClick={copyToken}
-              className="w-full h-8 font-mono text-xs bg-cyan-500 text-slate-950 hover:bg-cyan-400 font-semibold flex items-center justify-center gap-1.5 transition-colors"
-            >
-              {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-              {copied ? 'Copied to Clipboard!' : 'Copy JWT Token'}
-            </Button>
-          </div>
-        ) : (
-          <p className="font-mono text-[10px] text-ink-secondary">
-            Click &quot;Mint Token&quot; to generate an authentication token for this agent.
-          </p>
-        )}
-      </div>
-
       {/* Connection Info & Snippets */}
-      <AgentConnectionSnippet agent={agent} cls={cls} token={jwtToken} />
+      <AgentConnectionSnippet
+        agent={agent}
+        cls={cls}
+        token={jwtToken}
+        onMintToken={handleMintToken}
+        loadingToken={loadingToken}
+        canMint={canMint}
+      />
 
       {/* Instance Governance Overrides & Tool Control Card */}
       <div className="border border-white/[0.06] bg-slate-900/90 p-3.5 rounded space-y-3 font-mono text-xs">
@@ -918,25 +885,34 @@ function AgentDetail({
   );
 }
 
-function AgentConnectionSnippet({ agent, cls, token }: { agent: AgentInstance; cls?: AgentClass; token?: string }) {
-  const [activeTab, setActiveTab] = useState<'mcp.json' | 'curl'>('mcp.json');
+function AgentConnectionSnippet({
+  agent,
+  cls,
+  token,
+  onMintToken,
+  loadingToken,
+  canMint,
+}: {
+  agent: AgentInstance;
+  cls?: AgentClass;
+  token?: string;
+  onMintToken?: () => Promise<void>;
+  loadingToken?: boolean;
+  canMint?: boolean;
+}) {
+  const [activeTab, setActiveTab] = useState<'mcp.json' | 'direct' | 'curl'>('mcp.json');
   const [copied, setCopied] = useState(false);
   const bearer = token || '<YOUR_JWT_TOKEN>';
 
-  // Gateway serves /mcp directly on its own port (no reverse proxy in front).
-  // Override with NEXT_PUBLIC_GATEWAY_URL if the gateway is on a different host.
-  // The gateway's MCP endpoint is always at /mcp — append it if the configured
-  // base URL doesn't already include it (the fallback below already has it).
   const gatewayBase = typeof window !== 'undefined'
     ? (process.env.NEXT_PUBLIC_GATEWAY_URL || `${window.location.protocol}//${window.location.hostname}:8080`)
     : 'http://localhost:8080';
-  const gatewayUrl = gatewayBase.endsWith('/mcp')
+  const baseMcp = gatewayBase.endsWith('/mcp')
     ? gatewayBase
     : `${gatewayBase.replace(/\/+$/, '')}/mcp`;
+  const gatewayUrl = `${baseMcp}?agent_id=${encodeURIComponent(agent.id)}`;
 
-  // Pick a sample tool from the agent's allowed tools for the curl example.
-  // Arguments are left empty — we don't fabricate fake account IDs / values.
-  // The operator fills them in from the tool's real input_schema.
+
   const allowedTools = agent.tool_overrides?.length
     ? agent.tool_overrides
     : cls?.allowedTools || [];
@@ -945,7 +921,17 @@ function AgentConnectionSnippet({ agent, cls, token }: { agent: AgentInstance; c
 
   const serverName = agent.id.replace(/[^a-zA-Z0-9-_]/g, '-');
 
-  const mcpJsonSnippet = JSON.stringify({
+  // Zero-config MCP snippet (standard OAuth 2.1 PKCE handshake)
+  const zeroConfigSnippet = JSON.stringify({
+    mcpServers: {
+      [serverName]: {
+        url: gatewayUrl,
+      },
+    },
+  }, null, 2);
+
+  // Direct Bearer token snippet
+  const directTokenSnippet = JSON.stringify({
     mcpServers: {
       [serverName]: {
         url: gatewayUrl,
@@ -970,7 +956,8 @@ function AgentConnectionSnippet({ agent, cls, token }: { agent: AgentInstance; c
     id: 1,
   }, null, 2)}'`;
 
-  const activeSnippet = activeTab === 'mcp.json' ? mcpJsonSnippet : curlSnippet;
+  const activeSnippet =
+    activeTab === 'mcp.json' ? zeroConfigSnippet : activeTab === 'direct' ? directTokenSnippet : curlSnippet;
 
   const copySnippet = async () => {
     const ok = await copyToClipboard(activeSnippet);
@@ -981,34 +968,57 @@ function AgentConnectionSnippet({ agent, cls, token }: { agent: AgentInstance; c
   };
 
   return (
-    <div className="border border-white/[0.06] bg-white/[0.02] p-3 rounded space-y-2 font-mono text-xs">
+    <div className="border border-white/[0.06] bg-white/[0.02] p-3.5 rounded-lg space-y-3 font-mono text-xs">
       <div className="flex items-center justify-between">
         <span className="text-[10px] uppercase tracking-widest text-cyan-400 font-semibold flex items-center gap-1.5">
-          <Terminal className="h-3.5 w-3.5" /> MCP Server Config & Connection
+          <Terminal className="h-3.5 w-3.5" /> MCP Server Connection
         </span>
         <div className="flex items-center gap-1 bg-white/5 p-0.5 rounded border border-white/[0.06]">
-          {(['mcp.json', 'curl'] as const).map((tab) => (
+          {[
+            { id: 'mcp.json', label: 'mcp.json' },
+            { id: 'direct', label: 'Static Token' },
+            { id: 'curl', label: 'cURL' },
+          ].map((tab) => (
             <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as any)}
               className={cn(
-                'px-2 py-0.5 rounded text-[10px] font-mono uppercase transition-colors cursor-pointer',
-                activeTab === tab ? 'bg-cyan-500/20 text-cyan-400 font-semibold border border-cyan-500/30' : 'text-ink-secondary hover:text-white'
+                'px-2.5 py-1 rounded text-[10px] font-mono uppercase transition-colors cursor-pointer',
+                activeTab === tab.id
+                  ? 'bg-cyan-500/20 text-cyan-400 font-semibold border border-cyan-500/30'
+                  : 'text-ink-secondary hover:text-white'
               )}
             >
-              {tab}
+              {tab.label}
             </button>
           ))}
         </div>
       </div>
 
+      {activeTab === 'direct' && canMint && onMintToken && (
+        <div className="flex items-center justify-between border border-white/[0.06] bg-white/[0.02] px-3 py-2 rounded font-mono">
+          <span className="text-[10px] text-ink-secondary">
+            {token ? 'Token Generated' : 'Generate Static Token for Headless / CI'}
+          </span>
+          <Button
+            size="sm"
+            onClick={onMintToken}
+            disabled={loadingToken}
+            className="h-6 px-2.5 text-[10px] font-mono border border-cyan-500/30 bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 cursor-pointer"
+          >
+            {loadingToken ? <RefreshCw className="h-3 w-3 animate-spin" /> : token ? 'Re-generate Token' : 'Generate Token'}
+          </Button>
+        </div>
+      )}
+
+
       <div className="relative">
-        <pre className="min-h-[180px] max-h-[320px] overflow-auto bg-slate-950/80 border border-white/[0.06] p-3.5 rounded-lg text-xs font-mono leading-relaxed select-text whitespace-pre-wrap break-all">
-          {activeTab === 'mcp.json' ? renderHighlightedJson(activeSnippet) : activeSnippet}
+        <pre className="min-h-[140px] max-h-[260px] overflow-auto bg-slate-950/80 border border-white/[0.06] p-3 rounded-lg text-xs font-mono leading-relaxed select-text whitespace-pre-wrap break-all">
+          {activeTab === 'mcp.json' || activeTab === 'direct' ? renderHighlightedJson(activeSnippet) : activeSnippet}
         </pre>
         <button
           onClick={copySnippet}
-          className="absolute top-2.5 right-2.5 bg-white/10 hover:bg-white/20 text-white px-2 py-1 rounded transition-colors text-xs cursor-pointer flex items-center gap-1 font-mono border border-white/[0.06] shadow-sm"
+          className="absolute top-2.5 right-2.5 bg-white/10 hover:bg-white/20 text-white px-2.5 py-1 rounded transition-colors text-xs cursor-pointer flex items-center gap-1 font-mono border border-white/[0.06] shadow-sm"
           title="Copy Code Snippet"
         >
           {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
@@ -1038,6 +1048,7 @@ function AgentConnectionSnippet({ agent, cls, token }: { agent: AgentInstance; c
     </div>
   );
 }
+
 
 function renderHighlightedJson(jsonStr: string) {
   const bracketColors = ['text-amber-400', 'text-cyan-400', 'text-purple-400', 'text-emerald-400'];
@@ -1133,10 +1144,11 @@ function AgentConnectionGuideModal({ open, onOpenChange }: { open: boolean; onOp
               </div>
               <div className="border border-white/[0.06] bg-white/[0.02] p-3 rounded">
                 <div className="text-cyan-400 font-bold text-xs mb-1 font-mono">3. Register & Connect</div>
-                <div className="text-[10px] text-ink-secondary font-sans">Register agent instance ID, mint JWT token, and point agent to AGP.</div>
+                <div className="text-[10px] text-ink-secondary font-sans">Register instance ID and connect via zero-config OAuth 2.1 PKCE or direct token.</div>
               </div>
             </div>
           </div>
+
 
           <AgentConnectionSnippet
             agent={{

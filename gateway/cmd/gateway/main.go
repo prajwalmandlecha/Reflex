@@ -21,6 +21,7 @@ import (
 	"github.com/agp/gateway/internal/configcache"
 	"github.com/agp/gateway/internal/constraints"
 	"github.com/agp/gateway/internal/killswitch"
+	"github.com/agp/gateway/internal/oauth"
 	"github.com/agp/gateway/internal/proxy"
 	"github.com/agp/gateway/internal/spend"
 
@@ -81,8 +82,14 @@ func main() {
 	logger.Info("connected to Postgres")
 
 	// --- Hot-Path Components ---
-	jwtMgr := authn.NewJWTManager(cfg.JWTSecret, cfg.JWTIssuer, 1*time.Hour)
+	jwtMgr := authn.NewJWTManager(cfg.JWTSecret, cfg.JWTIssuer, cfg.AccessTokenTTL)
 	ks := killswitch.NewSwitch(rdb)
+	oauthServer := oauth.NewServer(rdb, jwtMgr, cfg.JWTIssuer, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, logger)
+	if cfg.BackendURL != "" {
+		oauthServer.SetBackendURL(cfg.BackendURL)
+	}
+	oauthServer.SetDBPool(pool)
+
 
 	policyEngine, err := authz.NewEngine(ctx, rdb, pool, logger, cfg.PolicyPollInterval)
 	if err != nil {
@@ -139,6 +146,26 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"ok","service":"agp-gateway"}`))
+	})
+
+	// OAuth 2.1 & MCP Authorization Server Discovery (RFC 8414, RFC 7591, RFC 9728, RFC 6749)
+	r.Get("/.well-known/oauth-authorization-server", oauthServer.HandleMetadata)
+	r.Get("/.well-known/oauth-protected-resource", oauthServer.HandleProtectedResourceMetadata)
+	r.Get("/authorize", oauthServer.HandleAuthorize)
+	r.Post("/authorize", oauthServer.HandleAuthorize)
+	r.Post("/register", oauthServer.HandleRegister)
+	r.Post("/token", oauthServer.HandleToken)
+	r.Post("/revoke", oauthServer.HandleRevoke)
+
+	// Route aliases under /oauth
+	r.Route("/oauth", func(or chi.Router) {
+		or.Get("/.well-known/oauth-authorization-server", oauthServer.HandleMetadata)
+		or.Get("/.well-known/oauth-protected-resource", oauthServer.HandleProtectedResourceMetadata)
+		or.Get("/authorize", oauthServer.HandleAuthorize)
+		or.Post("/authorize", oauthServer.HandleAuthorize)
+		or.Post("/register", oauthServer.HandleRegister)
+		or.Post("/token", oauthServer.HandleToken)
+		or.Post("/revoke", oauthServer.HandleRevoke)
 	})
 
 	// Audit chain integrity verification — recomputes every entry_hash and

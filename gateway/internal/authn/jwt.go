@@ -32,15 +32,20 @@ func NewJWTManager(secret, issuer string, ttl time.Duration) *JWTManager {
 	}
 }
 
-// Mint creates a signed JWT for the given agent.
+// Mint creates a signed JWT for the given agent using the default TTL.
 func (m *JWTManager) Mint(agentID, agentKind string, policyVersion int) (string, error) {
+	return m.MintWithTTL(agentID, agentKind, policyVersion, m.ttl)
+}
+
+// MintWithTTL creates a signed JWT for the given agent with an explicit TTL.
+func (m *JWTManager) MintWithTTL(agentID, agentKind string, policyVersion int, ttl time.Duration) (string, error) {
 	now := time.Now()
 	claims := AgentClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    m.issuer,
 			Subject:   agentID,
 			IssuedAt:  jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(m.ttl)),
+			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 		},
 		AgentID:       agentID,
 		AgentKind:     agentKind,
@@ -48,6 +53,11 @@ func (m *JWTManager) Mint(agentID, agentKind string, policyVersion int) (string,
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(m.secret)
+}
+
+// TTL returns the configured default TTL.
+func (m *JWTManager) TTL() time.Duration {
+	return m.ttl
 }
 
 // Validate parses and validates a JWT string, returning the agent claims.
@@ -75,3 +85,33 @@ func (m *JWTManager) Validate(tokenString string) (*AgentClaims, error) {
 
 	return claims, nil
 }
+
+// UserSessionClaims represents a logged-in dashboard user's session JWT claims.
+type UserSessionClaims struct {
+	jwt.RegisteredClaims
+	Email    string `json:"email"`
+	Role     string `json:"role"`
+	FullName string `json:"full_name"`
+	Type     string `json:"type"`
+}
+
+// ValidateUserSession parses and validates a platform user's session JWT token.
+func (m *JWTManager) ValidateUserSession(tokenString string) (*UserSessionClaims, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &UserSessionClaims{}, func(token *jwt.Token) (any, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return m.secret, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("invalid user session token: %w", err)
+	}
+
+	claims, ok := token.Claims.(*UserSessionClaims)
+	if !ok || !token.Valid {
+		return nil, fmt.Errorf("invalid user session claims")
+	}
+
+	return claims, nil
+}
+

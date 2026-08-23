@@ -28,9 +28,11 @@ type Config struct {
 	// Backend Service URL for config cache misses
 	BackendURL string
 
-	// JWT
-	JWTSecret string
-	JWTIssuer string
+	// JWT & OAuth
+	JWTSecret       string
+	JWTIssuer       string
+	AccessTokenTTL  time.Duration
+	RefreshTokenTTL time.Duration
 
 	// Audit
 	AuditBatchSize     int
@@ -53,8 +55,10 @@ func Load() *Config {
 		PostgresDSN: envOr("POSTGRES_DSN", ""),
 		BackendURL:  envOr("BACKEND_URL", ""),
 
-		JWTSecret: envOr("GATEWAY_JWT_SECRET", envOr("JWT_SECRET", "dev-secret-2026")),
-		JWTIssuer: envOr("GATEWAY_JWT_ISSUER", envOr("JWT_ISSUER", "agp-gateway")),
+		JWTSecret:       envOr("GATEWAY_JWT_SECRET", envOr("JWT_SECRET", "dev-secret-2026")),
+		JWTIssuer:       envOr("GATEWAY_JWT_ISSUER", envOr("JWT_ISSUER", "agp-gateway")),
+		AccessTokenTTL:  envDurationOr("GATEWAY_ACCESS_TOKEN_TTL", envDurationOr("GATEWAY_JWT_TTL", 1*time.Hour)),
+		RefreshTokenTTL: envDurationOr("GATEWAY_REFRESH_TOKEN_TTL", 30*24*time.Hour),
 
 		AuditBatchSize:     envIntOr("AUDIT_BATCH_SIZE", 100),
 		AuditFlushInterval: envDurationOr("AUDIT_FLUSH_INTERVAL", 500*time.Millisecond),
