@@ -195,21 +195,35 @@ func (p *MCPProxy) doProxyRequest(r *http.Request, targetURL string, bodyBytes [
 }
 
 // fetchToolsFromTarget fetches tools/list from a single native MCP downstream.
-// Handles session termination by retrying with a fresh session.
-func (p *MCPProxy) fetchToolsFromTarget(r *http.Request, connID, targetURL string, bodyBytes []byte) []any {
-	tools, terminated := p.doFetchTools(r, connID, targetURL, bodyBytes, false)
+// Handles session termination by retrying with a fresh session. Returns a
+// non-nil error when the target failed or timed out, so aggregated fan-outs
+// can surface the gap instead of silently dropping the connection.
+func (p *MCPProxy) fetchToolsFromTarget(r *http.Request, connID, targetURL string, bodyBytes []byte) ([]any, error) {
+	tools, terminated, err := p.doFetchTools(r, connID, targetURL, bodyBytes, false)
+	if err != nil {
+		return nil, err
+	}
 	if terminated {
 		p.logger.Info("downstream session terminated during tools/list, re-initializing", "target", targetURL)
 		p.invalidateDownstreamSession(r.Context(), connID, targetURL)
-		tools, _ = p.doFetchTools(r, connID, targetURL, bodyBytes, true)
+		tools, terminated, err = p.doFetchTools(r, connID, targetURL, bodyBytes, true)
+		if err != nil {
+			return nil, err
+		}
+		if terminated {
+			// Fresh session still reported termination — treat as a target
+			// failure rather than silently returning an empty list.
+			return nil, fmt.Errorf("downstream session terminated even after re-initialization")
+		}
+		return tools, nil
 	}
-	return tools
+	return tools, nil
 }
 
-func (p *MCPProxy) doFetchTools(r *http.Request, connID, targetURL string, bodyBytes []byte, forceNewSession bool) ([]any, bool) {
+func (p *MCPProxy) doFetchTools(r *http.Request, connID, targetURL string, bodyBytes []byte, forceNewSession bool) ([]any, bool, error) {
 	outReq, err := http.NewRequestWithContext(r.Context(), "POST", targetURL, bytes.NewReader(bodyBytes))
 	if err != nil {
-		return nil, false
+		return nil, false, fmt.Errorf("build request: %w", err)
 	}
 	outReq.Header.Set("Content-Type", "application/json")
 	outReq.Header.Set("Accept", "application/json, text/event-stream")
@@ -225,18 +239,18 @@ func (p *MCPProxy) doFetchTools(r *http.Request, connID, targetURL string, bodyB
 	resp, err := p.client.Do(outReq)
 	if err != nil {
 		p.logger.Warn("failed to fetch tools from target", "url", targetURL, "error", err)
-		return nil, false
+		return nil, false, fmt.Errorf("downstream unreachable: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, false
+		return nil, false, fmt.Errorf("read response: %w", err)
 	}
 
 	// Check for session termination
 	if strings.Contains(string(respBytes), "Session has been terminated") {
-		return nil, true
+		return nil, true, nil
 	}
 
 	rawStr := strings.TrimSpace(string(respBytes))
@@ -249,18 +263,18 @@ func (p *MCPProxy) doFetchTools(r *http.Request, connID, targetURL string, bodyB
 
 	var jsonResp map[string]any
 	if err := json.Unmarshal([]byte(rawStr), &jsonResp); err != nil {
-		return nil, false
+		return nil, false, fmt.Errorf("malformed downstream response (HTTP %d)", resp.StatusCode)
 	}
 
 	result, ok := jsonResp["result"].(map[string]any)
 	if !ok {
-		return nil, false
+		return nil, false, fmt.Errorf("downstream returned no result (HTTP %d)", resp.StatusCode)
 	}
 	tools, ok := result["tools"].([]any)
 	if !ok {
-		return nil, false
+		return nil, false, fmt.Errorf("downstream result missing tools array (HTTP %d)", resp.StatusCode)
 	}
-	return tools, false
+	return tools, false, nil
 }
 
 // --- Downstream Session Management ---

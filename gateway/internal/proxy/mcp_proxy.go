@@ -510,46 +510,76 @@ func (p *MCPProxy) SubscribeConnectionUpdates(ctx context.Context) {
 	if p.rdb == nil {
 		return
 	}
-	sub := p.rdb.Subscribe(ctx, "config:updates")
-	defer sub.Close()
-	ch := sub.Channel()
+	streamName := "agp:config:stream"
+	lastID := "$"
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case msg, ok := <-ch:
-			if !ok {
+		default:
+		}
+
+		res, err := p.rdb.XRead(ctx, &redis.XReadArgs{
+			Streams: []string{streamName, lastID},
+			Block:   2 * time.Second,
+		}).Result()
+
+		if err != nil {
+			if ctx.Err() != nil {
 				return
 			}
-			if msg == nil {
+			if err == redis.Nil {
 				continue
 			}
-			// Only reload targets when the change actually affects connections.
-			// Agent-instance, class, policy, and fleet toggles publish on the
-			// same channel but must not re-parse every OpenAPI spec. The
-			// "openapi" type is a connection whose spec was re-ingested.
-			var update struct {
-				Type string `json:"type"`
-			}
-			if json.Unmarshal([]byte(msg.Payload), &update) != nil {
-				continue
-			}
-			switch update.Type {
-			case "connection", "openapi":
-				p.LoadOpenAPISpecs(ctx)
-				p.LoadToolRouting(ctx)
-				p.LoadPromptRouting(ctx)
-				p.LoadResourceRouting(ctx)
-				p.LoadNativeTargets(ctx)
-				p.loadConnectionAuth(ctx)
-				p.LoadRedactionConfig(ctx)
-			case "tool":
-				// A tool's sensitive_response flag changed — reload the routing
-				// map (which carries the per-tool sensitive flag) so redaction
-				// applies immediately.
-				p.LoadToolRouting(ctx)
-			case "redaction":
-				p.LoadRedactionConfig(ctx)
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+
+		for _, stream := range res {
+			for _, msg := range stream.Messages {
+				lastID = msg.ID
+				payloadRaw, ok := msg.Values["payload"]
+				if !ok {
+					continue
+				}
+				var payloadBytes []byte
+				switch pl := payloadRaw.(type) {
+				case string:
+					payloadBytes = []byte(pl)
+				case []byte:
+					payloadBytes = pl
+				default:
+					continue
+				}
+
+				// Only reload targets when the change actually affects connections.
+				// Agent-instance, class, policy, and fleet toggles publish on the
+				// same channel but must not re-parse every OpenAPI spec. The
+				// "openapi" type is a connection whose spec was re-ingested.
+				var update struct {
+					Type string `json:"type"`
+				}
+				if json.Unmarshal(payloadBytes, &update) != nil {
+					continue
+				}
+				switch update.Type {
+				case "connection", "openapi":
+					p.LoadOpenAPISpecs(ctx)
+					p.LoadToolRouting(ctx)
+					p.LoadPromptRouting(ctx)
+					p.LoadResourceRouting(ctx)
+					p.LoadNativeTargets(ctx)
+					p.loadConnectionAuth(ctx)
+					p.LoadRedactionConfig(ctx)
+				case "tool":
+					// A tool's sensitive_response flag changed — reload the routing
+					// map (which carries the per-tool sensitive flag) so redaction
+					// applies immediately.
+					p.LoadToolRouting(ctx)
+				case "redaction":
+					p.LoadRedactionConfig(ctx)
+				}
 			}
 		}
 	}
@@ -693,13 +723,18 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Mcp-Session-Id", sessionID)
 		p.trackSession(r.Context(), sessionID, agentID, agentKind, serviceName)
 
-		// Echo back the client's requested protocol version, defaulting to 2025-06-18
+		// Negotiate per the MCP spec: echo the client's version only when we
+		// actually support it, otherwise respond with our latest supported
+		// version. Echoing an untested version (e.g. "2030-01-01") claims
+		// compatibility we don't have — the client would then build behavior
+		// against spec features this gateway never implemented.
 		clientProtocol := "2025-06-18"
 		if params, ok := rpcReq["params"].(map[string]any); ok {
 			if pv, ok := params["protocolVersion"].(string); ok && pv != "" {
 				clientProtocol = pv
 			}
 		}
+		clientProtocol = negotiateProtocolVersion(clientProtocol)
 
 		res := map[string]any{
 			"jsonrpc": "2.0",
@@ -724,10 +759,12 @@ func (p *MCPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Aggregated resources/list and prompts/list across all targets, filtered by
-	// the agent's whitelist (same pattern as tools/list).
+	// Aggregated resources/list and prompts/list across all targets. Note: no
+	// whitelist filtering happens here — the agent's tool list only gates
+	// tools/call; prompt/resource exposure is governed by the per-item
+	// "exposed" flag set during discovery.
 	if method == "resources/list" || method == "prompts/list" {
-		p.handleAggregatedList(w, r, bodyBytes, method, allowedTools)
+		p.handleAggregatedList(w, r, bodyBytes, method)
 		return
 	}
 

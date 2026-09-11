@@ -85,4 +85,15 @@ var (
 		Name:      "active_sessions",
 		Help:      "Number of currently active MCP sessions.",
 	})
+
+	// FanoutFailures counts downstream connections dropped from aggregated
+	// list fan-outs (tools/list, resources/list, prompts/list) due to
+	// timeouts or errors. A rising value means agents are seeing incomplete
+	// tool/resource catalogs — the "silently missing" failure mode.
+	FanoutFailures = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "agp",
+		Subsystem: "gateway",
+		Name:      "fanout_failures_total",
+		Help:      "Downstream connections dropped from aggregated list fan-outs due to timeout or error.",
+	}, []string{"connection", "method"})
 )

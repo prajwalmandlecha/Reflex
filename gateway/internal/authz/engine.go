@@ -178,43 +178,38 @@ package agp.authz
 import rego.v1
 
 default allow := false
+default deny := false
 
-# Allow tool if listed in allowed_tools
+# Allow tool if listed in allowed_tools (the per-agent whitelist is the single
+# source of truth for tool authorization; there is no per-agent-kind fallback).
 allow if {
 	count(input.allowed_tools) > 0
 	input.action in input.allowed_tools
+	not deny
 }
 
-# Allow conversational agent default read tools
+# Prompts & Resources are governed by their own exposed flag
 allow if {
-	count(input.allowed_tools) == 0
-	input.agent_kind in {"conversational", "onboarding"}
-	input.action in {"account.balance", "login", "create_user", "list_contacts", "resolve_contact", "get_balance", "get_transaction_history"}
+	input.resource in {"prompt", "resource"}
+	not deny
 }
 
-# Allow payments agent
-allow if {
-	count(input.allowed_tools) == 0
-	input.agent_kind in {"payments", "trading", "custom_alpha"}
-	input.action in {"login", "create_user", "get_balance", "transfer_money", "deposit_funds"}
+reason := sprintf("action '%s' allowed by agent profile", [input.action]) if {
+	allow
+	not deny
+	not (object.get(input, "resource", "") in {"prompt", "resource"})
 }
 
-# Allow DB bot
-allow if {
-	count(input.allowed_tools) == 0
-	input.agent_kind == "database_analytics"
-	input.action in {"db_query", "db_export"}
+reason := sprintf("prompt/resource '%s' allowed (exposed flag governs read access)", [input.action]) if {
+	input.resource in {"prompt", "resource"}
+	not deny
 }
 
-# Allow User Admin bot
-allow if {
-	count(input.allowed_tools) == 0
-	input.agent_kind == "user_admin"
-	input.action in {"create_user", "update_user_role"}
+reason := sprintf("action '%s' is not permitted by policy for agent kind '%s'", [input.action, input.agent_kind]) if {
+	not allow
+	not deny
+	not (object.get(input, "resource", "") in {"prompt", "resource"})
 }
-
-reason := sprintf("action '%s' allowed by agent profile", [input.action]) if allow
-reason := sprintf("action '%s' is not permitted by policy for agent kind '%s'", [input.action, input.agent_kind]) if not allow
 
 # Execution Time Window (business hours) — enforced in Rego. The tool's
 # effective constraints are passed in as input.constraints. If a tool declares
@@ -289,6 +284,9 @@ start_minutes(hhmm) := (h * 60) + m if {
 // whether a poll needs to recompile. Postgres is the source of truth for
 // policies; Redis is only a cache of it, so we fingerprint Postgres directly.
 func (e *Engine) activePolicyFingerprint(ctx context.Context) (uint64, bool) {
+	if e.db == nil {
+		return 0, false
+	}
 	q := db.New(e.db)
 	row, err := q.GetActivePolicyFingerprint(ctx)
 	if err != nil {
@@ -382,33 +380,61 @@ func aggregatorModule(n int) string {
 }
 
 // subscribePolicyUpdates listens on Redis "config:updates" for policy reload
-// notifications. (The backend publishes only "config:updates"; the old
-// "policy:updates" channel was never published to and has been removed.)
+// subscribePolicyUpdates listens on Redis Stream "agp:config:stream" for policy reload
+// notifications.
 func (e *Engine) subscribePolicyUpdates(ctx context.Context) {
-	sub := e.rdb.Subscribe(ctx, "config:updates")
-	defer sub.Close()
+	streamName := "agp:config:stream"
+	lastID := "$"
 
-	ch := sub.Channel()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case msg, ok := <-ch:
-			if !ok {
+		default:
+		}
+
+		res, err := e.rdb.XRead(ctx, &redis.XReadArgs{
+			Streams: []string{streamName, lastID},
+			Block:   2 * time.Second,
+		}).Result()
+
+		if err != nil {
+			if ctx.Err() != nil {
 				return
 			}
-			// Only recompile when the change actually affects policies. A
-			// bank-connection edit, agent-instance change, or fleet toggle
-			// publishes on the same channel but must not trigger a full Rego
-			// recompile. The 30s poll is the safety net for any missed message.
-			var update struct {
-				Type string `json:"type"`
-			}
-			if json.Unmarshal([]byte(msg.Payload), &update) != nil || update.Type != "policy" {
+			if err == redis.Nil {
 				continue
 			}
-			e.logger.Info("received policy reload notification", "channel", msg.Channel)
-			_ = e.loadAndCompile(ctx, true)
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+
+		for _, stream := range res {
+			for _, msg := range stream.Messages {
+				lastID = msg.ID
+				payloadRaw, ok := msg.Values["payload"]
+				if !ok {
+					continue
+				}
+				var payloadBytes []byte
+				switch p := payloadRaw.(type) {
+				case string:
+					payloadBytes = []byte(p)
+				case []byte:
+					payloadBytes = p
+				default:
+					continue
+				}
+
+				var update struct {
+					Type string `json:"type"`
+				}
+				if json.Unmarshal(payloadBytes, &update) != nil || update.Type != "policy" {
+					continue
+				}
+				e.logger.Info("received policy reload notification from stream", "stream", streamName, "msg_id", msg.ID)
+				_ = e.loadAndCompile(ctx, true)
+			}
 		}
 	}
 }

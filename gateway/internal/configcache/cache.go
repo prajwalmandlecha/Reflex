@@ -157,37 +157,64 @@ func (c *ConfigCache) fetchFromBackend(ctx context.Context, agentID string) (*Ag
 }
 
 func (c *ConfigCache) subscribeUpdates(ctx context.Context) {
-	sub := c.rdb.Subscribe(ctx, "config:updates")
-	defer sub.Close()
+	streamName := "agp:config:stream"
+	lastID := "$"
 
-	ch := sub.Channel()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case msg, ok := <-ch:
-			if !ok {
+		default:
+		}
+
+		res, err := c.rdb.XRead(ctx, &redis.XReadArgs{
+			Streams: []string{streamName, lastID},
+			Block:   2 * time.Second,
+		}).Result()
+
+		if err != nil {
+			if ctx.Err() != nil {
 				return
 			}
-			var update struct {
-				Type string `json:"type"`
-				ID   string `json:"id"`
+			if err == redis.Nil {
+				continue
 			}
-			if json.Unmarshal([]byte(msg.Payload), &update) == nil {
-				if update.Type == "instance" || update.Type == "kill_agent" || update.Type == "revive_agent" {
-					c.agents.Delete(update.ID)
-					c.logger.Info("invalidated agent config cache", "agent_id", update.ID)
-				} else if update.Type == "class" || update.Type == "policy" || update.Type == "halt_fleet" || update.Type == "resume_fleet" || update.Type == "fleet_caps" {
-					// Clear all in-memory agent configs on class/policy/fleet changes.
-					// "fleet_caps" is included because fleet-scoped shared_caps and
-					// shared_rate_limits are injected into every agent's
-					// effective_constraints; without invalidating here the gateway
-					// would keep serving stale configs that lack the new fleet caps.
-					c.agents.Range(func(key, value any) bool {
-						c.agents.Delete(key)
-						return true
-					})
-					c.logger.Info("invalidated all agent config caches due to global/class change", "type", update.Type)
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+
+		for _, stream := range res {
+			for _, msg := range stream.Messages {
+				lastID = msg.ID
+				payloadRaw, ok := msg.Values["payload"]
+				if !ok {
+					continue
+				}
+				var payloadBytes []byte
+				switch p := payloadRaw.(type) {
+				case string:
+					payloadBytes = []byte(p)
+				case []byte:
+					payloadBytes = p
+				default:
+					continue
+				}
+
+				var update struct {
+					Type string `json:"type"`
+					ID   string `json:"id"`
+				}
+				if json.Unmarshal(payloadBytes, &update) == nil {
+					if update.Type == "instance" || update.Type == "kill_agent" || update.Type == "revive_agent" {
+						c.agents.Delete(update.ID)
+						c.logger.Info("invalidated agent config cache from stream", "agent_id", update.ID)
+					} else if update.Type == "class" || update.Type == "policy" || update.Type == "halt_fleet" || update.Type == "resume_fleet" || update.Type == "fleet_caps" {
+						c.agents.Range(func(key, value any) bool {
+							c.agents.Delete(key)
+							return true
+						})
+						c.logger.Info("invalidated all agent config caches from stream due to global/class change", "type", update.Type)
+					}
 				}
 			}
 		}

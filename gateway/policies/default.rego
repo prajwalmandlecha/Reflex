@@ -16,11 +16,20 @@ reason := sprintf("action '%s' allowed by agent profile whitelist", [input.actio
 	count(input.allowed_tools) > 0
 	input.action in input.allowed_tools
 	not deny
+	not (object.get(input, "resource", "") in {"prompt", "resource"})
 }
 
 reason := sprintf("action '%s' is not permitted by agent profile whitelist", [input.action]) if {
 	count(input.allowed_tools) > 0
 	not (input.action in input.allowed_tools)
+	not (object.get(input, "resource", "") in {"prompt", "resource"})
+	not deny
+}
+
+reason := sprintf("action '%s' is not permitted (no allowed tools configured in agent profile)", [input.action]) if {
+	count(input.allowed_tools) == 0
+	not (object.get(input, "resource", "") in {"prompt", "resource"})
+	not deny
 }
 
 # Rule 1b: Prompts & Resources are governed by their own `exposed` flag, not the
@@ -37,97 +46,15 @@ reason := sprintf("prompt/resource '%s' allowed (exposed flag governs read acces
 	not deny
 }
 
-# Rule 2: Conversational Agent (Identity, User Onboarding & Read-Only Insights)
-allow if {
-	count(input.allowed_tools) == 0
-	input.agent_kind in {"conversational", "onboarding"}
-	input.action in {
-		"login",
-		"create_user",
-		"list_contacts",
-		"resolve_contact",
-		"get_balance",
-		"get_transaction_history",
-		"get_transaction_count",
-		"get_spending_summary",
-		"get_budget_overview",
-		"get_savings_tips",
-		"get_budgets"
-	}
-}
-
-# Rule 3: Payments Agent (Identity, Transfers, Contacts & Budget Management)
-allow if {
-	count(input.allowed_tools) == 0
-	input.agent_kind == "payments"
-	input.action in {
-		"login",
-		"create_user",
-		"list_contacts",
-		"resolve_contact",
-		"add_contact",
-		"update_contact",
-		"delete_contact",
-		"get_balance",
-		"get_transaction_history",
-		"get_transaction_count",
-		"transfer_money",
-		"deposit_funds",
-		"get_spending_summary",
-		"get_budget_overview",
-		"create_budget",
-		"get_budgets",
-		"update_budget",
-		"delete_budget"
-	}
-}
-
-# Rule 4: Securities / Trading Agent (Transfers & Account Ledger)
-allow if {
-	count(input.allowed_tools) == 0
-	input.agent_kind == "trading"
-	input.action in {
-		"login",
-		"create_user",
-		"get_balance",
-		"get_transaction_history",
-		"get_transaction_count",
-		"transfer_money"
-	}
-}
-
-# Rule 5: Risk & Security Ops / Admin Agent (Fraud, Anomaly Review & User Management)
-allow if {
-	count(input.allowed_tools) == 0
-	input.agent_kind in {"ops", "admin"}
-	input.action in {
-		"login",
-		"create_user",
-		"evaluate_transaction_risk",
-		"get_flagged_anomalies",
-		"confirm_pending_transaction",
-		"cancel_pending_transaction"
-	}
-}
-
-# Rule 6: Restricted Custom Alpha Agent (Read balance + limited transfers)
-allow if {
-	count(input.allowed_tools) == 0
-	input.agent_kind == "custom_alpha"
-	input.action in {
-		"login",
-		"create_user",
-		"get_balance",
-		"transfer_money"
-	}
-}
-
-# Catch-all deny reason if no rule matched
-reason := sprintf("agent kind '%s' is not allowed to perform action '%s'", [input.agent_kind, input.action]) if {
-	count(input.allowed_tools) == 0
-	not allow
-	not deny
-}
+# NOTE: The per-agent tool whitelist (input.allowed_tools) is the single source
+# of truth for which tools an agent may call. It is enforced here (Rule 1) and
+# used to filter tools/list in Go. The hardcoded agent-kind allowlists that
+# previously lived here (Rules 2-6) were removed: they were dead code in
+# production because the JWT agent_kind (a class_id like "payment_concierge_bot")
+# never matched the policy kinds ("payments", "conversational", ...), and they
+# created a second, parallel authorization path that could disagree with the
+# whitelist. If an agent has no whitelist, it is denied by default (default
+# deny) — there is no implicit per-kind fallback anymore.
 
 # Rule 7: Execution Time Window (business hours) — enforced in Rego.
 # The tool's effective constraints are passed into the policy input as

@@ -155,8 +155,13 @@ class EventProcessor:
                 # 1. Broadcast to activity stream
                 await ws_manager.broadcast("activity", event)
 
-                # 2. Accumulate metrics
-                self.metrics_buffer.add(event)
+                # 2. Accumulate metrics — only decision events count as
+                # "requests" in the latency buffer. Gateway health events
+                # (e.g. connection_degraded when a downstream is dropped from
+                # an aggregated list) are broadcast but must not inflate
+                # request counts or latency percentiles.
+                if event.get("type", "decision") == "decision":
+                    self.metrics_buffer.add(event)
 
                 # 2b. Record agent liveness (heartbeat) so last_seen reflects real
                 # activity, not just the last config edit. Throttled per agent.

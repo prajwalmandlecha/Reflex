@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -222,16 +223,76 @@ func (s *Server) HandleRegister(w http.ResponseWriter, r *http.Request) {
 		clientName = clientID
 	}
 
-	agentID := req.AgentID
-	agentKind := req.AgentKind
-	if agentKind == "" {
-		agentKind = "custom"
+	// Security: Check whether registration is performed by an authenticated operator/admin.
+	// Anonymous/unauthenticated clients are strictly limited to authorization_code flow
+	// (requiring human operator login and approval via /authorize). They CANNOT self-assign
+	// agent_id, agent_kind, class_id, or client_credentials grant.
+	_, userRole, hasAuth := s.extractSessionUser(r)
+	isPrivileged := hasAuth && (userRole == "admin" || userRole == "operator")
+
+	requestsClientCreds := false
+	for _, gt := range req.GrantTypes {
+		if gt == "client_credentials" {
+			requestsClientCreds = true
+			break
+		}
 	}
 
+	if !isPrivileged {
+		if requestsClientCreds {
+			sendOAuthError(w, http.StatusForbidden, "access_denied", "client_credentials grant requires authenticated registration with Initial Access Token")
+			return
+		}
+		if req.AgentID != "" || req.ClassID != "" || req.AgentKind != "" {
+			sendOAuthError(w, http.StatusForbidden, "access_denied", "binding specific agent_id or class_id requires authenticated registration")
+			return
+		}
+	}
 
-	grantTypes := req.GrantTypes
-	if len(grantTypes) == 0 {
-		grantTypes = []string{"authorization_code", "client_credentials", "refresh_token"}
+	var grantTypes []string
+	if len(req.GrantTypes) == 0 {
+		if isPrivileged {
+			grantTypes = []string{"authorization_code", "client_credentials", "refresh_token"}
+		} else {
+			grantTypes = []string{"authorization_code", "refresh_token"}
+		}
+	} else if !isPrivileged {
+		for _, gt := range req.GrantTypes {
+			if gt != "client_credentials" {
+				grantTypes = append(grantTypes, gt)
+			}
+		}
+		if len(grantTypes) == 0 {
+			grantTypes = []string{"authorization_code", "refresh_token"}
+		}
+	} else {
+		grantTypes = req.GrantTypes
+	}
+
+	var agentID, agentKind, classID string
+	if isPrivileged {
+		agentID = req.AgentID
+		classID = req.ClassID
+		agentKind = req.AgentKind
+		if agentID != "" && s.pool != nil {
+			var dbClass string
+			err := s.pool.QueryRow(r.Context(), `SELECT class_id FROM agent_instances WHERE id = $1`, agentID).Scan(&dbClass)
+			if err != nil {
+				sendOAuthError(w, http.StatusBadRequest, "invalid_client_metadata", fmt.Sprintf("agent_id %q not found in agent_instances", agentID))
+				return
+			}
+			if dbClass != "" {
+				classID = dbClass
+				agentKind = dbClass
+			}
+		}
+		if agentKind == "" {
+			if classID != "" {
+				agentKind = classID
+			} else {
+				agentKind = "custom"
+			}
+		}
 	}
 
 	client := &OAuthClient{
@@ -242,7 +303,7 @@ func (s *Server) HandleRegister(w http.ResponseWriter, r *http.Request) {
 		RedirectURIs:     req.RedirectURIs,
 		AgentID:          agentID,
 		AgentKind:        agentKind,
-		ClassID:          req.ClassID,
+		ClassID:          classID,
 		CreatedAt:        time.Now().UTC(),
 	}
 
@@ -785,14 +846,13 @@ func (s *Server) handleAuthorizePost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if caller already has an active session cookie / token
-	var email, userRole string
-	if loggedIn, role, ok := s.extractSessionUser(r); ok && loggedIn != "" {
+	var email string
+	if loggedIn, _, ok := s.extractSessionUser(r); ok && loggedIn != "" {
 		email = loggedIn
-		userRole = role
 	} else {
 		email = strings.TrimSpace(r.FormValue("email"))
 		password := strings.TrimSpace(r.FormValue("password"))
-		authenticated, role, err := s.authenticateUser(r.Context(), email, password)
+		authenticated, _, err := s.authenticateUser(r.Context(), email, password)
 		if !authenticated || err != nil {
 			client, _ := s.store.GetClient(r.Context(), clientID)
 			clientName := clientID
@@ -817,12 +877,24 @@ func (s *Server) handleAuthorizePost(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		userRole = role
 	}
 
 
 	if agentID == "" {
 		agentID = "custom-agent"
+	}
+
+	// Look up the actual class_id for the selected agent instance from database,
+	// rather than stamping the human operator's role into AgentKind.
+	agentKind := "custom"
+	classID := ""
+	if s.pool != nil && agentID != "" && agentID != "custom-agent" {
+		var dbClass string
+		err := s.pool.QueryRow(r.Context(), `SELECT class_id FROM agent_instances WHERE id = $1`, agentID).Scan(&dbClass)
+		if err == nil && dbClass != "" {
+			agentKind = dbClass
+			classID = dbClass
+		}
 	}
 
 	authCode := generateRandomToken("agp_code_", 32)
@@ -831,7 +903,8 @@ func (s *Server) handleAuthorizePost(w http.ResponseWriter, r *http.Request) {
 		ClientID:            clientID,
 		UserID:              email,
 		AgentID:             agentID,
-		AgentKind:           userRole,
+		AgentKind:           agentKind,
+		ClassID:             classID,
 		CodeChallenge:       codeChallenge,
 		CodeChallengeMethod: codeChallengeMethod,
 		RedirectURI:         redirectURI,
@@ -893,19 +966,21 @@ func (s *Server) authenticateUser(ctx context.Context, email, password string) (
 		}
 	}
 
-	// 2. Built-in Demo accounts fallback
-	switch email {
-	case "admin@reflex.local":
-		if password == "admin123" {
-			return true, "admin", nil
-		}
-	case "operator@reflex.local":
-		if password == "operator123" {
-			return true, "operator", nil
-		}
-	case "auditor@reflex.local":
-		if password == "auditor123" {
-			return true, "auditor", nil
+	// 2. Built-in Demo accounts fallback (dev mode only)
+	if os.Getenv("AGP_ENV") == "dev" {
+		switch email {
+		case "admin@reflex.local":
+			if password == "admin123" {
+				return true, "admin", nil
+			}
+		case "operator@reflex.local":
+			if password == "operator123" {
+				return true, "operator", nil
+			}
+		case "auditor@reflex.local":
+			if password == "auditor123" {
+				return true, "auditor", nil
+			}
 		}
 	}
 
@@ -1013,6 +1088,24 @@ func (s *Server) handleAuthorizationCodeGrant(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// Verify client exists and is authorized for authorization_code grant
+	client, err := s.store.GetClient(r.Context(), record.ClientID)
+	if err != nil {
+		sendOAuthError(w, http.StatusUnauthorized, "invalid_client", "client not found")
+		return
+	}
+	authorized := false
+	for _, gt := range client.GrantTypes {
+		if gt == "authorization_code" {
+			authorized = true
+			break
+		}
+	}
+	if !authorized {
+		sendOAuthError(w, http.StatusUnauthorized, "unauthorized_client", "client is not authorized for authorization_code grant")
+		return
+	}
+
 	// Verify redirect_uri matches if specified in authorization request
 	if record.RedirectURI != "" && req.RedirectURI != "" && req.RedirectURI != record.RedirectURI {
 		sendOAuthError(w, http.StatusBadRequest, "invalid_grant", "redirect_uri mismatch")
@@ -1093,6 +1186,19 @@ func (s *Server) handleClientCredentialsGrant(w http.ResponseWriter, r *http.Req
 	client, err := s.store.GetClient(r.Context(), req.ClientID)
 	if err != nil {
 		sendOAuthError(w, http.StatusUnauthorized, "invalid_client", "client not found")
+		return
+	}
+
+	// Verify client is authorized for client_credentials
+	authorized := false
+	for _, gt := range client.GrantTypes {
+		if gt == "client_credentials" {
+			authorized = true
+			break
+		}
+	}
+	if !authorized {
+		sendOAuthError(w, http.StatusUnauthorized, "unauthorized_client", "client is not authorized for client_credentials grant")
 		return
 	}
 

@@ -41,6 +41,31 @@ func prefersSSE(r *http.Request) bool {
 	return sseIdx < jsonIdx
 }
 
+// sendJSONRPCError writes a JSON-RPC protocol-level error (e.g. -32700 Parse
+// error) as either SSE or plain JSON. Used when the request body itself is
+// malformed — a result envelope with "id": null would violate the JSON-RPC
+// contract and confuse strict clients.
+func (p *MCPProxy) sendJSONRPCError(w http.ResponseWriter, r *http.Request, reqID any, code int, message string) {
+	errResp := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      reqID,
+		"error": map[string]any{
+			"code":    code,
+			"message": message,
+		},
+	}
+	errJSON, _ := json.Marshal(errResp)
+	if prefersSSE(r) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, "event: message\ndata: %s\n\n", string(errJSON))
+	} else {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write(errJSON)
+	}
+}
+
 // sendErrorResponse writes a governance-denied MCP result (isError: true) as
 // either SSE or plain JSON.
 func (p *MCPProxy) sendErrorResponse(w http.ResponseWriter, r *http.Request, reqID any, reason string) {

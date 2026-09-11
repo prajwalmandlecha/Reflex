@@ -152,7 +152,7 @@ async def bump_config_version() -> int:
 
 
 async def publish_config_update(change_type: str, item_id: str):
-    """Notify subscribers (gateway) of a config update via Redis pub/sub.
+    """Notify subscribers (gateway) of a config update via Redis Streams and Pub/Sub.
 
     Non-fatal: a Redis outage must not 500 a request AFTER the DB write already
     committed (which would leave the operator thinking the change failed while
@@ -162,8 +162,10 @@ async def publish_config_update(change_type: str, item_id: str):
         ver = await bump_config_version()
         redis = get_redis()
         payload = json.dumps({"type": change_type, "id": item_id, "version": ver})
+        # Publish to both Redis Streams (persistent) and Pub/Sub (backwards compatibility)
+        await redis.xadd("agp:config:stream", {"payload": payload}, maxlen=1000)
         await redis.publish("config:updates", payload)
-        logger.info("Published config:update type=%s id=%s version=%d", change_type, item_id, ver)
+        logger.info("Published config:update type=%s id=%s version=%d (stream + pubsub)", change_type, item_id, ver)
     except Exception as e:
         logger.error("config:update publish FAILED (DB already committed) type=%s id=%s: %s", change_type, item_id, e)
 
